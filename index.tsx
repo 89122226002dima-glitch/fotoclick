@@ -45,8 +45,7 @@ interface Prompts {
 }
 
 // --- API Request Function ---
-// Теперь URL API будет браться из переменных окружения для гибкости
-const API_BASE_URL = process.env.RENDER_API_URL || '/api';
+const API_BASE_URL = '/api';
 
 async function apiRequest(action: string, payload: object): Promise<any> {
     // Формируем полный URL для запроса
@@ -877,7 +876,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyPromoButton = document.querySelector('#apply-promo-button')!;
 
   try {
-    const response = await fetch('./prompts.json');
+    const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     prompts = await response.json();
     

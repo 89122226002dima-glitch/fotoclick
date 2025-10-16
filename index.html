@@ -18,14 +18,18 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="index.css" />
-    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="/index.css" />
+    <link rel="manifest" href="/manifest.json" />
   <script type="importmap">
 {
   "imports": {
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.25.0",
+    "express": "https://aistudiocdn.com/express@^5.1.0",
     "cors": "https://aistudiocdn.com/cors@^2.8.5",
-    "express": "https://aistudiocdn.com/express@^5.1.0"
+    "vite": "https://aistudiocdn.com/vite@^7.1.10",
+    "path": "https://aistudiocdn.com/path@^0.12.7",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
+    "url": "https://aistudiocdn.com/url@^0.11.4"
   }
 }
 </script>
@@ -180,12 +184,7 @@
                 </div>
 
                 <div id="photoshoot-result-container" class="w-full max-w-2xl mt-6 min-h-[300px] flex items-center justify-center">
-                  <!-- Result will be injected here. Example loading state:
-                  <div class="loading-spinner flex flex-col items-center justify-center" role="status">
-                    <p id="photoshoot-loading-text" class="text-white text-lg mt-4">Подготовка фотосессии...</p>
-                    <p class="text-gray-500 text-sm mt-2">Это может занять до 1 минуты. Пожалуйста, подождите.</p>
-                  </div> 
-                  -->
+                  <!-- Result will be injected here -->
                 </div>
             </div>
         </div>
@@ -373,13 +372,13 @@
       </div>
     </div>
     
-    <!-- Main application script, now compiled -->
-    <script src="bundle.js" defer></script>
+    <!-- Main application script -->
+    <script type="module" src="/index.tsx"></script>
     
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('service-worker.js').then(registration => {
+          navigator.serviceWorker.register('/service-worker.js').then(registration => {
             console.log('ServiceWorker registration successful with scope: ', registration.scope);
           }, err => {
             console.log('ServiceWorker registration failed: ', err);
@@ -387,6 +386,5 @@
         });
       }
     </script>
-  <script type="module" src="/index.tsx"></script>
-</body>
+  </body>
 </html>
