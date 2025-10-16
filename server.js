@@ -1,9 +1,7 @@
-// server.js - Наш новый бэкенд для Replit
+// server.js - Наш бэкенд для Replit
 import express from 'express';
 import cors from 'cors';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -16,9 +14,8 @@ app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит �
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
         if (!process.env.API_KEY) {
-            throw new Error('API_KEY environment variable is not set. Please add it to Secrets.');
+            throw new Error('API_KEY environment variable is not set. Please add it to Replit Secrets.');
         }
-        // Исправлена критическая ошибка: был `new new GoogleGenAI`
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const responsePayload = await actionLogic(req.body, ai);
         return res.status(200).json(responsePayload);
@@ -29,8 +26,8 @@ const createApiHandler = (actionLogic) => async (req, res) => {
     }
 };
 
-// Определяем маршруты API с префиксом /api
-app.post('/api/generateVariation', createApiHandler(async (payload, ai) => {
+// Определяем маршруты API (без префикса, так как URL Replit уже уникален)
+app.post('/generateVariation', createApiHandler(async (payload, ai) => {
     const { prompt, image } = payload;
     if (!prompt || !image || !image.base64 || !image.mimeType) {
         throw new Error('Missing prompt or image data.');
@@ -50,7 +47,7 @@ app.post('/api/generateVariation', createApiHandler(async (payload, ai) => {
     }
 }));
 
-app.post('/api/checkImageSubject', createApiHandler(async (payload, ai) => {
+app.post('/checkImageSubject', createApiHandler(async (payload, ai) => {
     const { image } = payload;
     if (!image || !image.base64 || !image.mimeType) {
         throw new Error('Missing image data.');
@@ -66,7 +63,7 @@ app.post('/api/checkImageSubject', createApiHandler(async (payload, ai) => {
     return { subjectDetails: JSON.parse(response.text.trim()) };
 }));
 
-app.post('/api/analyzeImageForText', createApiHandler(async (payload, ai) => {
+app.post('/analyzeImageForText', createApiHandler(async (payload, ai) => {
     const { image, analysisPrompt } = payload;
     if (!image || !analysisPrompt) {
         throw new Error('Missing image or prompt data.');
@@ -78,7 +75,7 @@ app.post('/api/analyzeImageForText', createApiHandler(async (payload, ai) => {
     return { text: response.text.trim() };
 }));
 
-app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
+app.post('/generatePhotoshoot', createApiHandler(async (payload, ai) => {
     const { parts } = payload;
     if (!parts || !Array.isArray(parts) || parts.length === 0) {
         throw new Error('Missing parts for generation.');
@@ -98,21 +95,6 @@ app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
         throw new Error(`Image not generated. Reason: ${blockReason}. Safety: ${JSON.stringify(safetyRatings)}`);
     }
 }));
-
-// --- Обслуживание статичного фронтенда ---
-// Этот код будет работать после того, как вы запустите `npm run build`
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Подаем статические файлы из папки 'dist'
-app.use(express.static(path.join(__dirname, '..', 'dist')));
-
-// Для всех остальных GET-запросов, не являющихся API, отдаем index.html
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  }
-});
 
 
 app.listen(port, () => {
