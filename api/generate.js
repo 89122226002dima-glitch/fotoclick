@@ -1,13 +1,10 @@
-// Этот файл теперь является основным бэкендом, работающим на Vercel.
-// Он принимает запросы от фронтенда, вызывает Gemini API и возвращает результат.
+// api/generate.js
 
-import { GoogleGenAI, Modality, Type } from '@google/genai';
+// Используем синтаксис CommonJS (`require`), чтобы избежать проблем со сборкой на Vercel.
+const { GoogleGenAI, Modality, Type } = require('@google/genai');
 
-// Максимальное время выполнения функции на Vercel (Hobby plan) ~15 секунд.
-export const maxDuration = 15; 
-
-// Инициализация CORS - позволяет нашему сайту обращаться к этой функции
-const allowCors = fn => (req, res) => {
+// CORS middleware для разрешения запросов с нашего фронтенда
+const allowCors = (fn) => (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); // Разрешаем все источники
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -19,21 +16,26 @@ const allowCors = fn => (req, res) => {
     return fn(req, res);
 };
 
-// Основной обработчик запросов
-async function handler(req, res) {
-    // Разрешаем только POST запросы
+// Основная логика обработчика для всех API-запросов
+const handler = async (req, res) => {
+    // Принимаем только POST-запросы
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
     try {
-        // API-ключ должен быть установлен как переменная окружения в Vercel
+        // API-ключ ДОЛЖЕН быть установлен как переменная окружения в настройках проекта Vercel.
         if (!process.env.API_KEY) {
             throw new Error('API_KEY environment variable is not set.');
         }
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
+        // Безопасно извлекаем данные из тела запроса внутри блока try
         const { action, ...payload } = req.body;
+        if (!action) {
+            return res.status(400).json({ error: 'Missing "action" in request body.' });
+        }
+        
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
         let responsePayload;
 
@@ -41,7 +43,7 @@ async function handler(req, res) {
             case 'generateVariation': {
                 const { prompt, image } = payload;
                 if (!prompt || !image || !image.base64 || !image.mimeType) {
-                    return res.status(400).json({ error: 'Missing prompt or image data for generateVariation.' });
+                    return res.status(400).json({ error: 'Missing prompt or image data.' });
                 }
                 const response = await ai.models.generateContent({
                   model: 'gemini-2.5-flash-image',
@@ -52,7 +54,10 @@ async function handler(req, res) {
                 if (imagePart?.inlineData) {
                   responsePayload = { imageUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
                 } else {
-                  throw new Error('Image not found in model response.');
+                  // Предоставляем более детальную ошибку, если изображение было заблокировано
+                  const blockReason = response?.candidates?.[0]?.finishReason;
+                  const safetyRatings = response?.candidates?.[0]?.safetyRatings;
+                  throw new Error(`Image not generated. Reason: ${blockReason}. Safety: ${JSON.stringify(safetyRatings)}`);
                 }
                 break;
             }
@@ -60,7 +65,7 @@ async function handler(req, res) {
             case 'checkImageSubject': {
                 const { image } = payload;
                 if (!image || !image.base64 || !image.mimeType) {
-                    return res.status(400).json({ error: 'Missing image data for checkImageSubject.' });
+                    return res.status(400).json({ error: 'Missing image data.' });
                 }
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash',
@@ -77,7 +82,7 @@ async function handler(req, res) {
             case 'analyzeImageForText': {
                 const { image, analysisPrompt } = payload;
                  if (!image || !analysisPrompt) {
-                    return res.status(400).json({ error: 'Missing image or prompt for analyzeImageForText.' });
+                    return res.status(400).json({ error: 'Missing image or prompt data.' });
                 }
                 const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash',
@@ -102,7 +107,9 @@ async function handler(req, res) {
                     const resultUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
                     responsePayload = { resultUrl, generatedPhotoshootResult: { base64: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType } };
                 } else {
-                     throw new Error('Image not found in model response.');
+                     const blockReason = response?.candidates?.[0]?.finishReason;
+                     const safetyRatings = response?.candidates?.[0]?.safetyRatings;
+                     throw new Error(`Image not generated. Reason: ${blockReason}. Safety: ${JSON.stringify(safetyRatings)}`);
                 }
                 break;
             }
@@ -115,13 +122,11 @@ async function handler(req, res) {
 
     } catch (error) {
         console.error('API Error:', error);
-        // Отправляем более подробную информацию об ошибке на фронтенд
+        // Возвращаем детальную ошибку в формате JSON
         const errorMessage = error.message || 'An unknown server error occurred.';
-        // Если это ошибка от API Google, она может содержать полезные детали
-        const errorDetails = error.cause || {};
-        return res.status(500).json({ error: errorMessage, details: errorDetails });
+        return res.status(500).json({ error: errorMessage });
     }
-}
+};
 
-// Экспортируем обработчик с включенным CORS
-export default allowCors(handler);
+// Экспортируем наш обработчик, обернутый в CORS middleware
+module.exports = allowCors(handler);

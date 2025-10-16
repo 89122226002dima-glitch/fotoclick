@@ -1,3 +1,8 @@
 {
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "functions": {
+    "api/generate.js": {
+      "maxDuration": 15
+    }
+  }
 }

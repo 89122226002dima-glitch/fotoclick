@@ -10,7 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/genai": "^1.4.0"
+    "@google/genai": "^0.15.0"
   },
   "devDependencies": {
     "esbuild": "^0.21.4"
