@@ -3,15 +3,18 @@
   "version": "1.0.0",
   "description": "Full-stack AI photo app on Vercel with Gemini",
   "type": "module",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "build": "mkdir -p public && cp index.html index.css prompts.json manifest.json service-worker.js *.png public/ && esbuild index.tsx --bundle --outfile=public/bundle.js --loader:.tsx=tsx",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/genai": "^0.15.0"
+    "@google/genai": "^0.15.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
   },
   "devDependencies": {
     "esbuild": "^0.21.4"

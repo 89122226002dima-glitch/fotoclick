@@ -522,3 +522,27 @@ body {
   margin-right: auto;
 }
 #payment-processing-view svg { display:none; }
+
+/* --- UX ENHANCEMENTS FOR LOADING --- */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.placeholder-shimmer {
+  background: linear-gradient(to right, #353739 8%, #434548 18%, #353739 33%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+
+.analysis-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem; /* same as rounded-md from tailwind */
+  z-index: 21; /* Above the download button */
+}
