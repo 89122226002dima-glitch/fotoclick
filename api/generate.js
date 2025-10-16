@@ -1,7 +1,5 @@
 // api/generate.js
-
-// Используем синтаксис CommonJS (`require`), чтобы избежать проблем со сборкой на Vercel.
-const { GoogleGenAI, Modality, Type } = require('@google/genai');
+import { GoogleGenAI, Modality, Type } from '@google/genai';
 
 // CORS middleware для разрешения запросов с нашего фронтенда
 const allowCors = (fn) => (req, res) => {
@@ -129,4 +127,4 @@ const handler = async (req, res) => {
 };
 
 // Экспортируем наш обработчик, обернутый в CORS middleware
-module.exports = allowCors(handler);
+export default allowCors(handler);
