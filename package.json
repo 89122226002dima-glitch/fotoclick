@@ -1,0 +1,18 @@
+{
+  "name": "fotoclick-prod",
+  "version": "1.0.0",
+  "description": "Frontend for Foto-Click app on Vercel, with backend on Yandex Cloud",
+  "main": "index.js",
+  "scripts": {
+    "build": "mkdir -p public && cp index.html index.css prompts.json manifest.json service-worker.js *.png public/ && esbuild index.tsx --bundle --outfile=public/bundle.js --loader:.tsx=tsx",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.4"
+  }
+}
