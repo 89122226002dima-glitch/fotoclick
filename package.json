@@ -1,7 +1,7 @@
 {
   "name": "fotoclick-prod",
   "version": "1.0.0",
-  "description": "Frontend for Foto-Click app on Vercel, with backend on Yandex Cloud",
+  "description": "Full-stack AI photo app on Vercel with Gemini",
   "main": "index.js",
   "scripts": {
     "build": "mkdir -p public && cp index.html index.css prompts.json manifest.json service-worker.js *.png public/ && esbuild index.tsx --bundle --outfile=public/bundle.js --loader:.tsx=tsx",
