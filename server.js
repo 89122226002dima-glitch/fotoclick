@@ -1,4 +1,4 @@
-// server.js - Наш бэкенд для Replit
+// server.js - Наш новый бэкенд для Replit
 import express from 'express';
 import cors from 'cors';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
@@ -14,24 +14,21 @@ app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит �
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
         if (!process.env.API_KEY) {
-            throw new Error('API_KEY environment variable is not set. Please add it to Replit Secrets.');
+            throw new Error('API_KEY не найден. Добавьте его в Secrets.');
         }
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const responsePayload = await actionLogic(req.body, ai);
         return res.status(200).json(responsePayload);
     } catch (error) {
         console.error(`API Error in action:`, error);
-        const errorMessage = error.message || 'An unknown server error occurred.';
+        const errorMessage = error.message || 'Произошла неизвестная ошибка сервера.';
         return res.status(500).json({ error: errorMessage });
     }
 };
 
-// Определяем маршруты API (без префикса, так как URL Replit уже уникален)
-app.post('/generateVariation', createApiHandler(async (payload, ai) => {
+// Определяем маршруты API с префиксом /api
+app.post('/api/generateVariation', createApiHandler(async (payload, ai) => {
     const { prompt, image } = payload;
-    if (!prompt || !image || !image.base64 || !image.mimeType) {
-        throw new Error('Missing prompt or image data.');
-    }
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: prompt }] },
@@ -40,34 +37,25 @@ app.post('/generateVariation', createApiHandler(async (payload, ai) => {
     const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
     if (imagePart?.inlineData) {
         return { imageUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
-    } else {
-        const blockReason = response?.candidates?.[0]?.finishReason;
-        const safetyRatings = response?.candidates?.[0]?.safetyRatings;
-        throw new Error(`Image not generated. Reason: ${blockReason}. Safety: ${JSON.stringify(safetyRatings)}`);
     }
+    throw new Error(`Изображение не сгенерировано. Причина: ${response?.candidates?.[0]?.finishReason}`);
 }));
 
-app.post('/checkImageSubject', createApiHandler(async (payload, ai) => {
+app.post('/api/checkImageSubject', createApiHandler(async (payload, ai) => {
     const { image } = payload;
-    if (!image || !image.base64 || !image.mimeType) {
-        throw new Error('Missing image data.');
-    }
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: 'Проанализируй это фото. Определи категорию главного человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип его улыбки (зубы, закрытая, нет улыбки).' }] },
+        contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
         config: {
             responseMimeType: "application/json",
-            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } }, required: ['category', 'smile'] },
+            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
         }
     });
     return { subjectDetails: JSON.parse(response.text.trim()) };
 }));
 
-app.post('/analyzeImageForText', createApiHandler(async (payload, ai) => {
+app.post('/api/analyzeImageForText', createApiHandler(async (payload, ai) => {
     const { image, analysisPrompt } = payload;
-    if (!image || !analysisPrompt) {
-        throw new Error('Missing image or prompt data.');
-    }
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: analysisPrompt }] },
@@ -75,11 +63,8 @@ app.post('/analyzeImageForText', createApiHandler(async (payload, ai) => {
     return { text: response.text.trim() };
 }));
 
-app.post('/generatePhotoshoot', createApiHandler(async (payload, ai) => {
+app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
     const { parts } = payload;
-    if (!parts || !Array.isArray(parts) || parts.length === 0) {
-        throw new Error('Missing parts for generation.');
-    }
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: { parts },
@@ -89,14 +74,10 @@ app.post('/generatePhotoshoot', createApiHandler(async (payload, ai) => {
     if (imagePart?.inlineData) {
         const resultUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
         return { resultUrl, generatedPhotoshootResult: { base64: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType } };
-    } else {
-        const blockReason = response?.candidates?.[0]?.finishReason;
-        const safetyRatings = response?.candidates?.[0]?.safetyRatings;
-        throw new Error(`Image not generated. Reason: ${blockReason}. Safety: ${JSON.stringify(safetyRatings)}`);
     }
+    throw new Error(`Изображение не сгенерировано. Причина: ${response?.candidates?.[0]?.finishReason}`);
 }));
 
-
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+  console.log(`Сервер слушает порт ${port}`);
 });
