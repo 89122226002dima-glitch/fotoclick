@@ -54,33 +54,40 @@ async function apiRequest(action: string, payload: object): Promise<any> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+    }).catch(e => {
+        console.error("Network error during API request:", e);
+        throw new Error("Ошибка сети. Не удалось связаться с сервером.");
     });
 
-    // Сначала проверим, является ли ответ JSON
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.indexOf("application/json") !== -1) {
-        const data = await response.json();
-        if (!response.ok) {
-            // Если это JSON, но есть ошибка, используем сообщение из JSON
-            throw new Error(data.error || `Ошибка сервера: ${response.status}`);
-        }
-        return data; // Успешный JSON ответ
-    } else {
-        // Если ответ не JSON
-        const textData = await response.text();
-        if (!response.ok) {
-            // И это ошибка, показываем текст
-            // Простая проверка, не HTML ли это, чтобы не показывать пользователю теги
-            if (textData.trim().startsWith('<')) {
-                 throw new Error(`Ошибка сервера ${response.status}. Пожалуйста, попробуйте еще раз.`);
+    if (!response.ok) {
+        const contentType = response.headers.get("content-type");
+        let errorMessage;
+        if (contentType && contentType.includes("application/json")) {
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.error || `Ошибка сервера: ${response.status}`;
+            } catch (e) {
+                errorMessage = `Не удалось разобрать JSON-ошибку от сервера: ${response.status}`;
             }
-            throw new Error(textData || `Ошибка сервера: ${response.status}`);
+        } else {
+            const errorText = await response.text();
+            // Don't show raw HTML/XML to the user
+            if (errorText && errorText.trim().startsWith('<')) {
+                console.error("Server returned non-JSON error:", errorText);
+                errorMessage = `Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`;
+            } else {
+                 errorMessage = errorText || `Ошибка сервера: ${response.status}`;
+            }
         }
-        // Если это успешный ответ, но не JSON (что маловероятно для нашего API),
-        // просто возвращаем текст. В нашем случае это будет ошибкой,
-        // но лучше так, чем падение приложения.
-        console.warn("API returned a non-JSON success response:", textData);
-        return { unexpectedResponse: textData };
+        throw new Error(errorMessage);
+    }
+
+    // Success case
+    try {
+        return await response.json();
+    } catch (e) {
+        console.error("Failed to parse successful JSON response:", e);
+        throw new Error("Получен некорректный ответ от сервера.");
     }
 }
 
@@ -801,8 +808,7 @@ function initializePage1Wizard() {
             const subjectDetails = await checkImageSubject(imageState);
             page1DetectedSubject = subjectDetails;
             if (subjectDetails.category === 'other') {
-                subtitle.innerHTML = `<span class="text-red-400"> Unexpected token '<', "<?xml version="1.0" encoding="UTF-8"?>
-<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>Y7Q4P6X8A2B0C4D5</RequestId><HostId>examplehostid</HostId></Error>" is not a valid JSON</span>`;
+                subtitle.innerHTML = `<span class="text-red-400">На фото не удалось распознать человека. Пожалуйста, загрузите другое изображение.</span>`;
                 return;
             }
             let subjectText = '';
