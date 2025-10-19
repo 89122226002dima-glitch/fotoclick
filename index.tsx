@@ -111,8 +111,7 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 1; // Default value, will be overwritten from localStorage
-let hasUsedFreePhotoshoot = false;
+let generationCredits = 0; // Default value, will be overwritten from localStorage
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
@@ -660,8 +659,7 @@ function initializePage1Wizard() {
     const generatePhotoshoot = async () => {
         if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
         
-        const isFirstTime = !hasUsedFreePhotoshoot;
-        const creditsNeeded = isFirstTime ? 0 : 1;
+        const creditsNeeded = 1;
 
         if (generationCredits < creditsNeeded) {
             const modalTitle = document.querySelector('#payment-modal-title');
@@ -703,10 +701,8 @@ function initializePage1Wizard() {
         }, 4000);
         
         try {
-            if (!isFirstTime) {
-                generationCredits -= creditsNeeded;
-                updateCreditCounterUI();
-            }
+            generationCredits -= creditsNeeded;
+            updateCreditCounterUI();
             updateGenerateButtonState();
 
             const parts: any[] = [{ inlineData: { data: page1ReferenceImage.base64, mimeType: page1ReferenceImage.mimeType } }];
@@ -741,11 +737,6 @@ function initializePage1Wizard() {
             const data = await apiRequest('generatePhotoshoot', { parts });
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             
-            if (isFirstTime) {
-                hasUsedFreePhotoshoot = true;
-                localStorage.setItem('hasUsedFreePhotoshoot', 'true');
-            }
-            
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
                     <img src="${data.resultUrl}" alt="Сгенерированная фотосессия" class="w-full h-auto object-contain rounded-lg max-h-[60vh]"/>
                     <div class="result-actions">
@@ -772,10 +763,8 @@ function initializePage1Wizard() {
                 (window as any).navigateToPage('page2');
             }
         } catch (e) {
-            if (!isFirstTime) {
-                generationCredits += creditsNeeded;
-                updateCreditCounterUI();
-            }
+            generationCredits += creditsNeeded;
+            updateCreditCounterUI();
             const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
             displayErrorInContainer(photoshootResultContainer, errorMessage);
         } finally {
@@ -787,13 +776,9 @@ function initializePage1Wizard() {
     updateGenerateButtonState = () => {
         if (!generatePhotoshootButton) return;
         const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
-        const isFirstTime = !hasUsedFreePhotoshoot;
-        const creditsNeeded = isFirstTime ? 0 : 1;
+        const creditsNeeded = 1;
     
-        if (isFirstTime) {
-            generatePhotoshootButton.disabled = !isReady;
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (1-я бесплатно!)`;
-        } else if (generationCredits >= creditsNeeded) {
+        if (generationCredits >= creditsNeeded) {
             generatePhotoshootButton.disabled = !isReady;
             generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
         } else {
@@ -995,11 +980,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyPromoButton = document.querySelector('#apply-promo-button')!;
 
   try {
-    const savedCredits = localStorage.getItem('generationCredits');
-    if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
-        generationCredits = parseInt(savedCredits, 10);
+    const hasInitialized = localStorage.getItem('hasInitializedCredits');
+    if (!hasInitialized) {
+        generationCredits = 1;
+        localStorage.setItem('generationCredits', '1');
+        localStorage.setItem('hasInitializedCredits', 'true');
+    } else {
+        const savedCredits = localStorage.getItem('generationCredits');
+        if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
+            generationCredits = parseInt(savedCredits, 10);
+        } else {
+            generationCredits = 0; // Default to 0 if initialized but no credits found
+        }
     }
-    hasUsedFreePhotoshoot = localStorage.getItem('hasUsedFreePhotoshoot') === 'true';
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
