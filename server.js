@@ -2,6 +2,11 @@
 import express from 'express';
 import cors from 'cors';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -77,6 +82,15 @@ app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response?.candidates?.[0]?.finishReason}`);
 }));
+
+// Serve static files from the 'dist' directory
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// The "catchall" handler: for any request that doesn't match one above, send back
+// the app's index.html file.
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 app.listen(port, () => {
   console.log(`Сервер слушает порт ${port}`);
