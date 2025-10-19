@@ -112,7 +112,7 @@ let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
 let generationCredits = 1; // Default value, will be overwritten from localStorage
-let hasPaid = false;
+let hasUsedFreePhotoshoot = false;
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
@@ -660,7 +660,9 @@ function initializePage1Wizard() {
     const generatePhotoshoot = async () => {
         if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
         
-        const creditsNeeded = 1;
+        const isFirstTime = !hasUsedFreePhotoshoot;
+        const creditsNeeded = isFirstTime ? 0 : 1;
+
         if (generationCredits < creditsNeeded) {
             const modalTitle = document.querySelector('#payment-modal-title');
             if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
@@ -701,9 +703,12 @@ function initializePage1Wizard() {
         }, 4000);
         
         try {
-            generationCredits -= creditsNeeded;
-            updateCreditCounterUI();
+            if (!isFirstTime) {
+                generationCredits -= creditsNeeded;
+                updateCreditCounterUI();
+            }
             updateGenerateButtonState();
+
             const parts: any[] = [{ inlineData: { data: page1ReferenceImage.base64, mimeType: page1ReferenceImage.mimeType } }];
             let promptText: string;
             
@@ -736,6 +741,11 @@ function initializePage1Wizard() {
             const data = await apiRequest('generatePhotoshoot', { parts });
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             
+            if (isFirstTime) {
+                hasUsedFreePhotoshoot = true;
+                localStorage.setItem('hasUsedFreePhotoshoot', 'true');
+            }
+            
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
                     <img src="${data.resultUrl}" alt="Сгенерированная фотосессия" class="w-full h-auto object-contain rounded-lg max-h-[60vh]"/>
                     <div class="result-actions">
@@ -747,7 +757,7 @@ function initializePage1Wizard() {
                 referenceImage = generatedPhotoshootResult;
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
-                initializePoseSequences(); // <-- BUG FIX 1
+                initializePoseSequences();
                 const dataUrlForPage2 = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrlForPage2;
                 referenceImagePreview.classList.remove('hidden');
@@ -762,8 +772,10 @@ function initializePage1Wizard() {
                 (window as any).navigateToPage('page2');
             }
         } catch (e) {
-            generationCredits+= creditsNeeded;
-            updateCreditCounterUI();
+            if (!isFirstTime) {
+                generationCredits += creditsNeeded;
+                updateCreditCounterUI();
+            }
             const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
             displayErrorInContainer(photoshootResultContainer, errorMessage);
         } finally {
@@ -775,9 +787,13 @@ function initializePage1Wizard() {
     updateGenerateButtonState = () => {
         if (!generatePhotoshootButton) return;
         const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
-        const creditsNeeded = 1;
+        const isFirstTime = !hasUsedFreePhotoshoot;
+        const creditsNeeded = isFirstTime ? 0 : 1;
     
-        if (generationCredits >= creditsNeeded) {
+        if (isFirstTime) {
+            generatePhotoshootButton.disabled = !isReady;
+            generatePhotoshootButton.innerHTML = `Начать фотосессию (1-я бесплатно!)`;
+        } else if (generationCredits >= creditsNeeded) {
             generatePhotoshootButton.disabled = !isReady;
             generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
         } else {
@@ -983,6 +999,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
         generationCredits = parseInt(savedCredits, 10);
     }
+    hasUsedFreePhotoshoot = localStorage.getItem('hasUsedFreePhotoshoot') === 'true';
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1067,7 +1084,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const { category, smile } = await checkImageSubject(imageState);
             detectedSubjectCategory = category;
             detectedSmileType = smile;
-            initializePoseSequences(); // <-- BUG FIX 2
+            initializePoseSequences();
             if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
             const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилой мужчина', child: 'ребенок' };
             statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
