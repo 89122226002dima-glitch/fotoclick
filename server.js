@@ -4,6 +4,9 @@ import cors from 'cors';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+
+dotenv.config(); // Загружаем переменные из .env файла
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,7 +22,7 @@ app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит �
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
         if (!process.env.API_KEY) {
-            throw new Error('API_KEY не найден. Добавьте его в Secrets.');
+            throw new Error('Ключ API не найден. Убедитесь, что переменная окружения API_KEY установлена на сервере (например, в файле .env).');
         }
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const responsePayload = await actionLogic(req.body, ai);
