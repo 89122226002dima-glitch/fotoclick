@@ -48,20 +48,40 @@ interface Prompts {
 const API_BASE_URL = '/api';
 
 async function apiRequest(action: string, payload: object): Promise<any> {
-    // Формируем полный URL для запроса
     const fullUrl = `${API_BASE_URL.replace(/\/$/, '')}/${action}`;
     
     const response = await fetch(fullUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload), // Отправляем только payload
+        body: JSON.stringify(payload),
     });
-    
-    const data = await response.json();
-    if (!response.ok) {
-        throw new Error(data.error || `Ошибка сервера: ${response.statusText}`);
+
+    // Сначала проверим, является ли ответ JSON
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await response.json();
+        if (!response.ok) {
+            // Если это JSON, но есть ошибка, используем сообщение из JSON
+            throw new Error(data.error || `Ошибка сервера: ${response.status}`);
+        }
+        return data; // Успешный JSON ответ
+    } else {
+        // Если ответ не JSON
+        const textData = await response.text();
+        if (!response.ok) {
+            // И это ошибка, показываем текст
+            // Простая проверка, не HTML ли это, чтобы не показывать пользователю теги
+            if (textData.trim().startsWith('<')) {
+                 throw new Error(`Ошибка сервера ${response.status}. Пожалуйста, попробуйте еще раз.`);
+            }
+            throw new Error(textData || `Ошибка сервера: ${response.status}`);
+        }
+        // Если это успешный ответ, но не JSON (что маловероятно для нашего API),
+        // просто возвращаем текст. В нашем случае это будет ошибкой,
+        // но лучше так, чем падение приложения.
+        console.warn("API returned a non-JSON success response:", textData);
+        return { unexpectedResponse: textData };
     }
-    return data;
 }
 
 
@@ -84,7 +104,7 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 1;
+let generationCredits = 1; // Default value, will be overwritten from localStorage
 let hasPaid = false;
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
@@ -154,6 +174,8 @@ function updateCreditCounterUI() {
             <span class="hidden sm:inline text-gray-400">кредитов</span>
         `;
     }
+    // Save credits to localStorage whenever the UI is updated
+    localStorage.setItem('generationCredits', String(generationCredits));
 }
 
 function selectPlan(plan: string) {
@@ -778,7 +800,11 @@ function initializePage1Wizard() {
             subtitle.textContent = 'Анализ фото...';
             const subjectDetails = await checkImageSubject(imageState);
             page1DetectedSubject = subjectDetails;
-            if (subjectDetails.category === 'other') { subtitle.innerHTML = `<span class="text-red-400">Пожалуйста, загрузите фото человека.</span>`; return; }
+            if (subjectDetails.category === 'other') {
+                subtitle.innerHTML = `<span class="text-red-400"> Unexpected token '<', "<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>AccessDenied</Code><Message>Access Denied</Message><RequestId>Y7Q4P6X8A2B0C4D5</RequestId><HostId>examplehostid</HostId></Error>" is not a valid JSON</span>`;
+                return;
+            }
             let subjectText = '';
             switch(subjectDetails.category) {
                 case 'woman': currentClothingSuggestions = prompts.femaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'женщины'; break;
@@ -908,6 +934,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyPromoButton = document.querySelector('#apply-promo-button')!;
 
   try {
+    const savedCredits = localStorage.getItem('generationCredits');
+    if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
+        generationCredits = parseInt(savedCredits, 10);
+    }
+
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     prompts = await response.json();

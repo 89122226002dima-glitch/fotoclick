@@ -56,8 +56,24 @@ app.post('/api/checkImageSubject', createApiHandler(async (payload, ai) => {
             responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
         }
     });
-    return { subjectDetails: JSON.parse(response.text.trim()) };
+
+    const subjectDetailsText = response.text.trim();
+    try {
+        const subjectDetailsObject = JSON.parse(subjectDetailsText);
+
+        if (typeof subjectDetailsObject !== 'object' || subjectDetailsObject === null || !('category' in subjectDetailsObject) || !('smile' in subjectDetailsObject)) {
+            console.error('Некорректный объект получен от Gemini:', subjectDetailsObject);
+            throw new Error('Получен некорректный формат данных от AI.');
+        }
+        
+        return { subjectDetails: subjectDetailsObject };
+
+    } catch (e) {
+        console.error("Ошибка парсинга JSON от Gemini:", subjectDetailsText, e);
+        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
+    }
 }));
+
 
 app.post('/api/analyzeImageForText', createApiHandler(async (payload, ai) => {
     const { image, analysisPrompt } = payload;
