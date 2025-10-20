@@ -17,7 +17,7 @@ const host = '127.0.0.1'; // Слушаем только локальные со
 
 // Middleware
 app.use(cors()); // Включаем CORS для всех маршрутов
-app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит на размер тела запроса для изображений
+app.use(express.json({ limit: '50mb' })); // Увеличиваем лимит на размер тела запроса для изображений
 
 // Функция-обработчик для каждого маршрута
 const createApiHandler = (actionLogic) => async (req, res) => {
