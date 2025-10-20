@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
+const host = '127.0.0.1'; // Слушаем только локальные соединения
 
 // Middleware
 app.use(cors()); // Включаем CORS для всех маршрутов
@@ -111,6 +112,6 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(port, () => {
-  console.log(`Сервер слушает порт ${port}`);
+app.listen(port, host, () => {
+  console.log(`Сервер слушает на http://${host}:${port}`);
 });
