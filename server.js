@@ -6,19 +6,27 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
+// --- Диагностика загрузки .env ---
+const envConfig = dotenv.config();
+if (envConfig.error) {
+  console.error('DIAGNOSTICS: Ошибка при загрузке .env файла:', envConfig.error);
+} else {
+  console.log('DIAGNOSTICS: .env файл успешно загружен.');
+  console.log('DIAGNOSTICS: Найденные переменные:', envConfig.parsed);
+}
+console.log(`DIAGNOSTICS: Значение API_KEY в process.env: ${process.env.API_KEY ? 'Найдено (длина ' + process.env.API_KEY.length + ')' : 'Не найдено (undefined)'}`);
+// --- Конец диагностики ---
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Указываем точный путь к .env файлу, чтобы он всегда находился
-dotenv.config({ path: path.join(__dirname, '.env') });
-
 const app = express();
 const port = process.env.PORT || 3001;
-const host = '127.0.0.1'; // Слушаем только локальные соединения
 
 // Middleware
 app.use(cors()); // Включаем CORS для всех маршрутов
-app.use(express.json({ limit: '50mb' })); // Увеличиваем лимит на размер тела запроса для изображений
+app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит на размер тела запроса для изображений
 
 // Функция-обработчик для каждого маршрута
 const createApiHandler = (actionLogic) => async (req, res) => {
@@ -113,6 +121,6 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(port, host, () => {
-  console.log(`Сервер слушает на http://${host}:${port}`);
+app.listen(port, () => {
+  console.log(`Сервер слушает порт ${port}`);
 });
