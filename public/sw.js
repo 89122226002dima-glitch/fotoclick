@@ -1,6 +1,6 @@
 // sw.js - Service Worker
 
-const CACHE_NAME = 'fotoclick-cache-v1';
+const CACHE_NAME = 'fotoclick-cache-v3'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
 // Список файлов, которые нужно закэшировать для работы офлайн
 const URLS_TO_CACHE = [
   '/',
@@ -14,6 +14,7 @@ const URLS_TO_CACHE = [
 
 // Установка Сервис-воркера и кэширование статических ресурсов
 self.addEventListener('install', (event) => {
+  self.skipWaiting(); // Принудительная активация нового сервис-воркера
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
@@ -31,11 +32,12 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheWhitelist.indexOf(cacheName) === -1) {
+            console.log('Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
         })
       );
-    })
+    }).then(() => self.clients.claim()) // Захватываем контроль над открытыми страницами
   );
 });
 

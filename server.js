@@ -25,7 +25,12 @@ if (envConfig.error) {
     console.warn('DIAGNOSTICS: ВНИМАНИЕ! .env файл загружен, но переменная API_KEY в нем не найдена или пуста.');
   }
 }
-console.log(`DIAGNOSTICS: Финальное значение API_KEY в process.env: ${process.env.API_KEY ? 'ПРИСУТСТВУЕТ' : 'ОТСУТСТВУЕТ (undefined)'}`);
+
+if (!process.env.API_KEY) {
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Ключ API не найден. Убедитесь, что переменная окружения API_KEY установлена в файле .env.');
+    // В реальном проде лучше остановить процесс, но для отладки оставим его работать, чтобы видеть ошибки в API
+    // process.exit(1); 
+}
 // --- Конец диагностики ---
 
 
@@ -40,6 +45,7 @@ app.use(express.json({ limit: '50mb' })); // Увеличиваем лимит �
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
         if (!process.env.API_KEY) {
+            // Эта проверка дублируется на случай, если процесс все же запустился без ключа
             throw new Error('Ключ API не найден. Убедитесь, что переменная окружения API_KEY установлена на сервере (например, в файле .env).');
         }
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -126,6 +132,10 @@ app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
 
 // Serve static files from the 'dist' directory
 app.use(express.static(path.join(__dirname, 'dist')));
+
+// Serve static files from 'public' as well (for icons)
+app.use(express.static(path.join(__dirname, 'public')));
+
 
 // The "catchall" handler: for any request that doesn't match one above, send back
 // the app's index.html file. This is crucial for Single Page Applications.
