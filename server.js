@@ -6,27 +6,35 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
-// --- Диагностика загрузки .env ---
-const envConfig = dotenv.config();
-if (envConfig.error) {
-  console.error('DIAGNOSTICS: Ошибка при загрузке .env файла:', envConfig.error);
-} else {
-  console.log('DIAGNOSTICS: .env файл успешно загружен.');
-  console.log('DIAGNOSTICS: Найденные переменные:', envConfig.parsed);
-}
-console.log(`DIAGNOSTICS: Значение API_KEY в process.env: ${process.env.API_KEY ? 'Найдено (длина ' + process.env.API_KEY.length + ')' : 'Не найдено (undefined)'}`);
-// --- Конец диагностики ---
-
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// --- Улучшенная диагностика и явное указание пути к .env ---
+const envPath = path.resolve(__dirname, '.env');
+console.log(`DIAGNOSTICS: Попытка загрузить .env файл из пути: ${envPath}`);
+
+const envConfig = dotenv.config({ path: envPath });
+
+if (envConfig.error) {
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Не удалось загрузить .env файл. Убедитесь, что файл существует и доступен.', envConfig.error);
+} else {
+  console.log('DIAGNOSTICS: .env файл успешно загружен.');
+  if (envConfig.parsed && envConfig.parsed.API_KEY) {
+    console.log(`DIAGNOSTICS: Переменная API_KEY найдена в файле .env.`);
+  } else {
+    console.warn('DIAGNOSTICS: ВНИМАНИЕ! .env файл загружен, но переменная API_KEY в нем не найдена или пуста.');
+  }
+}
+console.log(`DIAGNOSTICS: Финальное значение API_KEY в process.env: ${process.env.API_KEY ? 'ПРИСУТСТВУЕТ' : 'ОТСУТСТВУЕТ (undefined)'}`);
+// --- Конец диагностики ---
+
 
 const app = express();
 const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors()); // Включаем CORS для всех маршрутов
-app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит на размер тела запроса для изображений
+app.use(express.json({ limit: '50mb' })); // Увеличиваем лимит на размер тела запроса для изображений
 
 // Функция-обработчик для каждого маршрута
 const createApiHandler = (actionLogic) => async (req, res) => {
@@ -39,6 +47,10 @@ const createApiHandler = (actionLogic) => async (req, res) => {
         return res.status(200).json(responsePayload);
     } catch (error) {
         console.error(`API Error in action:`, error);
+        // Проверяем специфичную ошибку 'Payload Too Large'
+        if (error.type === 'entity.too.large') {
+             return res.status(413).json({ error: 'Загруженное изображение слишком большое. Пожалуйста, выберите файл меньшего размера.' });
+        }
         const errorMessage = error.message || 'Произошла неизвестная ошибка сервера.';
         return res.status(500).json({ error: errorMessage });
     }
@@ -116,7 +128,7 @@ app.post('/api/generatePhotoshoot', createApiHandler(async (payload, ai) => {
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // The "catchall" handler: for any request that doesn't match one above, send back
-// the app's index.html file.
+// the app's index.html file. This is crucial for Single Page Applications.
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });

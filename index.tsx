@@ -4,6 +4,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import { GoogleGenAI, Modality, Type } from '@google/genai';
 
 // --- Type Definitions ---
 interface ImageState {
@@ -44,56 +45,16 @@ interface Prompts {
     couplePosePrompts: string[];
 }
 
-// --- API Request Function ---
-const API_BASE_URL = '/api';
+// --- Wizard State ---
+type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'NONE';
 
-async function apiRequest(action: string, payload: object): Promise<any> {
-    const fullUrl = `${API_BASE_URL.replace(/\/$/, '')}/${action}`;
-    
-    const response = await fetch(fullUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    }).catch(e => {
-        console.error("Network error during API request:", e);
-        throw new Error("Ошибка сети. Не удалось связаться с сервером.");
-    });
-
-    if (!response.ok) {
-        const contentType = response.headers.get("content-type");
-        let errorMessage;
-        if (contentType && contentType.includes("application/json")) {
-            try {
-                const errorData = await response.json();
-                errorMessage = errorData.error || `Ошибка сервера: ${response.status}`;
-            } catch (e) {
-                errorMessage = `Не удалось разобрать JSON-ошибку от сервера: ${response.status}`;
-            }
-        } else {
-            const errorText = await response.text();
-            // Don't show raw HTML/XML to the user
-            if (errorText && errorText.trim().startsWith('<')) {
-                console.error("Server returned non-JSON error:", errorText);
-                errorMessage = `Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`;
-            } else {
-                 errorMessage = errorText || `Ошибка сервера: ${response.status}`;
-            }
-        }
-        throw new Error(errorMessage);
-    }
-
-    // Success case
-    try {
-        return await response.json();
-    } catch (e) {
-        console.error("Failed to parse successful JSON response:", e);
-        throw new Error("Получен некорректный ответ от сервера.");
-    }
-}
+// --- API Initialization ---
+// The API key is injected by the AI Studio environment.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
 
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
-let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, statusEl: HTMLDivElement,
+let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCloseButton: HTMLButtonElement, statusEl: HTMLDivElement,
     planButtonsContainer: HTMLDivElement, generateButton: HTMLButtonElement, resetButton: HTMLButtonElement,
     outputGallery: HTMLDivElement, uploadContainer: HTMLDivElement, imageUpload: HTMLInputElement,
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
@@ -126,7 +87,99 @@ let poseSequences: {
     elderlyFemale: [], elderlyFemaleCloseUp: [], elderlyMale: [], elderlyMaleCloseUp: [],
 };
 
+const MAX_DIMENSION = 1024;
+
+/**
+ * Sets the current step for the user guidance wizard, highlighting the active element.
+ * @param step The wizard step to activate.
+ */
+function setWizardStep(step: WizardStep) {
+    // Define all potential target elements
+    const targets = {
+        page1Photo: document.getElementById('page1-upload-container'),
+        page1Clothing: document.querySelector('#clothing-location-container .step-container:first-child'),
+        page1Location: document.querySelector('#clothing-location-container .step-container:last-child'),
+        page1Generate: document.getElementById('generate-photoshoot-button'),
+        page2Plans: document.getElementById('plan-buttons'),
+        page2Generate: document.getElementById('generate-button'),
+        credits: document.getElementById('credit-counter'),
+    };
+
+    // Remove the highlight class from all targets first
+    Object.values(targets).forEach(el => el?.classList.remove('highlight-step'));
+
+    // Apply the highlight class to the specific target
+    switch (step) {
+        case 'PAGE1_PHOTO': targets.page1Photo?.classList.add('highlight-step'); break;
+        case 'PAGE1_CLOTHING': targets.page1Clothing?.classList.add('highlight-step'); break;
+        case 'PAGE1_LOCATION': targets.page1Location?.classList.add('highlight-step'); break;
+        case 'PAGE1_GENERATE': targets.page1Generate?.classList.add('highlight-step'); break;
+        case 'PAGE2_PLAN': targets.page2Plans?.classList.add('highlight-step'); break;
+        case 'PAGE2_GENERATE': targets.page2Generate?.classList.add('highlight-step'); break;
+        case 'CREDITS': targets.credits?.classList.add('highlight-step'); break;
+        case 'NONE': // Do nothing, all highlights are cleared
+            break;
+    }
+}
+
+
+/**
+ * Resizes an image to a maximum dimension while maintaining aspect ratio.
+ * @param imageState The original image state with base64 data.
+ * @returns A promise that resolves with the new, resized image state.
+ */
+async function resizeImage(imageState: ImageState): Promise<ImageState> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+
+            if (width > height) {
+                if (width > MAX_DIMENSION) {
+                    height = Math.round((height * MAX_DIMENSION) / width);
+                    width = MAX_DIMENSION;
+                }
+            } else {
+                if (height > MAX_DIMENSION) {
+                    width = Math.round((width * MAX_DIMENSION) / height);
+                    height = MAX_DIMENSION;
+                }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Не удалось получить 2D контекст холста для изменения размера изображения.'));
+            }
+            ctx.drawImage(img, 0, 0, width, height);
+
+            // Convert to JPEG for better compression for photographic images, with a quality of 90%
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            const [header, base64] = dataUrl.split(',');
+            const mimeType = 'image/jpeg';
+
+            resolve({ base64, mimeType });
+        };
+        img.onerror = (err) => {
+            console.error("Ошибка при загрузке изображения для изменения размера:", err);
+            reject(new Error('Не удалось загрузить изображение для обработки.'));
+        };
+        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+    });
+}
+
+
 // --- Core Functions (defined globally, but depend on state) ---
+function hideLightbox() {
+    if (lightboxOverlay) {
+      lightboxOverlay.classList.add('opacity-0', 'pointer-events-none');
+      // Delay clearing the src to allow the fade-out animation to complete
+      setTimeout(() => { if (lightboxImage) lightboxImage.src = ''; }, 300);
+    }
+}
+
 function openLightbox(imageUrl: string) {
     if (lightboxImage && lightboxOverlay) {
         lightboxImage.src = imageUrl;
@@ -136,11 +189,18 @@ function openLightbox(imageUrl: string) {
 
 async function generateVariation(prompt: string, image: ImageState): Promise<string> {
    try {
-        const data = await apiRequest('generateVariation', { prompt, image });
-        if (!data.imageUrl) {
-            throw new Error('Бэкенд не вернул изображение.');
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: prompt }] },
+            config: { responseModalities: [Modality.IMAGE] },
+        });
+        const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+        if (imagePart?.inlineData) {
+            return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
         }
-        return data.imageUrl;
+        const finishReason = response?.candidates?.[0]?.finishReason;
+        const safetyRatings = JSON.stringify(response?.candidates?.[0]?.safetyRatings);
+        throw new Error(`Изображение не сгенерировано. Причина: ${finishReason}. Рейтинги безопасности: ${safetyRatings}`);
     } catch (e) {
         console.error('generateVariation failed:', e);
         throw e;
@@ -190,6 +250,7 @@ function selectPlan(plan: string) {
   buttons.forEach((btn) => btn.classList.remove('selected'));
   const buttonToSelect = planButtonsContainer.querySelector(`button[data-plan="${plan}"]`) as HTMLButtonElement;
   if (buttonToSelect) buttonToSelect.classList.add('selected');
+  setWizardStep('PAGE2_GENERATE');
 }
 
 function resetApp() {
@@ -213,6 +274,7 @@ function resetApp() {
   progressContainer?.classList.add('hidden');
   setControlsDisabled(false);
   updateGenerateButtonCredits();
+  setWizardStep('NONE');
 }
 
 function showStatusError(message: string) {
@@ -275,8 +337,26 @@ function getPlanDisplayName(plan: string): string {
 
 async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
   try {
-    const data = await apiRequest('checkImageSubject', { image });
-    const result: { category: string; smile: string } = data.subjectDetails;
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
+        }
+    });
+
+    const subjectDetailsText = response.text.trim();
+    let result: { category: string; smile: string };
+    try {
+        result = JSON.parse(subjectDetailsText);
+         if (typeof result !== 'object' || result === null || !('category' in result) || !('smile' in result)) {
+            throw new Error('Получен некорректный формат данных от AI.');
+        }
+    } catch (e) {
+        console.error("Ошибка парсинга JSON от Gemini:", subjectDetailsText, e);
+        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
+    }
 
     const categoryMapping: { [key: string]: SubjectCategory } = {
         'мужчина': 'man', 'женщина': 'woman', 'подросток': 'teenager',
@@ -304,10 +384,11 @@ function updateGenerateButtonCredits() {
   
   if (generationCredits >= creditsNeeded) {
       generateButton.innerHTML = `${buttonText} (Осталось: ${generationCredits})`;
-      generateButton.disabled = !referenceImage; // Disable only if no image
+      // Button is enabled if an image is loaded, disabled otherwise.
+      generateButton.disabled = !referenceImage; 
   } else {
-      // Always keep button enabled to trigger the payment modal
-      generateButton.disabled = !referenceImage;
+      // If not enough credits, the button should still be clickable to show the modal
+      generateButton.disabled = false; 
       generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
   }
   
@@ -315,20 +396,24 @@ function updateGenerateButtonCredits() {
 }
 
 async function generate() {
-  if (!referenceImage || !detectedSubjectCategory || !prompts) {
-    showStatusError('Пожалуйста, загрузите изображение-референс человека.');
-    return;
-  }
-  
   const creditsNeeded = 4;
+
+  // Prioritize credit check: if not enough, show payment modal immediately.
   if (generationCredits < creditsNeeded) {
       const modalTitle = document.querySelector('#payment-modal-title');
       const modalDescription = document.querySelector('#payment-modal-description');
       if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
       if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
       
+      setWizardStep('CREDITS');
       showPaymentModal();
       return;
+  }
+  
+  // Now check for the image, only if credits are sufficient.
+  if (!referenceImage || !detectedSubjectCategory || !prompts) {
+    showStatusError('Пожалуйста, загрузите изображение-референс человека.');
+    return;
   }
 
   const progressContainer = document.querySelector('#progress-container') as HTMLDivElement;
@@ -337,6 +422,7 @@ async function generate() {
 
   statusEl.innerText = 'Генерация вариаций...';
   setControlsDisabled(true);
+  setWizardStep('NONE');
 
   const divider = document.createElement('div');
   const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -395,31 +481,45 @@ async function generate() {
 
     const generationPrompts: string[] = [];
     for (let i = 0; i < 4; i++) {
-      const allChanges: string[] = [];
-      const planInstruction = getPlanInstruction(selectedPlan);
-      if (planInstruction) allChanges.push(planInstruction);
+        const allChanges: string[] = [];
+        const planInstruction = getPlanInstruction(selectedPlan);
+        if (planInstruction) allChanges.push(planInstruction);
 
-      if (i === 3) allChanges.push(shuffledDrasticShifts[0] ?? shuffledAngles[i] ?? '');
-      else allChanges.push(shuffledAngles[i]);
+        let finalPrompt: string;
 
-      const customText = customPromptInput.value.trim();
-      if (customText) {
-        allChanges.push(`дополнительная деталь: ${customText}`);
-      } else {
-        let currentPose: string;
-        if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) {
-            currentPose = glamourPoses[femaleGlamourPoseIndex++ % glamourPoses.length];
-        } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
-            currentPose = poses[malePoseIndex++ % poses.length];
+        if (i === 3) {
+            // Special logic for the 4th image with a drastic camera angle change
+            allChanges.push(shuffledDrasticShifts[0] ?? shuffledAngles[i] ?? '');
+            const customText = customPromptInput.value.trim();
+            if (customText) {
+                allChanges.push(`дополнительная деталь: ${customText}`);
+            }
+            // A specific pose is omitted to focus the AI on the difficult task of changing the angle and background
+            const changesDescription = allChanges.filter(Boolean).join(', ');
+
+            finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение со сменой ракурса, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **СОХРАНИ ОДЕЖДУ, ЗАМЕНИ ФОН:** Одежда человека должна быть взята с референсного фото. Однако, фон нужно ПОЛНОСТЬЮ заменить. Сгенерируй новый, фотореалистичный фон, который логично соответствует новому ракурсу камеры, указанному в пункте 3.\n3.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         } else {
-            currentPose = poses[femalePoseIndex++ % poses.length];
+            // Standard logic for the first 3 images
+            allChanges.push(shuffledAngles[i]);
+            const customText = customPromptInput.value.trim();
+            if (customText) {
+                allChanges.push(`дополнительная деталь: ${customText}`);
+            } else {
+                let currentPose: string;
+                if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) {
+                    currentPose = glamourPoses[femaleGlamourPoseIndex++ % glamourPoses.length];
+                } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
+                    currentPose = poses[malePoseIndex++ % poses.length];
+                } else {
+                    currentPose = poses[femalePoseIndex++ % poses.length];
+                }
+                allChanges.push(currentPose);
+            }
+            const changesDescription = allChanges.filter(Boolean).join(', ');
+
+            finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **КОНТЕКСТ ИЗ ОРИГИНАЛА:** Одежда и фон на новом изображении должны быть взяты с референсного фото. Не дорисовывай и не придумывай недостающие части.\n3.  **НОВАЯ КОМПОЗИЦИЯ:** Примени следующие изменения: "${changesDescription}".\n4.  **ПРАВИЛО КАДРИРОВАНИЯ:** Если для выполнения пункта 3 (создания новой композиции) требуется обрезать (кадрировать) исходное изображение и показать только его часть — это правильное и допустимое действие. Главное — не добавлять ничего нового, чего не было на референсе.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         }
-        allChanges.push(currentPose);
-      }
-      
-      const changesDescription = allChanges.filter(Boolean).join(', ');
-      const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **КОНТЕКСТ ИЗ ОРИГИНАЛА:** Одежда и фон на новом изображении должны быть взяты с референсного фото. Не дорисовывай и не придумывай недостающие части.\n3.  **НОВАЯ КОМПОЗИЦИЯ:** Примени следующие изменения: "${changesDescription}".\n4.  **ПРАВИЛО КАДРИРОВАНИЯ:** Если для выполнения пункта 3 (создания новой композиции) требуется обрезать (кадрировать) исходное изображение и показать только его часть — это правильное и допустимое действие. Главное — не добавлять ничего нового, чего не было на референсе.\n\nРезультат — только одно изображение без текста.`;
-      generationPrompts.push(finalPrompt);
+        generationPrompts.push(finalPrompt);
     }
     
     // **NEW PARALLEL GENERATION LOGIC**
@@ -488,6 +588,7 @@ async function generate() {
 
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
+    if (referenceImage) setWizardStep('PAGE2_PLAN'); // After generation, guide user to select a new plan
 
   } catch (e) {
     // This top-level catch is for setup errors before the loop starts
@@ -512,11 +613,23 @@ function setupNavigation() {
     if (!navContainer || pages.length === 0) return;
     const navigateToPage = (pageId: string) => {
         pages.forEach(page => page.classList.add('hidden'));
-        document.querySelector<HTMLElement>(`#${pageId}`)?.classList.remove('hidden');
+        const pageToShow = document.querySelector<HTMLElement>(`#${pageId}`);
+        pageToShow?.classList.remove('hidden');
         navButtons.forEach(btn => {
             btn.classList.remove('active');
             if (btn.dataset.page === pageId) btn.classList.add('active');
         });
+
+        // Update wizard step on page change
+        if (pageId === 'page1') {
+            updatePage1WizardState();
+        } else if (pageId === 'page2') {
+            if (referenceImage) {
+                setWizardStep('PAGE2_PLAN');
+            } else {
+                setWizardStep('NONE');
+            }
+        }
     };
     navContainer.addEventListener('click', (event) => {
         const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-page]');
@@ -569,9 +682,26 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
                 imagePreview.classList.remove('hidden');
                 uploadPlaceholder.classList.add('hidden');
                 clearButton.classList.remove('hidden');
+                
                 const [header, base64] = dataUrl.split(',');
                 const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-                await onStateChange({ base64, mimeType });
+                const originalState: ImageState = { base64, mimeType };
+
+                try {
+                    const statusText = `Оптимизация изображения...`;
+                    if(statusEl) statusEl.innerText = statusText;
+
+                    const resizedState = await resizeImage(originalState);
+                    
+                    imagePreview.src = `data:${resizedState.mimeType};base64,${resizedState.base64}`;
+                    await onStateChange(resizedState);
+                    if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
+
+                } catch (err) {
+                    console.error("Ошибка изменения размера изображения:", err);
+                    showStatusError("Не удалось оптимизировать изображение. Используется оригинал.");
+                    await onStateChange(originalState); // Fallback to original
+                }
             }
         };
         reader.readAsDataURL(file);
@@ -601,13 +731,39 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
 
 async function analyzeImageForText(image: ImageState, analysisPrompt: string): Promise<string> {
     try {
-        const data = await apiRequest('analyzeImageForText', { image, analysisPrompt });
-        return data.text;
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: analysisPrompt }] },
+        });
+        return response.text.trim();
     } catch (e) {
         console.error('Image analysis failed:', e);
         throw new Error(`Ошибка анализа изображения: ${e instanceof Error ? e.message : 'Неизвестная ошибка'}`);
     }
 }
+
+async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState }> {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts },
+            config: { responseModalities: [Modality.IMAGE] },
+        });
+        const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+        if (imagePart?.inlineData) {
+            const resultUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
+            return { resultUrl, generatedPhotoshootResult: { base64: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType } };
+        }
+        const finishReason = response?.candidates?.[0]?.finishReason;
+        const safetyRatings = JSON.stringify(response?.candidates?.[0]?.safetyRatings);
+        throw new Error(`Изображение не сгенерировано. Причина: ${finishReason}. Рейтинги безопасности: ${safetyRatings}`);
+
+    } catch (e) {
+        console.error('generatePhotoshoot failed:', e);
+        throw e;
+    }
+}
+
 
 const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
 const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
@@ -626,17 +782,25 @@ function showPaymentModal() {
 
 function hidePaymentModal() {
     paymentModalOverlay?.classList.add('hidden');
+    const page1 = document.getElementById('page1');
+    if (page1 && !page1.classList.contains('hidden')) {
+        updatePage1WizardState();
+    } else {
+        if(referenceImage) setWizardStep('PAGE2_GENERATE');
+    }
 }
 
 function handlePaymentConfirmation() {
     generationCredits += 12;
+    updateCreditCounterUI(); // Save and update UI
     hidePaymentModal();
-    updateGenerateButtonState();
+    updatePage1WizardState();
     updateGenerateButtonCredits();
     if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
 }
 
-let updateGenerateButtonState: () => void = () => {};
+
+let updatePage1WizardState: () => void = () => {};
 
 function initializePage1Wizard() {
     const subtitle = document.getElementById('page1-subtitle') as HTMLParagraphElement;
@@ -656,7 +820,7 @@ function initializePage1Wizard() {
     let shownLocationSuggestions: Set<string> = new Set();
     let page1LocationImage: ImageState | null = null;
     
-    const generatePhotoshoot = async () => {
+    const doGeneratePhotoshoot = async () => {
         if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
         
         const creditsNeeded = 1;
@@ -664,6 +828,7 @@ function initializePage1Wizard() {
         if (generationCredits < creditsNeeded) {
             const modalTitle = document.querySelector('#payment-modal-title');
             if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
+            setWizardStep('CREDITS');
             showPaymentModal();
             return;
         }
@@ -679,6 +844,7 @@ function initializePage1Wizard() {
         }
     
         generatePhotoshootButton.disabled = true;
+        setWizardStep('NONE');
         photoshootResultContainer.innerHTML = `<div class="loading-spinner flex flex-col items-center justify-center" role="status">
             <p id="photoshoot-loading-text" class="text-lg mt-4">Подготовка фотосессии...</p>
             <p class="text-gray-500 text-sm mt-2">Это может занять до 1 минуты. Пожалуйста, подождите.</p>
@@ -703,7 +869,7 @@ function initializePage1Wizard() {
         try {
             generationCredits -= creditsNeeded;
             updateCreditCounterUI();
-            updateGenerateButtonState();
+            updatePage1WizardState();
 
             const parts: any[] = [{ inlineData: { data: page1ReferenceImage.base64, mimeType: page1ReferenceImage.mimeType } }];
             let promptText: string;
@@ -720,6 +886,7 @@ function initializePage1Wizard() {
 3.  **ПРИМЕНИ ОДЕЖДУ (из второго фото):** Возьми одежду, показанную на ВТОРОМ изображении, и надень ее на человека из первого изображения. Одежда должна быть перенесена МАКСИМАЛЬНО ТОЧНО, включая фасон, цвет, текстуру и принт. Если на втором фото тоже есть человек, ИГНОРИРУЙ ЕГО ПОЛНОСТЬЮ, используй только одежду.${additionalClothingDetails}
 4.  **ЗАМЕНИ ФОН:** Полностью замени оригинальный фон на новый: "${locationText}".
 5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке и новой одежде гармонично соответствовало новому фону. Освещение должно выглядеть естественно и фотореалистично.
+**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             } else {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
@@ -730,11 +897,12 @@ function initializePage1Wizard() {
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в кадре.
 4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
 5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             }
             parts.push({ text: promptText.trim() });
     
-            const data = await apiRequest('generatePhotoshoot', { parts });
+            const data = await generatePhotoshoot(parts);
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
@@ -769,12 +937,16 @@ function initializePage1Wizard() {
             displayErrorInContainer(photoshootResultContainer, errorMessage);
         } finally {
             clearInterval(messageInterval);
-            updateGenerateButtonState();
+            updatePage1WizardState();
         }
     }
 
-    updateGenerateButtonState = () => {
-        if (!generatePhotoshootButton) return;
+    updatePage1WizardState = () => {
+        const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
+        const clothingPromptInput = document.getElementById('clothing-prompt') as HTMLInputElement;
+        const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
+
+        if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
         const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
         const creditsNeeded = 1;
     
@@ -784,6 +956,17 @@ function initializePage1Wizard() {
         } else {
             generatePhotoshootButton.disabled = false; // Always enable to trigger modal
             generatePhotoshootButton.innerHTML = `Начать фотосессию (${generationCredits} кредитов)`;
+        }
+
+        // Wizard Logic
+        if (!page1ReferenceImage) {
+            setWizardStep('PAGE1_PHOTO');
+        } else if (!page1ClothingImage && !clothingPromptInput.value.trim()) {
+            setWizardStep('PAGE1_CLOTHING');
+        } else if (!locationPromptInput.value.trim()) {
+            setWizardStep('PAGE1_LOCATION');
+        } else {
+            setWizardStep('PAGE1_GENERATE');
         }
     };
 
@@ -800,7 +983,7 @@ function initializePage1Wizard() {
         document.getElementById('clothing-image-preview')?.classList.add('hidden');
         document.getElementById('clothing-upload-placeholder')?.classList.remove('hidden');
         document.getElementById('clothing-clear-button')?.classList.add('hidden');
-        updateGenerateButtonState();
+        updatePage1WizardState();
     };
     
     const showCombinedSteps = async (imageState: ImageState) => {
@@ -827,7 +1010,7 @@ function initializePage1Wizard() {
             displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput);
             displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
             clothingLocationContainer.classList.remove('hidden');
-            updateGenerateButtonState();
+            updatePage1WizardState();
         } catch (e) {
             const message = e instanceof Error ? e.message : 'Неизвестная ошибка анализа.';
             subtitle.innerHTML = `<span class="text-red-400">${message}</span>`;
@@ -845,7 +1028,7 @@ function initializePage1Wizard() {
         page1ClothingImage = state;
         clothingPromptInput.placeholder = state ? 'Фото одежды загружено (можно добавить детали)' : 'Опишите или выберите вариант...';
         clothingPromptInput.value = '';
-        updateGenerateButtonState();
+        updatePage1WizardState();
     });
 
     setupUploader('location-upload-container', 'location-image-upload', 'location-image-preview', 'location-upload-placeholder', 'location-clear-button', async (state) => {
@@ -865,9 +1048,9 @@ function initializePage1Wizard() {
         }
     });
 
-    generatePhotoshootButton.addEventListener('click', generatePhotoshoot);
-    clothingPromptInput.addEventListener('input', updateGenerateButtonState);
-    locationPromptInput.addEventListener('input', updateGenerateButtonState);
+    generatePhotoshootButton.addEventListener('click', doGeneratePhotoshoot);
+    clothingPromptInput.addEventListener('input', updatePage1WizardState);
+    locationPromptInput.addEventListener('input', updatePage1WizardState);
     refreshClothingBtn.addEventListener('mousedown', (e) => { e.preventDefault(); displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput) });
     refreshLocationBtn.addEventListener('mousedown', (e) => { if (!prompts) return; e.preventDefault(); displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput) });
     clothingPromptInput.addEventListener('focus', () => clothingSuggestionsContainer.classList.add('visible'));
@@ -885,6 +1068,8 @@ function getUploaderPlaceholderHtml(): string {
         <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
           <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
           <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 7 -12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
           <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
           <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
           <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
@@ -935,7 +1120,7 @@ function applyPromoCode() {
         generationCredits += promo.value;
         updateCreditCounterUI();
         updateGenerateButtonCredits();
-        updateGenerateButtonState();
+        updatePage1WizardState();
         usedCodes.push(code);
         localStorage.setItem('usedPromoCodes', JSON.stringify(usedCodes));
         statusEl.innerHTML = `<span class="text-green-400">${promo.message}</span>`;
@@ -961,6 +1146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // --- DOM Element Selection (Safe Zone) ---
   lightboxOverlay = document.querySelector('#lightbox-overlay')!;
   lightboxImage = document.querySelector('#lightbox-image')!;
+  lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
   statusEl = document.querySelector('#status')!;
   planButtonsContainer = document.querySelector('#plan-buttons')!;
   generateButton = document.querySelector('#generate-button')!;
@@ -980,18 +1166,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyPromoButton = document.querySelector('#apply-promo-button')!;
 
   try {
-    const hasInitialized = localStorage.getItem('hasInitializedCredits');
-    if (!hasInitialized) {
-        generationCredits = 1;
-        localStorage.setItem('generationCredits', '1');
-        localStorage.setItem('hasInitializedCredits', 'true');
+    const savedCredits = localStorage.getItem('generationCredits');
+    if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
+        generationCredits = parseInt(savedCredits, 10);
     } else {
-        const savedCredits = localStorage.getItem('generationCredits');
-        if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
-            generationCredits = parseInt(savedCredits, 10);
-        } else {
-            generationCredits = 0; // Default to 0 if initialized but no credits found
-        }
+        // This handles both first-time users and corrupted data
+        generationCredits = 0; // Start with 0 credits
+        localStorage.setItem('generationCredits', '0');
     }
 
     const response = await fetch('/prompts.json');
@@ -1009,10 +1190,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializePoseSequences();
 
     // --- Attach all event listeners now that elements are guaranteed to exist ---
-    lightboxOverlay.addEventListener('click', () => {
-      lightboxOverlay.classList.add('opacity-0', 'pointer-events-none');
-      setTimeout(() => { if (lightboxImage) lightboxImage.src = ''; }, 300);
+    lightboxOverlay.addEventListener('click', (e) => {
+        // Only close if the dark background itself is clicked, not children like the image or button.
+        if (e.target === lightboxOverlay) {
+          hideLightbox();
+        }
     });
+    lightboxCloseButton.addEventListener('click', hideLightbox);
 
     generateButton.addEventListener('click', generate);
     resetButton.addEventListener('click', resetApp);
@@ -1055,25 +1239,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (dataUrl) {
           const [header, base64] = dataUrl.split(',');
           const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-          const imageState = { base64, mimeType };
-          referenceImage = imageState;
-          referenceImagePreview.src = dataUrl;
-          referenceImagePreview.classList.remove('hidden');
-          referenceDownloadButton.href = dataUrl;
-          referenceDownloadButton.download = `reference-${Date.now()}.png`;
-          referenceDownloadButton.classList.remove('hidden');
-          uploadPlaceholder.classList.add('hidden');
-          uploadContainer.classList.remove('aspect-square');
-          outputGallery.innerHTML = '';
+          const originalImageState = { base64, mimeType };
           
           const overlay = document.createElement('div');
           overlay.className = 'analysis-overlay';
-          overlay.innerHTML = `<div class="loading-spinner"></div>`;
+          overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
           uploadContainer.appendChild(overlay);
-
-          statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
           setControlsDisabled(true);
+          setWizardStep('NONE');
+
           try {
+            const imageState = await resizeImage(originalImageState);
+            const resizedDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+
+            referenceImage = imageState;
+            referenceImagePreview.src = resizedDataUrl;
+            referenceImagePreview.classList.remove('hidden');
+            referenceDownloadButton.href = resizedDataUrl;
+            referenceDownloadButton.download = `reference-${Date.now()}.png`;
+            referenceDownloadButton.classList.remove('hidden');
+            uploadPlaceholder.classList.add('hidden');
+            uploadContainer.classList.remove('aspect-square');
+            outputGallery.innerHTML = '';
+            
+            const overlayText = overlay.querySelector('p');
+            if (overlayText) overlayText.textContent = 'Анализ фото...';
+
+            statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
+            
             const { category, smile } = await checkImageSubject(imageState);
             detectedSubjectCategory = category;
             detectedSmileType = smile;
@@ -1081,7 +1274,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
             const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилой мужчина', child: 'ребенок' };
             statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
-          } catch (e) { showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа.'); resetApp(); }
+            setWizardStep('PAGE2_PLAN');
+
+          } catch (e) { 
+            showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
+            resetApp();
+          }
           finally { 
               overlay.remove();
               setControlsDisabled(false); 
@@ -1092,7 +1290,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
-    uploadContainer.addEventListener('click', () => imageUpload.click());
+    
+    uploadContainer.addEventListener('click', (e) => {
+      // Если изображение загружено и клик происходит именно по нему, открываем лайтбокс
+      if (referenceImage && e.target === referenceImagePreview) {
+        openLightbox(referenceImagePreview.src);
+      } else if (!(e.target as HTMLElement).closest('a')) {
+        // В противном случае (если клик по пустой области или плейсхолдеру и не по ссылке) открываем диалог загрузки файла
+        imageUpload.click();
+      }
+    });
+
     ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
         e.preventDefault(); e.stopPropagation();
         if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
@@ -1105,7 +1313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     (window as any).navigateToPage('page1');
     updateGenerateButtonCredits();
-    updateGenerateButtonState();
+    updatePage1WizardState();
 
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);
