@@ -4,7 +4,6 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import { GoogleGenAI, Modality, Type } from '@google/genai';
 
 // --- Type Definitions ---
 interface ImageState {
@@ -47,11 +46,6 @@ interface Prompts {
 
 // --- Wizard State ---
 type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'NONE';
-
-// --- API Initialization ---
-// The API key is injected by the AI Studio environment.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-
 
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
 let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCloseButton: HTMLButtonElement, statusEl: HTMLDivElement,
@@ -170,6 +164,30 @@ async function resizeImage(imageState: ImageState): Promise<ImageState> {
     });
 }
 
+/**
+ * A generic helper function to make API calls to our own server backend.
+ * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
+ * @param body The JSON payload to send.
+ * @returns A promise that resolves with the JSON response from the server.
+ */
+async function callApi(endpoint: string, body: object) {
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `Сервер вернул неожиданный ответ (${response.status})` }));
+        console.error(`Ошибка API на ${endpoint}:`, errorData);
+        throw new Error(errorData.error || `Технические детали записаны в консоль разработчика.`);
+    }
+
+    return response.json();
+}
+
 
 // --- Core Functions (defined globally, but depend on state) ---
 function hideLightbox() {
@@ -189,18 +207,8 @@ function openLightbox(imageUrl: string) {
 
 async function generateVariation(prompt: string, image: ImageState): Promise<string> {
    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: prompt }] },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (imagePart?.inlineData) {
-            return `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-        }
-        const finishReason = response?.candidates?.[0]?.finishReason;
-        const safetyRatings = JSON.stringify(response?.candidates?.[0]?.safetyRatings);
-        throw new Error(`Изображение не сгенерировано. Причина: ${finishReason}. Рейтинги безопасности: ${safetyRatings}`);
+        const data = await callApi('/api/generateVariation', { prompt, image });
+        return data.imageUrl;
     } catch (e) {
         console.error('generateVariation failed:', e);
         throw e;
@@ -337,26 +345,8 @@ function getPlanDisplayName(plan: string): string {
 
 async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
   try {
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
-        }
-    });
-
-    const subjectDetailsText = response.text.trim();
-    let result: { category: string; smile: string };
-    try {
-        result = JSON.parse(subjectDetailsText);
-         if (typeof result !== 'object' || result === null || !('category' in result) || !('smile' in result)) {
-            throw new Error('Получен некорректный формат данных от AI.');
-        }
-    } catch (e) {
-        console.error("Ошибка парсинга JSON от Gemini:", subjectDetailsText, e);
-        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
-    }
+    const data = await callApi('/api/checkImageSubject', { image });
+    const result = data.subjectDetails;
 
     const categoryMapping: { [key: string]: SubjectCategory } = {
         'мужчина': 'man', 'женщина': 'woman', 'подросток': 'teenager',
@@ -731,11 +721,8 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
 
 async function analyzeImageForText(image: ImageState, analysisPrompt: string): Promise<string> {
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: analysisPrompt }] },
-        });
-        return response.text.trim();
+        const data = await callApi('/api/analyzeImageForText', { image, analysisPrompt });
+        return data.text;
     } catch (e) {
         console.error('Image analysis failed:', e);
         throw new Error(`Ошибка анализа изображения: ${e instanceof Error ? e.message : 'Неизвестная ошибка'}`);
@@ -744,20 +731,8 @@ async function analyzeImageForText(image: ImageState, analysisPrompt: string): P
 
 async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState }> {
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts },
-            config: { responseModalities: [Modality.IMAGE] },
-        });
-        const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-        if (imagePart?.inlineData) {
-            const resultUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
-            return { resultUrl, generatedPhotoshootResult: { base64: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType } };
-        }
-        const finishReason = response?.candidates?.[0]?.finishReason;
-        const safetyRatings = JSON.stringify(response?.candidates?.[0]?.safetyRatings);
-        throw new Error(`Изображение не сгенерировано. Причина: ${finishReason}. Рейтинги безопасности: ${safetyRatings}`);
-
+        const data = await callApi('/api/generatePhotoshoot', { parts });
+        return data;
     } catch (e) {
         console.error('generatePhotoshoot failed:', e);
         throw e;
