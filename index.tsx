@@ -180,7 +180,15 @@ async function callApi(endpoint: string, body: object) {
     });
 
     if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `Сервер вернул неожиданный ответ (${response.status})` }));
+        const errorText = await response.text();
+        let errorData;
+        try {
+            errorData = JSON.parse(errorText);
+        } catch (e) {
+            console.error("Failed to parse server error JSON:", errorText);
+            // If parsing fails, use the raw text, which might be an HTML error page.
+            throw new Error(`Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`);
+        }
         console.error(`Ошибка API на ${endpoint}:`, errorData);
         throw new Error(errorData.error || `Технические детали записаны в консоль разработчика.`);
     }
@@ -1157,6 +1165,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Initial UI Setup & Event Listeners ---
     const placeholderHtml = getUploaderPlaceholderHtml();
     document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
+    uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
+
 
     setupNavigation();
     initializePage1Wizard();
