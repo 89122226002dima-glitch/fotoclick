@@ -77,6 +77,21 @@ app.post('/api/generateVariation', createApiHandler(async (payload, ai) => {
     throw new Error(`Изображение не сгенерировано. Причина: ${response?.candidates?.[0]?.finishReason}`);
 }));
 
+app.post('/api/generateWideImage', createApiHandler(async (payload, ai) => {
+    const { prompt, image } = payload;
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [{ inlineData: { data: image.base64, mimeType: image.mimeType } }, { text: prompt }] },
+        config: { responseModalities: [Modality.IMAGE] },
+    });
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    if (imagePart?.inlineData) {
+        return { imageUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
+    }
+    throw new Error(`Изображение не сгенерировано. Причина: ${response?.candidates?.[0]?.finishReason}`);
+}));
+
+
 app.post('/api/checkImageSubject', createApiHandler(async (payload, ai) => {
     const { image } = payload;
     const response = await ai.models.generateContent({

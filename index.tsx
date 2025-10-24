@@ -54,7 +54,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement;
+    applyPromoButton: HTMLButtonElement, generateCollageButton: HTMLButtonElement, collageOutputGallery: HTMLDivElement;
 
 
 // --- State Variables ---
@@ -283,13 +283,14 @@ function resetApp() {
   uploadContainer.classList.add('aspect-square');
   imageUpload.value = '';
   outputGallery.innerHTML = '';
+  collageOutputGallery.innerHTML = '';
   selectPlan('close_up');
   customPromptInput.value = '';
   statusEl.innerText = 'Приложение сброшено. Загрузите новое изображение.';
   const progressContainer = document.querySelector('#progress-container');
   progressContainer?.classList.add('hidden');
   setControlsDisabled(false);
-  updateGenerateButtonCredits();
+  updateAllGenerateButtons();
   setWizardStep('NONE');
 }
 
@@ -305,8 +306,9 @@ function setControlsDisabled(disabled: boolean) {
   buttons.forEach((btn) => (btn.disabled = disabled));
   if (disabled) {
     generateButton.disabled = true;
+    generateCollageButton.disabled = true;
   } else {
-    updateGenerateButtonCredits();
+    updateAllGenerateButtons();
   }
 }
 
@@ -314,7 +316,7 @@ function displayErrorInContainer(container: HTMLElement, message: string, clearC
   if (clearContainer) container.innerHTML = '';
   const errorContainer = document.createElement('div');
   errorContainer.className = 'bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center flex flex-col items-center justify-center w-full';
-  if (container.id === 'output-gallery') errorContainer.classList.add('col-span-2');
+  if (container.id === 'output-gallery' || container.id === 'collage-output-gallery') errorContainer.classList.add('col-span-1', 'md:col-span-2');
   errorContainer.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-red-400 mb-4" viewBox="0 0 20 20" fill="currentColor">
       <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
@@ -375,23 +377,36 @@ async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
   }
 }
 
-function updateGenerateButtonCredits() {
-  if (!generateButton) return;
-  const creditsNeeded = 4; // Cost for this action
-  const buttonText = `Создать ${creditsNeeded} фотографии`;
-  
-  if (generationCredits >= creditsNeeded) {
-      generateButton.innerHTML = `${buttonText} (Осталось: ${generationCredits})`;
-      // Button is enabled if an image is loaded, disabled otherwise.
-      generateButton.disabled = !referenceImage; 
-  } else {
-      // If not enough credits, the button should still be clickable to show the modal
-      generateButton.disabled = false; 
-      generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
-  }
-  
-  updateCreditCounterUI();
+function updateAllGenerateButtons() {
+    // Page 2 Button
+    if (generateButton) {
+        const creditsNeeded = 4;
+        const buttonText = `Создать ${creditsNeeded} фотографии`;
+        if (generationCredits >= creditsNeeded) {
+            generateButton.innerHTML = `${buttonText} (Осталось: ${generationCredits})`;
+            generateButton.disabled = !referenceImage;
+        } else {
+            generateButton.disabled = false;
+            generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
+        }
+    }
+
+    // Page 3 Button
+    if (generateCollageButton) {
+        const creditsNeeded = 2;
+        const buttonText = `Создать коллаж`;
+        if (generationCredits >= creditsNeeded) {
+            generateCollageButton.innerHTML = `${buttonText} (${creditsNeeded} кредита)`;
+            generateCollageButton.disabled = !referenceImage;
+        } else {
+            generateCollageButton.disabled = false; // Enable to show modal
+            generateCollageButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
+        }
+    }
+    
+    updateCreditCounterUI();
 }
+
 
 async function generate() {
   const creditsNeeded = 4;
@@ -445,7 +460,7 @@ async function generate() {
   try {
     generationCredits -= creditsNeeded;
     updateCreditCounterUI();
-    updateGenerateButtonCredits();
+    updateAllGenerateButtons();
 
 
     let poses: string[], glamourPoses: string[] = [];
@@ -592,7 +607,7 @@ async function generate() {
     // This top-level catch is for setup errors before the loop starts
     generationCredits += creditsNeeded;
     updateCreditCounterUI();
-    updateGenerateButtonCredits();
+    updateAllGenerateButtons();
     placeholders.forEach(p => p.remove());
     divider.remove();
     if (progressContainer) progressContainer.classList.add('hidden');
@@ -627,6 +642,8 @@ function setupNavigation() {
             } else {
                 setWizardStep('NONE');
             }
+        } else if (pageId === 'page3') {
+            updateAllGenerateButtons();
         }
     };
     navContainer.addEventListener('click', (event) => {
@@ -778,7 +795,7 @@ function handlePaymentConfirmation() {
     updateCreditCounterUI(); // Save and update UI
     hidePaymentModal();
     updatePage1WizardState();
-    updateGenerateButtonCredits();
+    updateAllGenerateButtons();
     if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
 }
 
@@ -1102,7 +1119,7 @@ function applyPromoCode() {
     if (promo?.type === 'credits') {
         generationCredits += promo.value;
         updateCreditCounterUI();
-        updateGenerateButtonCredits();
+        updateAllGenerateButtons();
         updatePage1WizardState();
         usedCodes.push(code);
         localStorage.setItem('usedPromoCodes', JSON.stringify(usedCodes));
@@ -1147,6 +1164,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   creditCounterEl = document.querySelector('#credit-counter')!;
   promoCodeInput = document.querySelector('#promo-code-input')!;
   applyPromoButton = document.querySelector('#apply-promo-button')!;
+  generateCollageButton = document.querySelector('#generate-collage-button')!;
+  collageOutputGallery = document.querySelector('#collage-output-gallery')!;
 
   try {
     const savedCredits = localStorage.getItem('generationCredits');
@@ -1184,6 +1203,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     lightboxCloseButton.addEventListener('click', hideLightbox);
 
     generateButton.addEventListener('click', generate);
+    generateCollageButton.addEventListener('click', generateCollage);
     resetButton.addEventListener('click', resetApp);
     applyPromoButton.addEventListener('click', applyPromoCode);
     promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
@@ -1297,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }));
 
     (window as any).navigateToPage('page1');
-    updateGenerateButtonCredits();
+    updateAllGenerateButtons();
     updatePage1WizardState();
 
   } catch (error) {
@@ -1305,3 +1325,135 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
   }
 });
+
+/**
+ * Splits a wide image into two halves.
+ * @param base64Url The base64 data URL of the wide image.
+ * @returns A promise that resolves with an array of two base64 data URLs: [leftHalf, rightHalf].
+ */
+async function splitImage(base64Url: string): Promise<[string, string]> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const halfWidth = img.naturalWidth / 2;
+            const height = img.naturalHeight;
+
+            const canvasLeft = document.createElement('canvas');
+            canvasLeft.width = halfWidth;
+            canvasLeft.height = height;
+            const ctxLeft = canvasLeft.getContext('2d');
+            if (!ctxLeft) return reject('Could not get left canvas context');
+            ctxLeft.drawImage(img, 0, 0, halfWidth, height, 0, 0, halfWidth, height);
+
+            const canvasRight = document.createElement('canvas');
+            canvasRight.width = halfWidth;
+            canvasRight.height = height;
+            const ctxRight = canvasRight.getContext('2d');
+            if (!ctxRight) return reject('Could not get right canvas context');
+            ctxRight.drawImage(img, halfWidth, 0, halfWidth, height, 0, 0, halfWidth, height);
+
+            resolve([canvasLeft.toDataURL('image/jpeg', 0.9), canvasRight.toDataURL('image/jpeg', 0.9)]);
+        };
+        img.onerror = () => reject('Could not load image for splitting.');
+        img.src = base64Url;
+    });
+}
+
+
+async function generateCollage() {
+    const creditsNeeded = 2;
+
+    if (generationCredits < creditsNeeded) {
+        showPaymentModal();
+        return;
+    }
+
+    if (!referenceImage || !detectedSubjectCategory || !prompts) {
+        displayErrorInContainer(collageOutputGallery, 'Пожалуйста, сначала загрузите референсное изображение на странице "4 Вариации".');
+        return;
+    }
+    
+    setControlsDisabled(true);
+    collageOutputGallery.innerHTML = `<div class="md:col-span-2 flex justify-center items-center flex-col min-h-[300px]">
+        <div class="loading-spinner"></div>
+        <p class="mt-4">Создаем широкоформатный диптих...</p>
+    </div>`;
+    
+    try {
+        generationCredits -= creditsNeeded;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+
+        // 1. Get prompts for close-up shots
+        let poses: string[] = [];
+        switch (detectedSubjectCategory) {
+            case 'man': poses = poseSequences.maleCloseUp; break;
+            case 'woman': poses = poseSequences.femaleCloseUp; break;
+            case 'elderly_man': poses = poseSequences.elderlyMaleCloseUp; break;
+            case 'elderly_woman': poses = poseSequences.elderlyFemaleCloseUp; break;
+            default: poses = poseSequences.femaleCloseUp; break;
+        }
+
+        const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
+        const shuffledAngles = shuffle(angles);
+        const planInstruction = getPlanInstruction('close_up');
+
+        // Get two distinct poses and angles
+        const pose1 = poses[malePoseIndex++ % poses.length] || poses[femalePoseIndex++ % poses.length];
+        const pose2 = poses[malePoseIndex++ % poses.length] || poses[femalePoseIndex++ % poses.length];
+        const changes1 = [planInstruction, shuffledAngles[0], pose1].filter(Boolean).join(', ');
+        const changes2 = [planInstruction, shuffledAngles[1], pose2].filter(Boolean).join(', ');
+
+        // 2. Construct the master prompt for a diptych
+        const masterPrompt = `Это референсное фото. Твоя задача — сгенерировать одно широкоформатное фото-диптих (две фотографии рядом), следуя строгим правилам.
+
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица, цвет кожи, прическа и выражение лица человека на ОБЕИХ панелях диптиха должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.
+2.  **ЕДИНЫЙ СТИЛЬ:** Обе панели должны быть в едином стиле, с одинаковой одеждой и фоном, взятыми с референса.
+3.  **РАЗНАЯ КОМПОЗИЦИЯ:** Каждая панель должна иметь свою уникальную композицию.
+4.  **ФОРМАТ:** Итоговое изображение должно быть ОДНИМ, широким, кинематографичным, с соотношением сторон примерно 32:9 или 2:1.
+
+ЗАДАНИЕ ДЛЯ ПАНЕЛЕЙ:
+- **Левая панель:** Примени следующие изменения: "${changes1}".
+- **Правая панель:** Примени следующие изменения: "${changes2}".
+
+Результат — только одно широкоформатное изображение без текста.`;
+
+        // 3. Call the new API endpoint
+        const data = await callApi('/api/generateWideImage', { prompt: masterPrompt, image: referenceImage });
+        const wideImageUrl = data.imageUrl;
+
+        // 4. Split the image
+        // FIX: The left-hand side of an assignment expression may not be an optional property access.
+        const pEl = collageOutputGallery.querySelector('p');
+        if (pEl) {
+            pEl.textContent = 'Разделяем изображение...';
+        }
+        const [leftImgSrc, rightImgSrc] = await splitImage(wideImageUrl);
+
+        // 5. Display the results
+        collageOutputGallery.innerHTML = '';
+        [leftImgSrc, rightImgSrc].forEach((src, index) => {
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'gallery-item cursor-pointer';
+            imgContainer.innerHTML = `
+                <img src="${src}" alt="Часть коллажа ${index + 1}" class="w-full h-full object-cover block rounded-lg"/>
+                <a href="${src}" download="kollazh-${index + 1}-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                </a>`;
+            
+            imgContainer.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(src); });
+            imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+
+            collageOutputGallery.appendChild(imgContainer);
+        });
+
+    } catch (e) {
+        generationCredits += creditsNeeded;
+        updateCreditCounterUI();
+        const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
+        displayErrorInContainer(collageOutputGallery, errorMessage);
+    } finally {
+        setControlsDisabled(false);
+    }
+}
