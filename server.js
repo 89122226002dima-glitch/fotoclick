@@ -37,8 +37,8 @@ if (!process.env.PROJECT_ID) {
     console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! PROJECT_ID не найден.');
 }
 
-// FIX: The constructor is on the `default` property of the imported CJS module.
-const VertexAI = aiplatform.default;
+// CORRECT FIX: The VertexAI class is a property on the default export object.
+const { VertexAI } = aiplatform;
 const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
 
 const textModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
