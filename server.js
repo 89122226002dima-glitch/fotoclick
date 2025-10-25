@@ -1,5 +1,8 @@
 // server.js - Финальная версия, возвращенная на архитектуру Vertex AI.
-// Используем стандартный require, сборщик esbuild решит все проблемы с путями.
+
+// --- ЗАГРУЗКА .ENV ---
+// Это самая важная строка. Она загружает переменные из файла .env.
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
