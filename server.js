@@ -5,9 +5,9 @@ const cors = require('cors');
 const path = require('path');
 
 // --- ЗАГРУЗКА .ENV ---
-// Явно указываем путь к файлу .env, чтобы избежать проблем с рабочей директорией pm2.
-// __dirname указывает на папку, где находится ЗАПУСКАЕМЫЙ файл (dist), поэтому мы поднимаемся на один уровень вверх (../).
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+// Явно указываем путь к файлу .env, используя текущую рабочую директорию процесса.
+// Это самый надежный способ для работы с pm2.
+require('dotenv').config({ path: path.join(process.cwd(), '.env') });
 
 const { VertexAI } = require('@google-cloud/aiplatform');
 
