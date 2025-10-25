@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 // Исправленный импорт для совместимости с CommonJS модулем
 import aiplatform from '@google-cloud/aiplatform';
-const { VertexAI } = aiplatform;
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -34,12 +33,14 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 // --- Инициализация Vertex AI ---
-// Убедитесь, что в вашем .env файле есть PROJECT_ID
-// GOOGLE_APPLICATION_CREDENTIALS подхватывается автоматически из .env
 if (!process.env.PROJECT_ID) {
     console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! PROJECT_ID не найден.');
 }
+
+// FIX: The constructor is on the `default` property of the imported CJS module.
+const VertexAI = aiplatform.default;
 const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
+
 const textModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 const imageModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 
