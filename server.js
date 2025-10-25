@@ -1,23 +1,15 @@
-// server.js - Обновленный бэкенд для работы с Vertex AI
-import express from 'express';
-import cors from 'cors';
-// ИСПОЛЬЗУЕМ createRequire ДЛЯ НАДЕЖНОЙ ЗАГРУЗКИ CommonJS МОДУЛЯ
-import { createRequire } from 'module';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
+// server.js - Окончательно исправленный бэкенд для работы в режиме CommonJS
 
-const require = createRequire(import.meta.url);
-const aiplatform = require('@google-cloud/aiplatform');
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const dotenv = require('dotenv');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// --- Загрузка .env файла ---
+// Этот метод надежно находит .env файл в корневой директории
+dotenv.config();
 
-// --- Диагностика загрузки .env файла ---
-const envPath = path.resolve(__dirname, '.env');
-dotenv.config({ path: envPath });
-
-console.log(`DIAGNOSTICS: Загрузка конфигурации из ${envPath}`);
+console.log(`DIAGNOSTICS: Загрузка конфигурации из .env`);
 if (process.env.PROJECT_ID) {
   console.log('DIAGNOSTICS: PROJECT_ID успешно загружен.');
 } else {
@@ -26,7 +18,6 @@ if (process.env.PROJECT_ID) {
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
     console.log('DIAGNOSTICS: GOOGLE_APPLICATION_CREDENTIALS успешно загружен.');
 } else {
-    // В облачных средах это может быть нормально, если аутентификация настроена иначе
     console.warn('DIAGNOSTICS: ВНИМАНИЕ! GOOGLE_APPLICATION_CREDENTIALS не найден. Аутентификация будет произведена через стандартные механизмы Google Cloud.');
 }
 // --- Конец диагностики ---
@@ -41,8 +32,8 @@ if (!process.env.PROJECT_ID) {
     process.exit(1); // Останавливаем сервер, если нет PROJECT_ID
 }
 
-// Извлекаем конструктор из загруженного модуля
-const { VertexAI } = aiplatform;
+// Корректный импорт для CommonJS
+const { VertexAI } = require('@google-cloud/aiplatform');
 const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
 
 const textModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -70,6 +61,7 @@ const createApiHandler = (actionLogic) => async (req, res) => {
         return res.status(200).json(responsePayload);
     } catch (error) {
         console.error(`API Error in action:`, error);
+        // Проверка на ошибку слишком большого файла от express.json
         if (error.type === 'entity.too.large') {
              return res.status(413).json({ error: 'Загруженное изображение слишком большое. Пожалуйста, выберите файл меньшего размера.' });
         }
@@ -78,7 +70,7 @@ const createApiHandler = (actionLogic) => async (req, res) => {
     }
 };
 
-// --- Обновленные API маршруты для Vertex AI ---
+// --- API маршруты ---
 
 app.post('/api/generateVariation', createApiHandler(async ({ prompt, image }) => {
     const request = {
