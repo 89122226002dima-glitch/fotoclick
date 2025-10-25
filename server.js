@@ -1,7 +1,9 @@
 // server.js - Обновленный бэкенд для работы с Vertex AI
 import express from 'express';
 import cors from 'cors';
-import { VertexAI } from '@google-cloud/aiplatform';
+// Исправленный импорт для совместимости с CommonJS модулем
+import aiplatform from '@google-cloud/aiplatform';
+const { VertexAI } = aiplatform;
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
