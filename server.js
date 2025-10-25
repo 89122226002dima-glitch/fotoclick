@@ -1,4 +1,4 @@
-// server.js - Бэкенд, переработанный для Vertex AI
+// server.js - Обновленный бэкенд для работы с Vertex AI
 import express from 'express';
 import cors from 'cors';
 import { VertexAI } from '@google-cloud/aiplatform';
@@ -9,162 +9,161 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- Загрузка переменных окружения ---
+// --- Диагностика загрузки .env файла ---
 const envPath = path.resolve(__dirname, '.env');
 dotenv.config({ path: envPath });
 
-console.log('DIAGNOSTICS: Загрузка конфигурации Vertex AI...');
-if (!process.env.PROJECT_ID || !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменные PROJECT_ID или GOOGLE_APPLICATION_CREDENTIALS не установлены в .env. Сервер не может работать с Vertex AI.');
+console.log(`DIAGNOSTICS: Загрузка конфигурации из ${envPath}`);
+if (process.env.PROJECT_ID) {
+  console.log('DIAGNOSTICS: PROJECT_ID успешно загружен.');
 } else {
-    console.log('DIAGNOSTICS: PROJECT_ID и GOOGLE_APPLICATION_CREDENTIALS найдены.');
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная PROJECT_ID не найдена в .env файле.');
+}
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    console.log('DIAGNOSTICS: GOOGLE_APPLICATION_CREDENTIALS успешно загружен.');
+} else {
+    // В облачных средах это может быть нормально, если аутентификация настроена иначе
+    console.warn('DIAGNOSTICS: ВНИМАНИЕ! GOOGLE_APPLICATION_CREDENTIALS не найден. Аутентификация будет произведена через стандартные механизмы Google Cloud.');
 }
 // --- Конец диагностики ---
 
+
 const app = express();
 const port = process.env.PORT || 3001;
+
+// --- Инициализация Vertex AI ---
+// Убедитесь, что в вашем .env файле есть PROJECT_ID
+// GOOGLE_APPLICATION_CREDENTIALS подхватывается автоматически из .env
+if (!process.env.PROJECT_ID) {
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! PROJECT_ID не найден.');
+}
+const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
+const textModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const imageModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
+
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// --- Настройки Vertex AI ---
-const PROJECT = process.env.PROJECT_ID;
-const LOCATION = 'us-central1'; // Стандартный регион для многих моделей
-const vertex_ai = new VertexAI({ project: PROJECT, location: LOCATION });
+// Хелпер для преобразования base64 в формат Vertex AI Part
+const fileToPart = (base64, mimeType) => {
+    return {
+        inlineData: {
+            mimeType,
+            data: base64,
+        },
+    };
+};
 
-// --- Модели Vertex AI ---
-// Модель для генерации/редактирования изображений (Imagen)
-const imageGenerationModel = vertex_ai.preview.getGenerativeModel({
-    model: 'imagegeneration@006',
-});
-
-// Модель для анализа текста и изображений (Gemini)
-const textAndImageModel = vertex_ai.preview.getGenerativeModel({
-    model: 'gemini-1.5-flash-001',
-});
-
-
-// Функция-обработчик для каждого маршрута API
+// Общий обработчик для всех API-запросов
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
-        if (!PROJECT || !LOCATION) {
-            throw new Error('Конфигурация Vertex AI неполная. Проверьте переменные окружения.');
+        if (!process.env.PROJECT_ID) {
+            throw new Error('PROJECT_ID не найден. Убедитесь, что переменная окружения установлена на сервере (в файле .env).');
         }
         const responsePayload = await actionLogic(req.body);
         return res.status(200).json(responsePayload);
     } catch (error) {
-        console.error('API Error in action:', error);
+        console.error(`API Error in action:`, error);
         if (error.type === 'entity.too.large') {
-            return res.status(413).json({ error: 'Загруженное изображение слишком большое.' });
+             return res.status(413).json({ error: 'Загруженное изображение слишком большое. Пожалуйста, выберите файл меньшего размера.' });
         }
         const errorMessage = error.message || 'Произошла неизвестная ошибка сервера.';
         return res.status(500).json({ error: errorMessage });
     }
 };
 
-// --- Маршруты API, адаптированные под Vertex AI ---
+// --- Обновленные API маршруты для Vertex AI ---
 
-// Генерация/редактирование изображения
-const generateImageVertex = async (payload) => {
-    const { prompt, image } = payload;
+app.post('/api/generateVariation', createApiHandler(async ({ prompt, image }) => {
     const request = {
-        prompt: prompt,
-        // Для редактирования передаем исходное изображение
-        ...(image && { image: { bytesBase64Encoded: image.base64 } }),
-        sampleCount: 1,
-        // Добавляем параметр `mode: 'image-variation'` для редактирования
-        ...(image && { mode: 'image-variation' }),
+        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] }],
     };
-
-    const response = await imageGenerationModel.generateImages(request);
-    
-    if (response?.images?.[0]?.bytesBase64Encoded) {
-        const generatedImage = response.images[0];
-        return { imageUrl: `data:image/png;base64,${generatedImage.bytesBase64Encoded}` };
+    const responseStream = await imageModel.generateContentStream(request);
+    const aggregatedResponse = await responseStream.response;
+    const imagePart = aggregatedResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    if (imagePart?.inlineData) {
+        return { imageUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
     }
-    throw new Error('Изображение не сгенерировано. Vertex AI не вернул результат.');
-};
+    throw new Error(`Изображение не сгенерировано. Причина: ${aggregatedResponse.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
+}));
 
-
-// Анализ фото для определения категории и улыбки
-app.post('/api/checkImageSubject', createApiHandler(async (payload) => {
-    const { image } = payload;
+app.post('/api/generateWideImage', createApiHandler(async ({ prompt, image }) => {
     const request = {
-        contents: [{
-            role: 'user',
-            parts: [
-                { inlineData: { mimeType: image.mimeType, data: image.base64 } },
-                { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки). Ответ дай в формате JSON: {"category": "...", "smile": "..."}' }
-            ]
-        }],
+        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] }],
     };
-    
-    const response = await textAndImageModel.generateContent(request);
-    const text = response.response.candidates[0].content.parts[0].text;
-    const cleanedText = text.replace(/```json|```/g, '').trim();
+    const responseStream = await imageModel.generateContentStream(request);
+    const aggregatedResponse = await responseStream.response;
+    const imagePart = aggregatedResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    if (imagePart?.inlineData) {
+        return { imageUrl: `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}` };
+    }
+    throw new Error(`Изображение не сгенерировано. Причина: ${aggregatedResponse.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
+}));
 
+app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
+    const request = {
+        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] }],
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: { type: 'OBJECT', properties: { category: { type: 'STRING' }, smile: { type: 'STRING' } } }
+        }
+    };
+    const responseStream = await textModel.generateContentStream(request);
+    const aggregatedResponse = await responseStream.response;
+    const subjectDetailsText = aggregatedResponse.candidates[0].content.parts[0].text;
     try {
-        const subjectDetailsObject = JSON.parse(cleanedText);
+        const subjectDetailsObject = JSON.parse(subjectDetailsText);
+        if (typeof subjectDetailsObject !== 'object' || subjectDetailsObject === null || !('category' in subjectDetailsObject) || !('smile' in subjectDetailsObject)) {
+            throw new Error('Получен некорректный формат данных от AI.');
+        }
         return { subjectDetails: subjectDetailsObject };
     } catch (e) {
-        console.error("Ошибка парсинга JSON от Vertex AI:", cleanedText, e);
-        throw new Error("Не удалось разобрать ответ от AI.");
+        console.error("Ошибка парсинга JSON от Vertex AI:", subjectDetailsText, e);
+        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
     }
 }));
 
-
-// Анализ изображения для получения текста (одежда, локация)
-app.post('/api/analyzeImageForText', createApiHandler(async (payload) => {
-    const { image, analysisPrompt } = payload;
+app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
     const request = {
-        contents: [{
-            role: 'user',
-            parts: [
-                { inlineData: { mimeType: image.mimeType, data: image.base64 } },
-                { text: analysisPrompt }
-            ]
-        }]
+        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] }],
     };
-    const response = await textAndImageModel.generateContent(request);
-    const text = response.response.candidates[0].content.parts[0].text;
+    const responseStream = await textModel.generateContentStream(request);
+    const aggregatedResponse = await responseStream.response;
+    const text = aggregatedResponse.candidates[0].content.parts[0].text;
     return { text: text.trim() };
 }));
 
+app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
+    const requestParts = parts.map(part => {
+        if (part.inlineData) {
+            return fileToPart(part.inlineData.data, part.inlineData.mimeType);
+        }
+        return part; // Для текстовых частей
+    });
 
-// Генерация 4 вариаций (теперь это 4 вызова image-variation)
-app.post('/api/generateVariation', createApiHandler(generateImageVertex));
-
-// Генерация фотосессии (сложный промпт с несколькими частями)
-app.post('/api/generatePhotoshoot', createApiHandler(async (payload) => {
-    const { parts } = payload; // parts - это массив объектов {text: ...} или {inlineData: ...}
-    
-    // Формируем запрос для Gemini в Vertex AI
-    const request = { contents: [{ role: 'user', parts: parts }] };
-    
-    // Используем модель Gemini для генерации, т.к. Imagen не поддерживает мультимодальные промпты такого типа
-    const response = await textAndImageModel.generateContent(request);
-    
-    const imagePart = response.response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    const request = {
+        contents: [{ role: 'user', parts: requestParts }],
+    };
+    const responseStream = await imageModel.generateContentStream(request);
+    const aggregatedResponse = await responseStream.response;
+    const imagePart = aggregatedResponse.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
     if (imagePart?.inlineData) {
         const resultUrl = `data:${imagePart.inlineData.mimeType};base64,${imagePart.inlineData.data}`;
         return { resultUrl, generatedPhotoshootResult: { base64: imagePart.inlineData.data, mimeType: imagePart.inlineData.mimeType } };
     }
-    // Если изображение не найдено, проверяем причину блокировки
-    const finishReason = response.response.candidates?.[0]?.finishReason;
-    const safetyRatings = response.response.candidates?.[0]?.safetyRatings;
-    let errorMessage = `Изображение не сгенерировано. Причина: ${finishReason || 'неизвестно'}.`;
-    if (finishReason === 'SAFETY') {
-        errorMessage += ` Проверьте safetyRatings: ${JSON.stringify(safetyRatings)}`;
-    }
-    throw new Error(errorMessage);
+    throw new Error(`Изображение не сгенерировано. Причина: ${aggregatedResponse.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 }));
 
-
-// --- Обслуживание статических файлов ---
+// Раздача статических файлов из папки 'dist'
 app.use(express.static(path.join(__dirname, 'dist')));
+
+// Раздача статических файлов из 'public' (для иконок и manifest.json)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// "Catchall" обработчик: для любого запроса, который не совпал выше,
+// отправляем index.html. Это важно для одностраничных приложений (SPA).
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
