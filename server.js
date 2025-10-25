@@ -1,52 +1,37 @@
-// server.js - Финальная версия, возвращенная на архитектуру Vertex AI.
+// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+require('dotenv').config();
+const { GoogleGenAI, Type } = require('@google/genai');
 
-// --- ЗАГРУЗКА .ENV ---
-// Явно указываем путь к файлу .env, используя текущую рабочую директорию процесса.
-// Это самый надежный способ для работы с pm2.
-require('dotenv').config({ path: path.join(process.cwd(), '.env') });
-
-const { VertexAI } = require('@google-cloud/aiplatform');
-
-// --- Диагностика .env для Vertex AI ---
+// --- Диагностика .env для Gemini ---
 console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
-if (process.env.PROJECT_ID) {
-  console.log('DIAGNOSTICS: PROJECT_ID успешно загружен.');
+if (process.env.API_KEY) {
+  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
 } else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная PROJECT_ID не найдена.');
-}
-if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-  console.log('DIAGNOSTICS: GOOGLE_APPLICATION_CREDENTIALS успешно загружен.');
-} else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_APPLICATION_CREDENTIALS не найдена.');
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
 }
 // --- Конец диагностики ---
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-if (!process.env.PROJECT_ID || !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Не хватает конфигурации для Vertex AI.');
+if (!process.env.API_KEY) {
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_KEY не найден. Сервер не сможет работать.');
     process.exit(1); // Останавливаем сервер, если нет ключа
 }
 
-// --- Инициализация Vertex AI ---
-const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
-const model = 'gemini-1.5-flash-001';
-
-const generativeModel = vertex_ai.getGenerativeModel({
-    model: model,
-});
-
+// --- Инициализация Gemini ---
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const modelName = 'gemini-2.5-flash';
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Хелпер для преобразования base64 в формат Vertex AI Part
+// Хелпер для преобразования base64 в формат Gemini Part
 const fileToPart = (base64, mimeType) => ({
     inlineData: {
         data: base64,
@@ -72,15 +57,16 @@ const createApiHandler = (actionLogic) => async (req, res) => {
 // --- API маршруты ---
 
 const generateImageApiCall = async ({ prompt, image }) => {
-    const req = {
-        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] }],
-    };
-    const result = await generativeModel.generateContent(req);
-    const response = result.response;
+    const response = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
+    });
     
-    if (response.candidates && response.candidates.length > 0 && response.candidates[0].content.parts[0].inlineData) {
-        const inlineData = response.candidates[0].content.parts[0].inlineData;
-        return { imageUrl: `data:${inlineData.mimeType};base64,${inlineData.data}` };
+    // Проверяем, есть ли изображение в ответе
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+    if (imagePart && imagePart.inlineData) {
+        const { mimeType, data } = imagePart.inlineData;
+        return { imageUrl: `data:${mimeType};base64,${data}` };
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 };
@@ -89,60 +75,58 @@ app.post('/api/generateVariation', createApiHandler(generateImageApiCall));
 app.post('/api/generateWideImage', createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
-    const req = {
-        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] }],
-        generationConfig: {
+    const response = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
+        config: {
             responseMimeType: "application/json",
-            responseSchema: { type: 'OBJECT', properties: { category: { type: 'STRING' }, smile: { type: 'STRING' } } }
+            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
         }
-    };
-    const result = await generativeModel.generateContent(req);
-    const response = result.response;
-    const jsonText = response.candidates[0].content.parts[0].text;
-    
+    });
+
     try {
+        const jsonText = response.text.trim();
         const subjectDetails = JSON.parse(jsonText);
         if (typeof subjectDetails !== 'object' || subjectDetails === null || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
             throw new Error('Получен некорректный формат данных от AI.');
         }
         return { subjectDetails };
     } catch (e) {
-        console.error("Ошибка парсинга JSON от Vertex AI:", jsonText, e);
+        console.error("Ошибка парсинга JSON от Gemini:", response.text, e);
         throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
     }
 }));
 
 app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
-    const req = {
-        contents: [{ role: 'user', parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] }],
-    };
-    const result = await generativeModel.generateContent(req);
-    const response = result.response;
-    const text = response.candidates[0].content.parts[0].text;
-    return { text: text.trim() };
+    const response = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] },
+    });
+    return { text: response.text.trim() };
 }));
 
 app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
-    const vertexParts = parts.map(part => {
+    const geminiParts = parts.map(part => {
         if (part.inlineData) {
             return fileToPart(part.inlineData.data, part.inlineData.mimeType);
         }
         return part; // Для текстовых частей
     });
-    
-    const req = {
-        contents: [{ role: 'user', parts: vertexParts }],
-    };
-    const result = await generativeModel.generateContent(req);
-    const response = result.response;
 
-    if (response.candidates && response.candidates.length > 0 && response.candidates[0].content.parts[0].inlineData) {
-        const inlineData = response.candidates[0].content.parts[0].inlineData;
-        const resultUrl = `data:${inlineData.mimeType};base64,${inlineData.data}`;
-        return { resultUrl, generatedPhotoshootResult: { base64: inlineData.data, mimeType: inlineData.mimeType } };
+    const response = await ai.models.generateContent({
+        model: modelName,
+        contents: { parts: geminiParts },
+    });
+    
+    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
+    if (imagePart && imagePart.inlineData) {
+        const { mimeType, data } = imagePart.inlineData;
+        const resultUrl = `data:${mimeType};base64,${data}`;
+        return { resultUrl, generatedPhotoshootResult: { base64: data, mimeType: mimeType } };
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 }));
+
 
 // Раздача статических файлов
 const distPath = path.join(__dirname, '..', 'dist');
