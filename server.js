@@ -1,11 +1,14 @@
 // server.js - Обновленный бэкенд для работы с Vertex AI
 import express from 'express';
 import cors from 'cors';
-// Исправленный импорт для совместимости с CommonJS модулем
-import aiplatform from '@google-cloud/aiplatform';
+// ИСПОЛЬЗУЕМ createRequire ДЛЯ НАДЕЖНОЙ ЗАГРУЗКИ CommonJS МОДУЛЯ
+import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+
+const require = createRequire(import.meta.url);
+const aiplatform = require('@google-cloud/aiplatform');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,10 +38,11 @@ const port = process.env.PORT || 3001;
 // --- Инициализация Vertex AI ---
 if (!process.env.PROJECT_ID) {
     console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! PROJECT_ID не найден.');
+    process.exit(1); // Останавливаем сервер, если нет PROJECT_ID
 }
 
-// CORRECT FIX: The VertexAI class is a property on the default export of the CJS module.
-const { VertexAI } = aiplatform.default;
+// Извлекаем конструктор из загруженного модуля
+const { VertexAI } = aiplatform;
 const vertex_ai = new VertexAI({ project: process.env.PROJECT_ID, location: 'us-central1' });
 
 const textModel = vertex_ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -62,9 +66,6 @@ const fileToPart = (base64, mimeType) => {
 // Общий обработчик для всех API-запросов
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
-        if (!process.env.PROJECT_ID) {
-            throw new Error('PROJECT_ID не найден. Убедитесь, что переменная окружения установлена на сервере (в файле .env).');
-        }
         const responsePayload = await actionLogic(req.body);
         return res.status(200).json(responsePayload);
     } catch (error) {
