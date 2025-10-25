@@ -1,12 +1,14 @@
 // server.js - Финальная версия, возвращенная на архитектуру Vertex AI.
 
-// --- ЗАГРУЗКА .ENV ---
-// Это самая важная строка. Она загружает переменные из файла .env.
-require('dotenv').config();
-
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+
+// --- ЗАГРУЗКА .ENV ---
+// Явно указываем путь к файлу .env, чтобы избежать проблем с рабочей директорией pm2.
+// __dirname указывает на папку, где находится ЗАПУСКАЕМЫЙ файл (dist), поэтому мы поднимаемся на один уровень вверх (../).
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
 const { VertexAI } = require('@google-cloud/aiplatform');
 
 // --- Диагностика .env для Vertex AI ---
@@ -143,8 +145,8 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 // Раздача статических файлов
-const distPath = path.join(__dirname, 'dist');
-const publicPath = path.join(__dirname, 'public');
+const distPath = path.join(__dirname, '..', 'dist');
+const publicPath = path.join(__dirname, '..', 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
