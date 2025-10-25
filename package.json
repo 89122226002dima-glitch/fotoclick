@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
+    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js --external:express --external:cors --external:dotenv --external:@google-cloud/aiplatform",
     "start": "node dist/server.bundle.js"
   },
   "dependencies": {
