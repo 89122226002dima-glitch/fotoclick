@@ -1,15 +1,11 @@
-// server.js - Новая, стабильная версия на @google/genai
+// server.js - Финальная, кардинально измененная версия.
+// Используем стандартный require, сборщик esbuild решит все проблемы с путями.
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const { GoogleGenAI, Modality, Type } = require('@google/genai');
 require('dotenv').config();
-
-// --- Кардинальное решение проблемы 'MODULE_NOT_FOUND' ---
-// Используем require.resolve, чтобы получить абсолютный путь к модулю.
-// Это обходит возможные проблемы с разрешением путей в среде PM2.
-const genAiPath = require.resolve('@google/genai');
-const { GoogleGenAI, Modality, Type } = require(genAiPath);
 
 
 // --- Диагностика .env ---
