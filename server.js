@@ -5,7 +5,12 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
 
-const { GoogleGenAI, Modality, Type } = require('@google/genai');
+// --- Кардинальное решение проблемы 'MODULE_NOT_FOUND' ---
+// Используем require.resolve, чтобы получить абсолютный путь к модулю.
+// Это обходит возможные проблемы с разрешением путей в среде PM2.
+const genAiPath = require.resolve('@google/genai');
+const { GoogleGenAI, Modality, Type } = require(genAiPath);
+
 
 // --- Диагностика .env ---
 console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
