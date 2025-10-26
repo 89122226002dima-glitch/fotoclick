@@ -54,7 +54,9 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement, generateHorizontalCollageButton: HTMLButtonElement, generateVerticalCollageButton: HTMLButtonElement, collageOutputGallery: HTMLDivElement;
+    applyPromoButton: HTMLButtonElement, generateHorizontalCollageButton: HTMLButtonElement, generateVerticalCollageButton: HTMLButtonElement, collageOutputGallery: HTMLDivElement,
+    paymentSelectionView: HTMLDivElement, paymentProcessingView: HTMLDivElement, paymentFinalView: HTMLDivElement,
+    paymentProceedButton: HTMLButtonElement, paymentMethodsContainer: HTMLDivElement;
 
 
 // --- State Variables ---
@@ -769,13 +771,6 @@ async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; ge
     }
 }
 
-
-const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
-const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
-const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
-const paymentProceedButton = document.querySelector('#payment-proceed-button') as HTMLButtonElement;
-const paymentMethodsContainer = document.querySelector('#payment-methods') as HTMLDivElement;
-
 function showPaymentModal() {
     if (paymentModalOverlay) {
         paymentSelectionView.classList.remove('hidden');
@@ -1172,6 +1167,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   generateHorizontalCollageButton = document.querySelector('#generate-horizontal-collage-button')!;
   generateVerticalCollageButton = document.querySelector('#generate-vertical-collage-button')!;
   collageOutputGallery = document.querySelector('#collage-output-gallery')!;
+  paymentSelectionView = document.querySelector('#payment-selection-view')!;
+  paymentProcessingView = document.querySelector('#payment-processing-view')!;
+  paymentFinalView = document.querySelector('#payment-final-view')!;
+  paymentProceedButton = document.querySelector('#payment-proceed-button')!;
+  paymentMethodsContainer = document.querySelector('#payment-methods')!;
+
 
   try {
     const savedCredits = localStorage.getItem('generationCredits');
