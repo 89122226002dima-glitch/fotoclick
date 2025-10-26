@@ -76,7 +76,6 @@ const generateImageApiCall = async ({ prompt, image }) => {
 };
 
 app.post('/api/generateVariation', createApiHandler(generateImageApiCall));
-app.post('/api/generateWideImage', createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
