@@ -799,8 +799,34 @@ function handlePaymentConfirmation() {
     if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
 }
 
+function updatePage1WizardState() {
+    const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
+    const clothingPromptInput = document.getElementById('clothing-prompt') as HTMLInputElement;
+    const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
 
-let updatePage1WizardState: () => void = () => {};
+    if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
+    const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
+    const creditsNeeded = 1;
+
+    if (generationCredits >= creditsNeeded) {
+        generatePhotoshootButton.disabled = !isReady;
+        generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
+    } else {
+        generatePhotoshootButton.disabled = false; // Always enable to trigger modal
+        generatePhotoshootButton.innerHTML = `Начать фотосессию (${generationCredits} кредитов)`;
+    }
+
+    // Wizard Logic
+    if (!page1ReferenceImage) {
+        setWizardStep('PAGE1_PHOTO');
+    } else if (!page1ClothingImage && !clothingPromptInput.value.trim()) {
+        setWizardStep('PAGE1_CLOTHING');
+    } else if (!locationPromptInput.value.trim()) {
+        setWizardStep('PAGE1_LOCATION');
+    } else {
+        setWizardStep('PAGE1_GENERATE');
+    }
+};
 
 function initializePage1Wizard() {
     const subtitle = document.getElementById('page1-subtitle') as HTMLParagraphElement;
@@ -940,35 +966,6 @@ function initializePage1Wizard() {
             updatePage1WizardState();
         }
     }
-
-    updatePage1WizardState = () => {
-        const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
-        const clothingPromptInput = document.getElementById('clothing-prompt') as HTMLInputElement;
-        const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
-
-        if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
-        const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
-        const creditsNeeded = 1;
-    
-        if (generationCredits >= creditsNeeded) {
-            generatePhotoshootButton.disabled = !isReady;
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
-        } else {
-            generatePhotoshootButton.disabled = false; // Always enable to trigger modal
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (${generationCredits} кредитов)`;
-        }
-
-        // Wizard Logic
-        if (!page1ReferenceImage) {
-            setWizardStep('PAGE1_PHOTO');
-        } else if (!page1ClothingImage && !clothingPromptInput.value.trim()) {
-            setWizardStep('PAGE1_CLOTHING');
-        } else if (!locationPromptInput.value.trim()) {
-            setWizardStep('PAGE1_LOCATION');
-        } else {
-            setWizardStep('PAGE1_GENERATE');
-        }
-    };
 
     const resetWizard = () => {
         subtitle.textContent = 'Шаг 1: Загрузите ваше фото для начала';
