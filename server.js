@@ -25,7 +25,7 @@ if (!process.env.API_KEY) {
 
 // --- Инициализация Gemini ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const modelName = 'gemini-2.5-flash';
+const modelName = 'gemini-2.5-flash-image'; // ИЗМЕНЕНО: Используем модель для изображений
 
 // Middleware
 app.use(cors());
@@ -60,6 +60,9 @@ const generateImageApiCall = async ({ prompt, image }) => {
     const response = await ai.models.generateContent({
         model: modelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
+        config: { // ДОБАВЛЕНО: Явно запрашиваем изображение
+            responseModalities: ['IMAGE'],
+        },
     });
     
     // Проверяем, есть ли изображение в ответе
@@ -76,7 +79,7 @@ app.post('/api/generateWideImage', createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: 'gemini-2.5-flash', // Для этой задачи текстовая модель подходит лучше
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
         config: {
             responseMimeType: "application/json",
@@ -99,7 +102,7 @@ app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
 
 app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: 'gemini-2.5-flash', // И здесь текстовая модель подходит лучше
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] },
     });
     return { text: response.text.trim() };
@@ -116,6 +119,9 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
     const response = await ai.models.generateContent({
         model: modelName,
         contents: { parts: geminiParts },
+        config: { // ДОБАВЛЕНО: Явно запрашиваем изображение
+            responseModalities: ['IMAGE'],
+        },
     });
     
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
