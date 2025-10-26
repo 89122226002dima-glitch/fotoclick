@@ -165,6 +165,60 @@ async function resizeImage(imageState: ImageState): Promise<ImageState> {
 }
 
 /**
+ * Automatically crops a portrait image to improve composition.
+ * @param imageState The image to process.
+ * @param topPercent The percentage to crop from the top.
+ * @param bottomPercent The percentage to crop from the bottom.
+ * @returns A promise that resolves with the cropped image state, or the original if not portrait.
+ */
+async function cropImage(imageState: ImageState, topPercent: number, bottomPercent: number): Promise<ImageState> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const originalWidth = img.width;
+            const originalHeight = img.height;
+
+            // Only crop if it's a portrait image (height > width)
+            if (originalHeight <= originalWidth) {
+                resolve(imageState); // Return original if not portrait
+                return;
+            }
+
+            const topCrop = originalHeight * (topPercent / 100);
+            const bottomCrop = originalHeight * (bottomPercent / 100);
+            const newHeight = originalHeight - topCrop - bottomCrop;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = originalWidth;
+            canvas.height = newHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Не удалось получить 2D контекст холста для обрезки.'));
+            }
+            
+            // Draw the middle part of the source image onto the new, smaller canvas
+            ctx.drawImage(img,
+                0, topCrop,                 // Source x, y (start cropping from 10% down)
+                originalWidth, newHeight,  // Source width, height (the middle 80% of the image)
+                0, 0,                      // Destination x, y (draw at the top-left of the canvas)
+                originalWidth, newHeight   // Destination width, height (fill the new canvas)
+            );
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            const [, base64] = dataUrl.split(',');
+            const mimeType = 'image/jpeg';
+
+            resolve({ base64, mimeType });
+        };
+        img.onerror = (err) => {
+            console.error("Ошибка при загрузке изображения для обрезки:", err);
+            reject(new Error('Не удалось загрузить изображение для обрезки.'));
+        };
+        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+    });
+}
+
+/**
  * A generic helper function to make API calls to our own server backend.
  * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
  * @param body The JSON payload to send.
@@ -888,14 +942,21 @@ function initializePage1Wizard() {
             parts.push({ text: promptText.trim() });
     
             const data = await generatePhotoshoot(parts);
-            generatedPhotoshootResult = data.generatedPhotoshootResult;
             
+            // Применяем "умную" обрезку ТОЛЬКО если использовалось фото одежды.
+            if (page1ClothingImage) {
+                generatedPhotoshootResult = await cropImage(data.generatedPhotoshootResult, 10, 10);
+            } else {
+                generatedPhotoshootResult = data.generatedPhotoshootResult;
+            }
+            const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
+
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
-                    <img src="${data.resultUrl}" alt="Сгенерированная фотосессия" class="w-full h-auto object-contain rounded-lg max-h-[60vh]"/>
+                    <img src="${resultUrl}" alt="Сгенерированная фотосессия" class="w-full h-auto object-contain rounded-lg max-h-[60vh]"/>
                     <div class="result-actions">
-                         <a href="${data.resultUrl}" download="fotosessiya-${Date.now()}.png" class="result-action-button" title="Скачать"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></a>
+                         <a href="${resultUrl}" download="fotosessiya-${Date.now()}.png" class="result-action-button" title="Скачать"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></a>
                     </div></div>`;
-            photoshootResultContainer.querySelector('.generated-photoshoot-wrapper')?.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(data.resultUrl); });
+            photoshootResultContainer.querySelector('.generated-photoshoot-wrapper')?.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(resultUrl); });
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
