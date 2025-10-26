@@ -54,7 +54,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement;
+    applyPromoButton: HTMLButtonElement, generateHorizontalCollageButton: HTMLButtonElement, generateVerticalCollageButton: HTMLButtonElement, collageOutputGallery: HTMLDivElement;
 
 
 // --- State Variables ---
@@ -283,6 +283,7 @@ function resetApp() {
   uploadContainer.classList.add('aspect-square');
   imageUpload.value = '';
   outputGallery.innerHTML = '';
+  collageOutputGallery.innerHTML = '';
   selectPlan('close_up');
   customPromptInput.value = '';
   statusEl.innerText = 'Приложение сброшено. Загрузите новое изображение.';
@@ -305,6 +306,8 @@ function setControlsDisabled(disabled: boolean) {
   buttons.forEach((btn) => (btn.disabled = disabled));
   if (disabled) {
     generateButton.disabled = true;
+    generateHorizontalCollageButton.disabled = true;
+    generateVerticalCollageButton.disabled = true;
   } else {
     updateAllGenerateButtons();
   }
@@ -314,7 +317,7 @@ function displayErrorInContainer(container: HTMLElement, message: string, clearC
   if (clearContainer) container.innerHTML = '';
   const errorContainer = document.createElement('div');
   errorContainer.className = 'bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center flex flex-col items-center justify-center w-full';
-  if (container.id === 'output-gallery') errorContainer.classList.add('col-span-1', 'md:col-span-2');
+  if (container.id === 'output-gallery' || container.id === 'collage-output-gallery') errorContainer.classList.add('col-span-1', 'md:col-span-2');
   errorContainer.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-red-400 mb-4" viewBox="0 0 20 20" fill="currentColor">
       <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
@@ -386,6 +389,23 @@ function updateAllGenerateButtons() {
         } else {
             generateButton.disabled = false;
             generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
+        }
+    }
+
+    // Page 3 Buttons
+    if (generateHorizontalCollageButton && generateVerticalCollageButton) {
+        const creditsNeeded = 2;
+        const buttonText = `(${creditsNeeded} кредита)`;
+        if (generationCredits >= creditsNeeded) {
+            generateHorizontalCollageButton.innerHTML = `Создать горизонтальный коллаж ${buttonText}`;
+            generateVerticalCollageButton.innerHTML = `Создать вертикальный коллаж ${buttonText}`;
+            generateHorizontalCollageButton.disabled = !referenceImage;
+            generateVerticalCollageButton.disabled = !referenceImage;
+        } else {
+            generateHorizontalCollageButton.disabled = false; // Enable to show modal
+            generateVerticalCollageButton.disabled = false; // Enable to show modal
+            generateHorizontalCollageButton.innerHTML = `Создать горизонтальный коллаж (${generationCredits} кредитов)`;
+            generateVerticalCollageButton.innerHTML = `Создать вертикальный коллаж (${generationCredits} кредитов)`;
         }
     }
     
@@ -627,6 +647,8 @@ function setupNavigation() {
             } else {
                 setWizardStep('NONE');
             }
+        } else if (pageId === 'page3') {
+            updateAllGenerateButtons();
         }
     };
     navContainer.addEventListener('click', (event) => {
@@ -1047,7 +1069,7 @@ function initializePage1Wizard() {
 function getUploaderPlaceholderHtml(): string {
   return `<div class="w-full h-full flex flex-col items-center justify-center p-4 gap-4">
     <div class="w-full max-w-xs aspect-square border border-stone-400/50 rounded-lg flex items-center justify-center p-2">
-      <svg version="1.0" xmlns="http://www.w3.org/2000/svg" width="1024pt" height="1024pt" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid" meet" class="w-full h-full object-contain text-stone-600 opacity-70 pointer-events-none">
+      <svg version="1.0" xmlns="http://www.w3.org/2000/svg" width="1024pt" height="1024pt" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid meet" class="w-full h-full object-contain text-stone-600 opacity-70 pointer-events-none">
         <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
           <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
           <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
@@ -1147,6 +1169,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   creditCounterEl = document.querySelector('#credit-counter')!;
   promoCodeInput = document.querySelector('#promo-code-input')!;
   applyPromoButton = document.querySelector('#apply-promo-button')!;
+  generateHorizontalCollageButton = document.querySelector('#generate-horizontal-collage-button')!;
+  generateVerticalCollageButton = document.querySelector('#generate-vertical-collage-button')!;
+  collageOutputGallery = document.querySelector('#collage-output-gallery')!;
 
   try {
     const savedCredits = localStorage.getItem('generationCredits');
@@ -1184,6 +1209,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     lightboxCloseButton.addEventListener('click', hideLightbox);
 
     generateButton.addEventListener('click', generate);
+    generateHorizontalCollageButton.addEventListener('click', () => generateCollage('horizontal'));
+    generateVerticalCollageButton.addEventListener('click', () => generateCollage('vertical'));
     resetButton.addEventListener('click', resetApp);
     applyPromoButton.addEventListener('click', applyPromoCode);
     promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
@@ -1305,3 +1332,216 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
   }
 });
+
+/**
+ * "Smart" splits an image, automatically trimming whitespace/empty borders before splitting.
+ * @param base64Url The base64 data URL of the source image.
+ * @param direction The direction to split: 'horizontal' or 'vertical'.
+ * @returns A promise that resolves with an array of two base64 data URLs.
+ */
+async function smartSplitAndTrimImage(base64Url: string, direction: 'horizontal' | 'vertical'): Promise<[string, string]> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            if (!ctx) return reject('Could not get canvas context');
+            
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            ctx.drawImage(img, 0, 0);
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+
+            let top = canvas.height, left = canvas.width, right = 0, bottom = 0;
+
+            const isContent = (r: number, g: number, b: number, a: number) => {
+                // Consider a pixel as content if it's not close to pure white and has some opacity
+                const isWhite = r > 250 && g > 250 && b > 250;
+                return !isWhite && a > 10;
+            };
+
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    const i = (y * canvas.width + x) * 4;
+                    if (isContent(data[i], data[i + 1], data[i + 2], data[i + 3])) {
+                        top = Math.min(top, y);
+                        left = Math.min(left, x);
+                        right = Math.max(right, x);
+                        bottom = Math.max(bottom, y);
+                    }
+                }
+            }
+            
+            const contentWidth = right - left + 1;
+            const contentHeight = bottom - top + 1;
+
+            if (contentWidth <= 0 || contentHeight <= 0) {
+                 return reject('Не удалось найти контент на изображении для разделения.');
+            }
+            
+            let part1: string, part2: string;
+            
+            if (direction === 'horizontal') {
+                const halfWidth = Math.floor(contentWidth / 2);
+                
+                const canvas1 = document.createElement('canvas');
+                canvas1.width = halfWidth;
+                canvas1.height = contentHeight;
+                const ctx1 = canvas1.getContext('2d');
+                if (!ctx1) return reject('Could not get part 1 canvas context');
+                ctx1.drawImage(canvas, left, top, halfWidth, contentHeight, 0, 0, halfWidth, contentHeight);
+                part1 = canvas1.toDataURL('image/jpeg', 0.9);
+                
+                const canvas2 = document.createElement('canvas');
+                canvas2.width = contentWidth - halfWidth;
+                canvas2.height = contentHeight;
+                const ctx2 = canvas2.getContext('2d');
+                if (!ctx2) return reject('Could not get part 2 canvas context');
+                ctx2.drawImage(canvas, left + halfWidth, top, contentWidth - halfWidth, contentHeight, 0, 0, contentWidth - halfWidth, contentHeight);
+                part2 = canvas2.toDataURL('image/jpeg', 0.9);
+                
+            } else { // vertical
+                const halfHeight = Math.floor(contentHeight / 2);
+
+                const canvas1 = document.createElement('canvas');
+                canvas1.width = contentWidth;
+                canvas1.height = halfHeight;
+                const ctx1 = canvas1.getContext('2d');
+                if (!ctx1) return reject('Could not get part 1 canvas context');
+                ctx1.drawImage(canvas, left, top, contentWidth, halfHeight, 0, 0, contentWidth, halfHeight);
+                part1 = canvas1.toDataURL('image/jpeg', 0.9);
+                
+                const canvas2 = document.createElement('canvas');
+                canvas2.width = contentWidth;
+                canvas2.height = contentHeight - halfHeight;
+                const ctx2 = canvas2.getContext('2d');
+                if (!ctx2) return reject('Could not get part 2 canvas context');
+                ctx2.drawImage(canvas, left, top + halfHeight, contentWidth, contentHeight - halfHeight, 0, 0, contentWidth, contentHeight - halfHeight);
+                part2 = canvas2.toDataURL('image/jpeg', 0.9);
+            }
+            
+            resolve([part1, part2]);
+        };
+        img.onerror = () => reject('Не удалось загрузить изображение для разделения.');
+        img.src = base64Url;
+    });
+}
+
+
+async function generateCollage(direction: 'horizontal' | 'vertical') {
+    const creditsNeeded = 2;
+
+    if (generationCredits < creditsNeeded) {
+        showPaymentModal();
+        return;
+    }
+
+    if (!referenceImage || !detectedSubjectCategory || !prompts) {
+        displayErrorInContainer(collageOutputGallery, 'Пожалуйста, сначала загрузите референсное изображение на странице "4 Вариации".');
+        return;
+    }
+    
+    setControlsDisabled(true);
+    collageOutputGallery.innerHTML = `<div class="md:col-span-2 flex justify-center items-center flex-col min-h-[300px]">
+        <div class="loading-spinner"></div>
+        <p class="mt-4">Создаем ${direction === 'horizontal' ? 'широкоформатный' : 'вертикальный'} диптих...</p>
+    </div>`;
+    
+    try {
+        generationCredits -= creditsNeeded;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+
+        // 1. Get prompts for close-up shots
+        let poses: string[] = [];
+        switch (detectedSubjectCategory) {
+            case 'man': poses = poseSequences.maleCloseUp; break;
+            case 'woman': poses = poseSequences.femaleCloseUp; break;
+            case 'elderly_man': poses = poseSequences.elderlyMaleCloseUp; break;
+            case 'elderly_woman': poses = poseSequences.elderlyFemaleCloseUp; break;
+            default: poses = poseSequences.femaleCloseUp; break;
+        }
+
+        const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
+        const shuffledAngles = shuffle(angles);
+        const planInstruction = getPlanInstruction('close_up');
+
+        // Get two distinct poses and angles
+        const pose1 = poses[malePoseIndex++ % poses.length] || poses[femalePoseIndex++ % poses.length];
+        const pose2 = poses[malePoseIndex++ % poses.length] || poses[femalePoseIndex++ % poses.length];
+        const changes1 = [planInstruction, shuffledAngles[0], pose1].filter(Boolean).join(', ');
+        const changes2 = [planInstruction, shuffledAngles[1], pose2].filter(Boolean).join(', ');
+
+        // 2. Construct the master prompt based on direction
+        let masterPrompt: string;
+        if (direction === 'horizontal') {
+            masterPrompt = `Это референсное фото. Твоя задача — сгенерировать одно широкоформатное фото-диптих (две фотографии рядом), следуя строгим правилам.
+
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица, цвет кожи, прическа и выражение лица человека на ОБЕИХ панелях диптиха должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.
+2.  **ЕДИНЫЙ СТИЛЬ:** Обе панели должны быть в едином стиле, с одинаковой одеждой и фоном, взятыми с референса.
+3.  **РАЗНАЯ КОМПОЗИЦИЯ:** Каждая панель должна иметь свою уникальную композицию.
+4.  **ФОРМАТ:** Итоговое изображение должно быть ОДНИМ, широким, кинематографичным, с соотношением сторон примерно 32:9 или 2:1.
+
+ЗАДАНИЕ ДЛЯ ПАНЕЛЕЙ:
+- **Левая панель:** Примени следующие изменения: "${changes1}".
+- **Правая панель:** Примени следующие изменения: "${changes2}".
+
+Результат — только одно широкоформатное изображение без текста.`;
+        } else { // vertical
+            masterPrompt = `Это референсное фото. Твоя задача — сгенерировать одно высокое фото-диптих (две фотографии одна над другой), следуя строгим правилам.
+
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица, цвет кожи, прическа и выражение лица человека на ОБЕИХ панелях диптиха должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.
+2.  **ЕДИНЫЙ СТИЛЬ:** Обе панели должны быть в едином стиле, с одинаковой одеждой и фоном, взятыми с референса.
+3.  **РАЗНАЯ КОМПОЗИЦИЯ:** Каждая панель должна иметь свою уникальную композицию.
+4.  **ФОРМАТ:** Итоговое изображение должно быть ОДНИМ, высоким, с соотношением сторон примерно 9:32 или 1:2.
+
+ЗАДАНИЕ ДЛЯ ПАНЕЛЕЙ:
+- **Верхняя панель:** Примени следующие изменения: "${changes1}".
+- **Нижняя панель:** Примени следующие изменения: "${changes2}".
+
+Результат — только одно высокое изображение без текста.`;
+        }
+
+
+        // 3. Call the API endpoint
+        const data = await callApi('/api/generateWideImage', { prompt: masterPrompt, image: referenceImage });
+        const wideImageUrl = data.imageUrl;
+
+        // 4. Split the image using the new smart function
+        const loadingTextEl = collageOutputGallery.querySelector('p');
+        if (loadingTextEl) loadingTextEl.textContent = 'Обрезаем и разделяем изображение...';
+        
+        const [part1Src, part2Src] = await smartSplitAndTrimImage(wideImageUrl, direction);
+
+        // 5. Display the results
+        collageOutputGallery.innerHTML = '';
+        collageOutputGallery.className = `w-full max-w-4xl mt-6 grid grid-cols-1 ${direction === 'horizontal' ? 'md:grid-cols-2' : 'md:grid-cols-1'} gap-4 items-start`;
+        
+        [part1Src, part2Src].forEach((src, index) => {
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'gallery-item cursor-pointer';
+            imgContainer.innerHTML = `
+                <img src="${src}" alt="Часть коллажа ${index + 1}" class="w-full h-full object-cover block rounded-lg"/>
+                <a href="${src}" download="kollazh-${direction}-${index + 1}-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                </a>`;
+            
+            imgContainer.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(src); });
+            imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+
+            collageOutputGallery.appendChild(imgContainer);
+        });
+
+    } catch (e) {
+        generationCredits += creditsNeeded;
+        updateCreditCounterUI();
+        const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
+        displayErrorInContainer(collageOutputGallery, errorMessage);
+    } finally {
+        setControlsDisabled(false);
+    }
+}

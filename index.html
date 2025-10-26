@@ -30,7 +30,9 @@
     "path": "https://aistudiocdn.com/path@^0.12.7",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
     "url": "https://aistudiocdn.com/url@^0.11.4",
-    "dotenv": "https://aistudiocdn.com/dotenv@^17.2.3"
+    "dotenv": "https://aistudiocdn.com/dotenv@^17.2.3",
+    "@google-cloud/aiplatform": "https://aistudiocdn.com/@google-cloud/aiplatform@^5.11.0",
+    "module": "https://aistudiocdn.com/module@^1.2.5"
   }
 }
 </script>
@@ -65,6 +67,12 @@
                   <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V5h10a1 1 0 100-2H3zm12 4a1 1 0 011 1v7a1 1 0 01-1 1H9a1 1 0 01-1-1V8a1 1 0 011-1h6zm-1 2a1 1 0 10-2 0v1h-1a1 1 0 100 2h1v1a1 1 0 102 0v-1h1a1 1 0 100-2h-1V9z" clip-rule="evenodd" />
                 </svg>
                 <span>4 Вариации</span>
+              </button>
+              <button data-page="page3" class="nav-button">
+                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                   <path d="M5 3a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2V5a2 2 0 00-2-2H5zm9 11H6v-2h8v2zm0-3H6V9h8v2zm0-3H6V6h8v2z" />
+                 </svg>
+                <span>Коллаж</span>
               </button>
             </nav>
 
@@ -304,6 +312,33 @@
 
         </div>
         
+        <!-- Page 3 Content (New) -->
+        <div id="page3" class="page-content hidden">
+          <div class="text-center">
+            <h1 class="app-title tracking-tight">
+              Креативный Коллаж
+            </h1>
+            <p class="text-gray-400 mt-2 text-sm max-w-2xl mx-auto">
+              Создайте два уникальных крупных плана в одном стиле с помощью одного запроса.
+              <br/>
+              Используется референс, загруженный на странице "4 Вариации".
+            </p>
+          </div>
+          <div class="mt-8 flex flex-col items-center gap-4">
+              <div class="flex flex-col sm:flex-row gap-4">
+                <button id="generate-horizontal-collage-button" class="btn-primary">
+                    Создать горизонтальный коллаж (2 кредита)
+                </button>
+                <button id="generate-vertical-collage-button" class="btn-primary">
+                    Создать вертикальный коллаж (2 кредита)
+                </button>
+              </div>
+              <div id="collage-output-gallery" class="w-full max-w-4xl mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                  <!-- Collage results will be injected here -->
+              </div>
+          </div>
+        </div>
+
       </div>
     </div>
     
