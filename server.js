@@ -4,7 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 require('dotenv').config();
-const { GoogleGenAI, Type } = require('@google/genai');
+const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
 // --- Диагностика .env для Gemini ---
 console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
@@ -25,7 +25,8 @@ if (!process.env.API_KEY) {
 
 // --- Инициализация Gemini ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const modelName = 'gemini-2.5-flash';
+const imageModelName = 'gemini-2.5-flash-image';
+const textModelName = 'gemini-2.5-flash';
 
 // Middleware
 app.use(cors());
@@ -58,8 +59,11 @@ const createApiHandler = (actionLogic) => async (req, res) => {
 
 const generateImageApiCall = async ({ prompt, image }) => {
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: imageModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
     });
     
     // Проверяем, есть ли изображение в ответе
@@ -76,7 +80,7 @@ app.post('/api/generateWideImage', createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: textModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
         config: {
             responseMimeType: "application/json",
@@ -99,7 +103,7 @@ app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
 
 app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: textModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] },
     });
     return { text: response.text.trim() };
@@ -114,8 +118,11 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
     });
 
     const response = await ai.models.generateContent({
-        model: modelName,
+        model: imageModelName,
         contents: { parts: geminiParts },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
     });
     
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
