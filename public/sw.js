@@ -1,6 +1,6 @@
 // sw.js - Service Worker
 
-const CACHE_NAME = 'fotoclick-cache-v3'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
+const CACHE_NAME = 'fotoclick-cache-v4'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
 // Список файлов, которые нужно закэшировать для работы офлайн
 const URLS_TO_CACHE = [
   '/',
@@ -41,7 +41,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Обработка запросов: отдаем из кэша, если есть, иначе идем в сеть
+// Обработка запросов: стратегия "Сначала сеть, потом кэш" (Network-First)
 self.addEventListener('fetch', (event) => {
   // Мы не кэшируем API запросы
   if (event.request.url.includes('/api/')) {
@@ -49,30 +49,19 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        // Если ресурс есть в кэше, отдаем его
-        if (response) {
-          return response;
-        }
-
-        // Иначе, делаем запрос в сеть, кэшируем и отдаем
-        return fetch(event.request).then(
-          (response) => {
-            // Проверяем, что ответ корректный
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
-            }
-
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME)
-              .then((cache) => {
-                cache.put(event.request, responseToCache);
-              });
-
-            return response;
-          }
-        );
+    // 1. Пытаемся получить ресурс из сети
+    fetch(event.request)
+      .then((networkResponse) => {
+        // 2. Если успешно, кэшируем свежую версию и отдаем ее
+        return caches.open(CACHE_NAME).then((cache) => {
+          // Важно клонировать ответ, так как его можно использовать только один раз
+          cache.put(event.request, networkResponse.clone());
+          return networkResponse;
+        });
+      })
+      .catch(() => {
+        // 3. Если сеть недоступна, пытаемся отдать ресурс из кэша
+        return caches.match(event.request);
       })
   );
 });
