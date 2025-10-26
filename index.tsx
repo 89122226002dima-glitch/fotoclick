@@ -483,40 +483,28 @@ async function generate() {
         const planInstruction = getPlanInstruction(selectedPlan);
         if (planInstruction) allChanges.push(planInstruction);
 
-        let finalPrompt: string;
+        // Use a drastic, creative camera shift for every image.
+        allChanges.push(shuffledDrasticShifts[i] ?? shuffledAngles[i] ?? '');
 
-        if (i === 3) {
-            // Special logic for the 4th image with a drastic camera angle change
-            allChanges.push(shuffledDrasticShifts[0] ?? shuffledAngles[i] ?? '');
-            const customText = customPromptInput.value.trim();
-            if (customText) {
-                allChanges.push(`дополнительная деталь: ${customText}`);
-            }
-            // A specific pose is omitted to focus the AI on the difficult task of changing the angle and background
-            const changesDescription = allChanges.filter(Boolean).join(', ');
-
-            finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение со сменой ракурса, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **СОХРАНИ ОДЕЖДУ, ЗАМЕНИ ФОН:** Одежда человека должна быть взята с референсного фото. Однако, фон нужно ПОЛНОСТЬЮ заменить. Сгенерируй новый, фотореалистичный фон, который логично соответствует новому ракурсу камеры, указанному в пункте 3.\n3.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+        const customText = customPromptInput.value.trim();
+        if (customText) {
+            allChanges.push(`дополнительная деталь: ${customText}`);
         } else {
-            // Standard logic for the first 3 images
-            allChanges.push(shuffledAngles[i]);
-            const customText = customPromptInput.value.trim();
-            if (customText) {
-                allChanges.push(`дополнительная деталь: ${customText}`);
-            } else {
-                let currentPose: string;
-                if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) {
-                    currentPose = glamourPoses[femaleGlamourPoseIndex++ % glamourPoses.length];
-                } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
-                    currentPose = poses[malePoseIndex++ % poses.length];
-                } else {
-                    currentPose = poses[femalePoseIndex++ % poses.length];
-                }
-                allChanges.push(currentPose);
+            // If no custom text, add a pose for more variety.
+            let currentPose: string;
+            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Use glamour poses for first 2 woman pics
+                currentPose = glamourPoses[femaleGlamourPoseIndex++ % glamourPoses.length];
+            } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
+                currentPose = poses[malePoseIndex++ % poses.length];
+            } else { // Includes woman, teen, elderly_woman, child, other
+                currentPose = poses[femalePoseIndex++ % poses.length];
             }
-            const changesDescription = allChanges.filter(Boolean).join(', ');
-
-            finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **КОНТЕКСТ ИЗ ОРИГИНАЛА:** Одежда и фон на новом изображении должны быть взяты с референсного фото. Не дорисовывай и не придумывай недостающие части.\n3.  **НОВАЯ КОМПОЗИЦИЯ:** Примени следующие изменения: "${changesDescription}".\n4.  **ПРАВИЛО КАДРИРОВАНИЯ:** Если для выполнения пункта 3 (создания новой композиции) требуется обрезать (кадрировать) исходное изображение и показать только его часть — это правильное и допустимое действие. Главное — не добавлять ничего нового, чего не было на референсе.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+            allChanges.push(currentPose);
         }
+        
+        const changesDescription = allChanges.filter(Boolean).join(', ');
+
+        const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
