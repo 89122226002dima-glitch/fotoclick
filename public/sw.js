@@ -1,6 +1,6 @@
 // sw.js - Service Worker
 
-const CACHE_NAME = 'fotoclick-cache-v4'; // Версия обновлена для принудительной переустановки
+const CACHE_NAME = 'fotoclick-cache-v3'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
 // Список файлов, которые нужно закэшировать для работы офлайн
 const URLS_TO_CACHE = [
   '/',
@@ -41,27 +41,38 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Обработка запросов: стратегия "сначала сеть, потом кэш" (Network First)
+// Обработка запросов: отдаем из кэша, если есть, иначе идем в сеть
 self.addEventListener('fetch', (event) => {
-  // Мы не кэшируем API запросы и запросы, не являющиеся http/https
-  if (!event.request.url.startsWith('http') || event.request.url.includes('/api/')) {
+  // Мы не кэшируем API запросы
+  if (event.request.url.includes('/api/')) {
     return;
   }
 
   event.respondWith(
-    fetch(event.request)
-      .then((networkResponse) => {
-        // Успешный запрос к сети. Кэшируем свежий ответ.
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
-        return networkResponse;
-      })
-      .catch(() => {
-        // Запрос к сети не удался (например, нет интернета).
-        // Пытаемся отдать ответ из кэша.
-        return caches.match(event.request);
+    caches.match(event.request)
+      .then((response) => {
+        // Если ресурс есть в кэше, отдаем его
+        if (response) {
+          return response;
+        }
+
+        // Иначе, делаем запрос в сеть, кэшируем и отдаем
+        return fetch(event.request).then(
+          (response) => {
+            // Проверяем, что ответ корректный
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME)
+              .then((cache) => {
+                cache.put(event.request, responseToCache);
+              });
+
+            return response;
+          }
+        );
       })
   );
 });
