@@ -607,7 +607,6 @@ async function generate() {
               referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
               referenceDownloadButton.classList.remove('hidden');
               initializePoseSequences();
-              uploadContainer.classList.remove('aspect-square');
               outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
               imgContainer.classList.add('is-reference');
               statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
@@ -970,7 +969,6 @@ function initializePage1Wizard() {
                 referenceDownloadButton.download = `photoshoot-result-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
                 uploadPlaceholder.classList.add('hidden');
-                uploadContainer.classList.remove('aspect-square');
                 outputGallery.innerHTML = '';
                 statusEl.innerText = 'Изображение из фотосессии загружено. Выберите план и создайте вариации.';
                 generatedPhotoshootResult = null;
@@ -1307,7 +1305,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             referenceDownloadButton.download = `reference-${Date.now()}.png`;
             referenceDownloadButton.classList.remove('hidden');
             uploadPlaceholder.classList.add('hidden');
-            uploadContainer.classList.remove('aspect-square');
             outputGallery.innerHTML = '';
             
             const overlayText = overlay.querySelector('p');
