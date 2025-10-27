@@ -165,28 +165,36 @@ async function resizeImage(imageState: ImageState): Promise<ImageState> {
 }
 
 /**
- * Automatically crops a portrait image to improve composition.
+ * Crops tall images (like screenshots) by removing the top and bottom sections.
+ * This is used to clean up clothing reference images.
  * @param imageState The image to process.
- * @param topPercent The percentage to crop from the top.
- * @param bottomPercent The percentage to crop from the bottom.
- * @returns A promise that resolves with the cropped image state, or the original if not portrait.
+ * @returns A promise that resolves with the cropped image state, or the original if not a tall image.
  */
-async function cropImage(imageState: ImageState, topPercent: number, bottomPercent: number): Promise<ImageState> {
+async function cropImage(imageState: ImageState): Promise<ImageState> {
+    const topPercent = 20;
+    const bottomPercent = 20;
+    const requiredAspectRatio = 3 / 2; // Crop if taller than 3:2 portrait (1.5)
+
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const originalWidth = img.width;
             const originalHeight = img.height;
 
-            // Only crop if it's a portrait image (height > width)
-            if (originalHeight <= originalWidth) {
-                resolve(imageState); // Return original if not portrait
+            // Only crop if image is taller than the required aspect ratio.
+            if (originalWidth <= 0 || (originalHeight / originalWidth) <= requiredAspectRatio) {
+                resolve(imageState);
                 return;
             }
 
             const topCrop = originalHeight * (topPercent / 100);
             const bottomCrop = originalHeight * (bottomPercent / 100);
             const newHeight = originalHeight - topCrop - bottomCrop;
+            
+            if (newHeight <= 0) { // Safety check
+                resolve(imageState);
+                return;
+            }
 
             const canvas = document.createElement('canvas');
             canvas.width = originalWidth;
@@ -198,8 +206,8 @@ async function cropImage(imageState: ImageState, topPercent: number, bottomPerce
             
             // Draw the middle part of the source image onto the new, smaller canvas
             ctx.drawImage(img,
-                0, topCrop,                 // Source x, y (start cropping from 10% down)
-                originalWidth, newHeight,  // Source width, height (the middle 80% of the image)
+                0, topCrop,                 // Source x, y (start cropping from 20% down)
+                originalWidth, newHeight,  // Source width, height (the middle 60% of the image)
                 0, 0,                      // Destination x, y (draw at the top-left of the canvas)
                 originalWidth, newHeight   // Destination width, height (fill the new canvas)
             );
@@ -607,6 +615,7 @@ async function generate() {
               referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
               referenceDownloadButton.classList.remove('hidden');
               initializePoseSequences();
+              uploadContainer.classList.remove('aspect-square');
               outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
               imgContainer.classList.add('is-reference');
               statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
@@ -942,12 +951,8 @@ function initializePage1Wizard() {
     
             const data = await generatePhotoshoot(parts);
             
-            // Применяем "умную" обрезку ТОЛЬКО если использовалось фото одежды.
-            if (page1ClothingImage) {
-                generatedPhotoshootResult = await cropImage(data.generatedPhotoshootResult, 10, 10);
-            } else {
-                generatedPhotoshootResult = data.generatedPhotoshootResult;
-            }
+            // Cropping is now done on the input clothing image, not the output.
+            generatedPhotoshootResult = data.generatedPhotoshootResult;
             const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
 
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
@@ -969,6 +974,7 @@ function initializePage1Wizard() {
                 referenceDownloadButton.download = `photoshoot-result-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
                 uploadPlaceholder.classList.add('hidden');
+                uploadContainer.classList.remove('aspect-square');
                 outputGallery.innerHTML = '';
                 statusEl.innerText = 'Изображение из фотосессии загружено. Выберите план и создайте вариации.';
                 generatedPhotoshootResult = null;
@@ -1069,8 +1075,27 @@ function initializePage1Wizard() {
     });
     
     setupUploader('clothing-upload-container', 'clothing-image-upload', 'clothing-image-preview', 'clothing-upload-placeholder', 'clothing-clear-button', async (state) => {
-        page1ClothingImage = state;
-        clothingPromptInput.placeholder = state ? 'Фото одежды загружено (можно добавить детали)' : 'Опишите или выберите вариант...';
+        if (!state) {
+            page1ClothingImage = null;
+        } else {
+            try {
+                // Apply the new cropping logic for tall images like screenshots
+                const croppedState = await cropImage(state);
+                page1ClothingImage = croppedState;
+                
+                // Update the preview with the potentially cropped image
+                const imagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
+                if (imagePreview) {
+                    imagePreview.src = `data:${croppedState.mimeType};base64,${croppedState.base64}`;
+                }
+            } catch (err) {
+                 console.error("Ошибка обрезки изображения одежды:", err);
+                 showStatusError("Не удалось обрезать изображение одежды. Используется оригинал.");
+                 page1ClothingImage = state; // Fallback to original
+            }
+        }
+
+        clothingPromptInput.placeholder = page1ClothingImage ? 'Фото одежды загружено (можно добавить детали)' : 'Опишите или выберите вариант...';
         clothingPromptInput.value = '';
         updatePage1WizardState();
     });
@@ -1305,6 +1330,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             referenceDownloadButton.download = `reference-${Date.now()}.png`;
             referenceDownloadButton.classList.remove('hidden');
             uploadPlaceholder.classList.add('hidden');
+            uploadContainer.classList.remove('aspect-square');
             outputGallery.innerHTML = '';
             
             const overlayText = overlay.querySelector('p');
