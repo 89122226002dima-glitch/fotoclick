@@ -1161,7 +1161,7 @@ function getUploaderPlaceholderHtml(): string {
     <div class="text-center">
       <div class="bg-white/30 backdrop-blur-md p-4 rounded-xl inline-block">
         <p class="text-stone-700 font-semibold text-lg mb-1">Ваше лучшее фото</p>
-        <p class="text-sm max-w-xs mx-auto mb-3 text-stone-500">Для идеального результата выберете фото от пояса и выше или селфи</p>
+        <p class="text-sm max-w-xs mx-auto mb-3 text-stone-500">Для идеального результата <span class="text-base text-red-500 font-semibold">выберете фото от пояса и выше как на рисунке.</span></p>
         <div class="p-2 bg-stone-100/50 border border-stone-300/80 rounded-lg transition-colors duration-200 inline-block">
           <p class="text-stone-700 text-xs font-medium">Нажмите или перетащите файл</p>
           <p class="text-xs text-stone-400 mt-1">PNG, JPG, WEBP</p>
