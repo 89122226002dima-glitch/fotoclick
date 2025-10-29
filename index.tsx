@@ -1243,6 +1243,10 @@ function setupPromoCodeHandler() {
     });
 }
 
+/**
+ * Checks for a 'login_error' URL parameter and displays a helpful message
+ * to the user, guiding them to fix the Google Console configuration.
+ */
 function displayLoginError() {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.has('login_error')) {
@@ -1298,6 +1302,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     
+    // Check for login errors right at the start
     displayLoginError();
     await fetchCurrentUser(); // Fetch user status on load
 

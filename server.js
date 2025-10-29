@@ -1,4 +1,4 @@
-// server.js - Фаза 1: Авторизация пользователей, база данных, сессии.
+// server.js - Финальная, надежная версия с улучшенной диагностикой.
 
 const express = require('express');
 const cors = require('cors');
@@ -6,7 +6,6 @@ const path = require('path');
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
-// --- Новые зависимости для авторизации и логирования ---
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
@@ -36,7 +35,6 @@ if (process.env.NODE_ENV !== 'production') {
     format: winston.format.simple()
   }));
 }
-// --- Конец настройки логгера ---
 
 // --- Диагностика .env ---
 const requiredEnv = ['API_KEY', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_SECRET', 'BASE_URL'];
@@ -55,8 +53,6 @@ if (missingEnv) {
     logger.error(`[${currentTime}] DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют переменные окружения.`);
     process.exit(1);
 }
-// --- Конец диагностики ---
-
 
 // --- Настройка Базы Данных (SQLite) ---
 const db = new Database('fotoclick.db');
@@ -80,8 +76,6 @@ db.exec(`
   )
 `);
 logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
-// --- Конец настройки БД ---
-
 
 // --- Настройка Passport.js ---
 passport.use(new GoogleStrategy({
@@ -90,9 +84,7 @@ passport.use(new GoogleStrategy({
     callbackURL: `${process.env.BASE_URL}/auth/google/callback`
   },
   (accessToken, refreshToken, profile, done) => {
-    // Найти или создать пользователя в нашей БД
     const user = db.prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?').get('google', profile.id);
-
     if (user) {
       return done(null, user);
     } else {
@@ -113,8 +105,6 @@ passport.deserializeUser((id, done) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   done(null, user);
 });
-// --- Конец настройки Passport.js ---
-
 
 const app = express();
 const port = 3001;
@@ -126,17 +116,13 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: true,
-  cookie: { secure: false } // ВАЖНО: для локальной разработки false. Для production за прокси (Caddy) это нормально.
+  cookie: { secure: false } 
 }));
 app.use(passport.initialize());
 app.use(passport.session());
-// --- Конец Middlewares ---
-
 
 // --- Инициализация Gemini API ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-// --- Конец инициализации Gemini API ---
-
 
 // --- Middleware для проверки аутентификации ---
 function ensureAuthenticated(req, res, next) {
@@ -145,15 +131,18 @@ function ensureAuthenticated(req, res, next) {
   }
   res.status(401).json({ error: 'Пользователь не авторизован' });
 }
-// --- Конец Middleware ---
-
 
 // --- Маршруты авторизации ---
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback', 
-  passport.authenticate('google', { failureRedirect: '/?login_error=true' }),
+  passport.authenticate('google', { 
+    // ВАЖНО: При ошибке редиректим на главную с параметром, который отловит фронтенд
+    failureRedirect: '/?login_error=true', 
+    failureMessage: true 
+  }),
   (req, res) => {
+    // При успехе редиректим на главную страницу
     res.redirect('/');
   }
 );
@@ -164,36 +153,30 @@ app.get('/auth/logout', (req, res, next) => {
     res.redirect('/');
   });
 });
-// --- Конец маршрутов авторизации ---
-
 
 // --- API маршруты ---
 app.get('/api/user/me', (req, res) => {
   if (req.isAuthenticated()) {
     res.json({ user: { id: req.user.id, email: req.user.email, displayName: req.user.displayName, credits: req.user.credits } });
   } else {
-    res.status(401).json({ user: null });
+    // Используем статус 200, чтобы не показывать ошибку в консоли, фронтенд обработает null
+    res.json({ user: null });
   }
 });
 
 app.post('/api/redeem-promo', ensureAuthenticated, (req, res) => {
     const { promoCode } = req.body;
     const userId = req.user.id;
-
     if (promoCode !== "FOTOSTART50") {
         return res.status(400).json({ error: "Неверный промокод." });
     }
-
     const alreadyUsed = db.prepare('SELECT * FROM used_promos WHERE user_id = ? AND promo_code = ?').get(userId, promoCode);
     if (alreadyUsed) {
         return res.status(409).json({ error: "Вы уже использовали этот промокод." });
     }
-    
     db.prepare('UPDATE users SET credits = credits + 50 WHERE id = ?').run(userId);
     db.prepare('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)').run(userId, promoCode);
-    
     const updatedUser = db.prepare('SELECT credits FROM users WHERE id = ?').get(userId);
-    
     res.json({ message: "Промокод успешно применен! +50 кредитов.", newCreditCount: updatedUser.credits });
 });
 
@@ -291,37 +274,35 @@ app.post('/api/analyzeImageForText', ensureAuthenticated, async (req, res) => {
         return { text: response.text };
     });
 });
-// --- Конец API маршрутов ---
 
-
-// --- Обслуживание статических файлов и SPA (НОВАЯ НАДЕЖНАЯ ВЕРСИЯ) ---
-// Определяем абсолютный путь к папке `dist`.
-// `process.cwd()` - это папка, из которой был запущен node (т.е. корень проекта /home/dmitry/fotoclick).
+// --- Обслуживание статических файлов и SPA (ФИНАЛЬНАЯ ВЕРСИЯ) ---
 const distPath = path.join(process.cwd(), 'dist');
 logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${distPath}`);
 
 // 1. Обслуживаем все статические файлы (JS, CSS, картинки) из папки 'dist'.
+// Это должно обработать запросы типа /index.css, /assets/index-....js и т.д.
 app.use(express.static(distPath));
 
 // 2. Для ВСЕХ остальных GET-запросов, которые не являются API-вызовами
 // и для которых не нашелся статический файл, мы отдаем главный 'index.html'.
 // Это "catch-all" маршрут для одностраничного приложения (SPA).
-app.get('*', (req, res, next) => {
-  // Убедимся, что мы не отвечаем на API запросы этим правилом
+app.get('*', (req, res) => {
+  // Исключаем API и auth маршруты из этого правила, чтобы они не перехватывались.
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
-    return next(); // Это API-запрос, пусть его обработают другие маршруты
+    // В Express 4, если маршрут не найден, он автоматически перейдет к следующему обработчику ошибок.
+    // Если мы здесь, значит, ни один из API маршрутов не совпал.
+    return res.status(404).send('API endpoint not found');
   }
   
   const indexPath = path.join(distPath, 'index.html');
+  logger.info(`DIAGNOSTICS: Отдаем SPA fallback: ${indexPath} для запроса ${req.path}`);
   res.sendFile(indexPath, (err) => {
     if (err) {
-      logger.error(`DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА: Не удалось найти index.html по пути ${indexPath}. Ошибка: ${err.message}`);
+      logger.error(`DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА: Не удалось найти index.html по пути ${indexPath}.`, err);
       res.status(500).send('Не удалось загрузить главный файл приложения.');
     }
   });
 });
-// --- Конец обслуживания статики ---
-
 
 app.listen(port, () => {
   logger.info(`Сервер слушает порт ${port}`);
