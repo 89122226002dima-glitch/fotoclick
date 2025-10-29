@@ -294,17 +294,23 @@ app.post('/api/analyzeImageForText', ensureAuthenticated, async (req, res) => {
 // --- Конец API маршрутов ---
 
 
-// --- Обслуживание статических файлов ---
-// Все статические ресурсы (JS, CSS, изображения) находятся в той же папке ('dist'), что и этот бандл.
-const staticPath = path.join(__dirname);
-logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${staticPath}`);
-app.use(express.static(staticPath));
+// --- Обслуживание статических файлов (ИСПРАВЛЕННАЯ И НАДЕЖНАЯ ВЕРСИЯ) ---
+// Когда сервер запускается из `dist/server.bundle.js`, `__dirname` указывает на папку `dist`.
+// Это именно та папка, где лежат все наши скомпилированные статические файлы (index.html, assets, и т.д.).
+const distPath = path.resolve(__dirname);
+logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${distPath}`);
+app.use(express.static(distPath));
 
-// Отдаем главный HTML файл для всех остальных запросов, чтобы работал React Router
+// Для любого запроса, который не был обработан как статический файл выше (например, при обновлении страницы),
+// мы отдаем главный `index.html`. Это позволяет React Router-у работать корректно.
 app.get('*', (req, res) => {
-  const indexPath = path.join(__dirname, 'index.html');
-  // Мы не логируем каждый запрос, чтобы не засорять логи. Логируем только путь к статике при старте.
-  res.sendFile(indexPath);
+  const indexPath = path.join(distPath, 'index.html');
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      logger.error(`DIAGNOSTICS: Не удалось найти и отправить index.html по пути ${indexPath}. Ошибка: ${err.message}`);
+      res.status(500).send('Не удалось загрузить приложение. Свяжитесь с поддержкой.');
+    }
+  });
 });
 // --- Конец обслуживания статики ---
 
