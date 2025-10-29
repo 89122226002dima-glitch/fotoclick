@@ -536,8 +536,8 @@ async function generate() {
         if (glamourPoses.length > 0) glamourPoses = glamourPoses.filter(prompt => !smileKeywords.some(keyword => prompt.toLowerCase().includes(keyword)));
     }
 
-    const shuffledAngles = [...angles].sort(() => 0.5 - Math.random());
-    const shuffledDrasticShifts = [...prompts.drasticCameraShiftPrompts].sort(() => 0.5 - Math.random());
+    const availableStandardAngles = shuffle(angles);
+    const availableDrasticShifts = shuffle(prompts.drasticCameraShiftPrompts);
 
     const generationPrompts: string[] = [];
     for (let i = 0; i < 4; i++) {
@@ -545,23 +545,34 @@ async function generate() {
         const planInstruction = getPlanInstruction(selectedPlan);
         if (planInstruction) allChanges.push(planInstruction);
 
-        // Use a drastic, creative camera shift for every image.
-        allChanges.push(shuffledDrasticShifts[i] ?? shuffledAngles[i] ?? '');
+        const useDrasticShift =
+            (selectedPlan === 'full_shot' && i >= 2) || // Для общего плана, используем креатив на 3-м и 4-м
+            ((selectedPlan === 'medium_shot' || selectedPlan === 'close_up') && i === 3); // Для остальных, используем креатив на 4-м
+
+        let cameraAnglePrompt = '';
+        if (useDrasticShift) {
+            // Пытаемся взять креативный ракурс, если нет - стандартный
+            cameraAnglePrompt = availableDrasticShifts.pop() || availableStandardAngles.pop() || '';
+        } else {
+            // Пытаемся взять стандартный ракурс, если нет - креативный
+            cameraAnglePrompt = availableStandardAngles.pop() || availableDrasticShifts.pop() || '';
+        }
+        allChanges.push(cameraAnglePrompt);
 
         const customText = customPromptInput.value.trim();
         if (customText) {
             allChanges.push(`дополнительная деталь: ${customText}`);
         } else {
-            // If no custom text, add a pose for more variety.
+            // Если нет своего текста, добавляем позу для разнообразия
             let currentPose: string;
-            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Use glamour poses for first 2 woman pics
-                currentPose = glamourPoses[femaleGlamourPoseIndex++ % glamourPoses.length];
+            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Используем гламурные позы для первых 2 фото женщины
+                currentPose = glamourPoses.pop() || poses.pop() || ''; // Берем гламурную, если кончились - обычную
             } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
-                currentPose = poses[malePoseIndex++ % poses.length];
-            } else { // Includes woman, teen, elderly_woman, child, other
-                currentPose = poses[femalePoseIndex++ % poses.length];
+                currentPose = poses.pop() || '';
+            } else { // Для всех остальных
+                currentPose = poses.pop() || '';
             }
-            allChanges.push(currentPose);
+             if (currentPose) allChanges.push(currentPose);
         }
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
@@ -1161,7 +1172,14 @@ function getUploaderPlaceholderHtml(): string {
     <div class="text-center">
       <div class="bg-white/30 backdrop-blur-md p-4 rounded-xl inline-block">
         <p class="text-stone-700 font-semibold text-lg mb-1">Ваше лучшее фото</p>
-        <p class="text-sm max-w-xs mx-auto mb-3 text-stone-500">Для идеального результата <span class="text-base text-red-500 font-semibold">выберете фото от пояса и выше как на рисунке.</span></p>
+        <div class="text-sm max-w-xs mx-auto mb-3 text-stone-500 text-left px-2 sm:px-0">
+          <p class="font-semibold text-stone-600 mb-2">Чтобы сэкономить кредиты, используйте качественное фото:</p>
+          <ul class="list-disc list-inside space-y-1 text-stone-600">
+            <li>хорошее освещение, лицо в фокусе;</li>
+            <li>без других людей в кадре;</li>
+            <li class="font-semibold text-red-500">поясной портрет до бедер, как на рисунке.</li>
+          </ul>
+        </div>
         <div class="p-2 bg-stone-100/50 border border-stone-300/80 rounded-lg transition-colors duration-200 inline-block">
           <p class="text-stone-700 text-xs font-medium">Нажмите или перетащите файл</p>
           <p class="text-xs text-stone-400 mt-1">PNG, JPG, WEBP</p>
