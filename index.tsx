@@ -44,20 +44,28 @@ interface Prompts {
     couplePosePrompts: string[];
 }
 
+// --- NEW User State ---
+interface User {
+    id: number;
+    email: string;
+    displayName: string;
+    credits: number;
+}
+
+
 // --- Wizard State ---
-type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'NONE';
+type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'LOGIN' | 'NONE';
 
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
 let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCloseButton: HTMLButtonElement, statusEl: HTMLDivElement,
     planButtonsContainer: HTMLDivElement, generateButton: HTMLButtonElement, resetButton: HTMLButtonElement,
     outputGallery: HTMLDivElement, uploadContainer: HTMLDivElement, imageUpload: HTMLInputElement,
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
-    referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
-    paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement;
+    referenceDownloadButton: HTMLAnchorElement, userAreaEl: HTMLDivElement;
 
 
 // --- State Variables ---
+let currentUser: User | null | undefined = undefined; // undefined: loading, null: logged out, User: logged in
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
 let detectedSubjectCategory: SubjectCategory | null = null;
@@ -66,12 +74,6 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; // Default value, will be overwritten from localStorage
-const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
-    "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
-    "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
-    "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." }
-};
 
 let poseSequences: {
     female: string[]; femaleGlamour: string[]; male: string[]; femaleCloseUp: string[]; maleCloseUp: string[];
@@ -96,7 +98,8 @@ function setWizardStep(step: WizardStep) {
         page1Generate: document.getElementById('generate-photoshoot-button'),
         page2Plans: document.getElementById('plan-buttons'),
         page2Generate: document.getElementById('generate-button'),
-        credits: document.getElementById('credit-counter'),
+        credits: document.getElementById('user-area'), // Highlight the whole user area
+        login: document.getElementById('user-area'), // Highlight the login buttons
     };
 
     // Remove the highlight class from all targets first
@@ -111,6 +114,7 @@ function setWizardStep(step: WizardStep) {
         case 'PAGE2_PLAN': targets.page2Plans?.classList.add('highlight-step'); break;
         case 'PAGE2_GENERATE': targets.page2Generate?.classList.add('highlight-step'); break;
         case 'CREDITS': targets.credits?.classList.add('highlight-step'); break;
+        case 'LOGIN': targets.login?.classList.add('highlight-step'); break;
         case 'NONE': // Do nothing, all highlights are cleared
             break;
     }
@@ -242,15 +246,23 @@ async function callApi(endpoint: string, body: object) {
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
+        let errorData = { error: `Сервер вернул ошибку ${response.status}.`};
         try {
+            const errorText = await response.text();
             errorData = JSON.parse(errorText);
         } catch (e) {
-            console.error("Failed to parse server error JSON:", errorText);
-            // If parsing fails, use the raw text, which might be an HTML error page.
-            throw new Error(`Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`);
+             console.error("Failed to parse server error JSON, status:", response.status);
         }
+        
+        // Handle specific authentication error
+        if (response.status === 401) {
+            errorData.error = "Пожалуйста, войдите в систему, чтобы продолжить.";
+            setWizardStep('LOGIN');
+        } else if (response.status === 402) { // Payment Required
+             errorData.error = "У вас недостаточно кредитов для этого действия.";
+             setWizardStep('CREDITS');
+        }
+        
         console.error(`Ошибка API на ${endpoint}:`, errorData);
         throw new Error(errorData.error || `Технические детали записаны в консоль разработчика.`);
     }
@@ -275,10 +287,10 @@ function openLightbox(imageUrl: string) {
     }
 }
 
-async function generateVariation(prompt: string, image: ImageState): Promise<string> {
+async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCreditCount: number }> {
    try {
         const data = await callApi('/api/generateVariation', { prompt, image });
-        return data.imageUrl;
+        return { imageUrl: data.imageUrl, newCreditCount: data.newCreditCount };
     } catch (e) {
         console.error('generateVariation failed:', e);
         throw e;
@@ -310,17 +322,53 @@ function initializePoseSequences() {
     femaleGlamourPoseIndex = 0;
 }
 
-function updateCreditCounterUI() {
-    if (creditCounterEl) {
-        creditCounterEl.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8.433 7.418c.158-.103.346-.196.567-.267v1.698a2.5 2.5 0 00-.567-.267C8.07 8.488 8 8.731 8 9c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-.22.071-.409.164-.567-.267C8.07 11.512 8 11.731 8 12c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-1.135-.285-2-1.201-2-2.423 0-1.22.865-2.138 2-2.423v-1.698c.221.07.41.164.567.267C11.93 8.488 12 8.731 12 9c0 .269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V7.862c1.135.285 2 1.201 2 2.423 0 1.22-.865-2.138-2 2.423v1.698a2.5 2.5 0 00.567-.267c.364-.24.433-.482.433-.582 0-.269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V12.14c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423V5.577c1.135.285 2 1.201 2 2.423 0 .269.07.512.433.582.221.07.409.164.567.267V7.862a2.5 2.5 0 00-.567-.267C11.93 7.512 12 7.269 12 7c0-1.22-.865-2.138-2-2.423V3a1 1 0 00-2 0v1.577C6.865 4.862 6 5.78 6 7c0 .269.07.512.433.582.221.07.41.164.567.267V6.14a2.5 2.5 0 00-.567-.267C5.07 5.512 5 5.269 5 5c0-1.22.865-2.138 2-2.423V1a1 1 0 10-2 0v1.577c-1.135-.285-2 1.201-2 2.423s.865 2.138 2 2.423v1.698c-.221-.07-.41-.164-.567-.267C4.07 8.488 4 8.731 4 9s.07.512.433.582c.221.07.41.164.567.267v1.698a2.5 2.5 0 00.567.267C4.07 11.512 4 11.731 4 12s.07.512.433.582c.221.07.41.164.567.267v1.698c-.221-.07-.409-.164-.567-.267C4.07 13.512 4 13.731 4 14c0 1.22.865 2.138 2 2.423v1.577a1 1 0 102 0v-1.577c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423v-1.698c.221.07.41.164.567.267.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267v1.698a2.5 2.5 0 00.567.267c.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267V13.86c-1.135-.285-2-1.201-2-2.423s.865-2.138 2-2.423V7.862c-.221-.07-.41-.164-.567-.267C8.07 7.512 8 7.269 8 7c0-.269.07.512.433-.582z" /></svg>
-            <span class="credit-value">${generationCredits}</span>
-            <span class="hidden sm:inline credit-label">кредитов</span>
-        `;
-    }
-    // Save credits to localStorage whenever the UI is updated
-    localStorage.setItem('generationCredits', String(generationCredits));
+function updateUser(user: User | null) {
+    currentUser = user;
+    renderUserArea();
+    updateAllGenerateButtons();
+    updatePage1WizardState();
 }
+
+function renderUserArea() {
+    if (!userAreaEl) return;
+    const promoContainer = document.getElementById('promo-code-container');
+
+    if (currentUser === undefined) { // Loading state
+        userAreaEl.innerHTML = `<div class="loading-spinner small"></div>`;
+        promoContainer?.classList.add('hidden');
+        return;
+    }
+    
+    if (currentUser === null) { // Logged out
+        userAreaEl.innerHTML = `
+            <div class="flex items-center gap-2">
+                <a href="/auth/google" class="auth-button google">Войти через Google</a>
+            </div>
+        `;
+        promoContainer?.classList.add('hidden');
+        return;
+    }
+
+    // Logged in
+    promoContainer?.classList.remove('hidden');
+    userAreaEl.innerHTML = `
+        <div class="flex items-center gap-4">
+            <div class="text-right hidden sm:block">
+                <p class="text-sm font-medium truncate" title="${currentUser.email}">${currentUser.displayName || currentUser.email}</p>
+                <p class="text-xs text-gray-500">Добро пожаловать!</p>
+            </div>
+            <div id="credit-counter" class="credit-counter-glow bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-full text-base font-semibold flex items-center gap-1.5" title="Кредиты">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8.433 7.418c.158-.103.346-.196.567-.267v1.698a2.5 2.5 0 00-.567-.267C8.07 8.488 8 8.731 8 9c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-.22.071-.409.164-.567-.267C8.07 11.512 8 11.731 8 12c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-1.135-.285-2-1.201-2-2.423 0-1.22.865-2.138 2-2.423v-1.698c.221.07.41.164.567.267C11.93 8.488 12 8.731 12 9c0 .269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V7.862c1.135.285 2 1.201 2 2.423 0 1.22-.865-2.138-2 2.423v1.698a2.5 2.5 0 00.567-.267c.364-.24.433-.482.433-.582 0-.269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V12.14c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423V5.577c1.135.285 2 1.201 2 2.423 0 .269.07.512.433.582.221.07.409.164.567.267V7.862a2.5 2.5 0 00-.567-.267C11.93 7.512 12 7.269 12 7c0-1.22-.865-2.138-2-2.423V3a1 1 0 00-2 0v1.577C6.865 4.862 6 5.78 6 7c0 .269.07.512.433.582.221.07.41.164.567.267V6.14a2.5 2.5 0 00-.567-.267C5.07 5.512 5 5.269 5 5c0-1.22.865-2.138 2-2.423V1a1 1 0 10-2 0v1.577c-1.135-.285-2 1.201-2 2.423s.865 2.138 2 2.423v1.698c-.221-.07-.41-.164-.567-.267C4.07 8.488 4 8.731 4 9s.07.512.433.582c.221.07.41.164.567.267v1.698a2.5 2.5 0 00.567.267C4.07 11.512 4 11.731 4 12s.07.512.433.582c.221.07.41.164.567.267v1.698c-.221-.07-.409-.164-.567-.267C4.07 13.512 4 13.731 4 14c0 1.22.865 2.138 2 2.423v1.577a1 1 0 102 0v-1.577c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423v-1.698c.221.07.41.164.567.267.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267v1.698a2.5 2.5 0 00.567.267c.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267V13.86c-1.135-.285-2-1.201-2-2.423s.865-2.138 2-2.423V7.862c-.221-.07-.41-.164-.567-.267C8.07 7.512 8 7.269 8 7c0-.269.07.512.433-.582z" /></svg>
+                <span class="credit-value">${currentUser.credits}</span>
+                <span class="hidden sm:inline credit-label">кредитов</span>
+            </div>
+             <a href="/auth/logout" class="logout-button" title="Выйти">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd" /></svg>
+            </a>
+        </div>
+    `;
+}
+
 
 function selectPlan(plan: string) {
   selectedPlan = plan;
@@ -438,39 +486,29 @@ async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
 }
 
 function updateAllGenerateButtons() {
-    // Page 2 Button
+    const creditsNeededPage2 = 4;
+    const creditsAvailable = currentUser?.credits ?? 0;
+
     if (generateButton) {
-        const creditsNeeded = 4;
-        const buttonText = `Создать ${creditsNeeded} фотографии`;
-        if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `${buttonText} (Осталось: ${generationCredits})`;
-            generateButton.disabled = !referenceImage;
-        } else {
-            generateButton.disabled = false;
-            generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
+        generateButton.disabled = !referenceImage || !currentUser;
+        generateButton.innerHTML = `Создать ${creditsNeededPage2} фото (${creditsNeededPage2} кр.)`;
+        
+        if (!currentUser) {
+           generateButton.innerHTML = 'Войдите, чтобы генерировать';
+        } else if (creditsAvailable < creditsNeededPage2) {
+            generateButton.innerHTML = `Нужно ${creditsNeededPage2} кредита`;
         }
     }
-    
-    updateCreditCounterUI();
 }
 
 
 async function generate() {
-  const creditsNeeded = 4;
-
-  // Prioritize credit check: if not enough, show payment modal immediately.
-  if (generationCredits < creditsNeeded) {
-      const modalTitle = document.querySelector('#payment-modal-title');
-      const modalDescription = document.querySelector('#payment-modal-description');
-      if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-      if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
-      
-      setWizardStep('CREDITS');
-      showPaymentModal();
+  if (!currentUser) {
+      showStatusError('Пожалуйста, войдите в систему, чтобы создавать изображения.');
+      setWizardStep('LOGIN');
       return;
   }
   
-  // Now check for the image, only if credits are sufficient.
   if (!referenceImage || !detectedSubjectCategory || !prompts) {
     showStatusError('Пожалуйста, загрузите изображение-референс человека.');
     return;
@@ -505,11 +543,6 @@ async function generate() {
   }
 
   try {
-    generationCredits -= creditsNeeded;
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
-
-
     let poses: string[], glamourPoses: string[] = [];
     const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
     if (selectedPlan === 'close_up') {
@@ -551,10 +584,8 @@ async function generate() {
 
         let cameraAnglePrompt = '';
         if (useDrasticShift) {
-            // Пытаемся взять креативный ракурс, если нет - стандартный
             cameraAnglePrompt = availableDrasticShifts.pop() || availableStandardAngles.pop() || '';
         } else {
-            // Пытаемся взять стандартный ракурс, если нет - креативный
             cameraAnglePrompt = availableStandardAngles.pop() || availableDrasticShifts.pop() || '';
         }
         allChanges.push(cameraAnglePrompt);
@@ -563,30 +594,25 @@ async function generate() {
         if (customText) {
             allChanges.push(`дополнительная деталь: ${customText}`);
         } else {
-            // Если нет своего текста, добавляем позу для разнообразия
             let currentPose: string;
-            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Используем гламурные позы для первых 2 фото женщины
-                currentPose = glamourPoses.pop() || poses.pop() || ''; // Берем гламурную, если кончились - обычную
-            } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
-                currentPose = poses.pop() || '';
-            } else { // Для всех остальных
+            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { 
+                currentPose = glamourPoses.pop() || poses.pop() || '';
+            } else {
                 currentPose = poses.pop() || '';
             }
              if (currentPose) allChanges.push(currentPose);
         }
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
-
         const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
-    // **NEW PARALLEL GENERATION LOGIC**
     if (progressText) progressText.innerText = 'Генерация... 10%';
     const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
     
-    // Use Promise.allSettled to handle both successful and failed generations
     const results = await Promise.allSettled(generationPromises);
+    let successfulGenerations = 0;
     
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
@@ -599,7 +625,13 @@ async function generate() {
         imgContainer.innerHTML = '';
         
         if (result.status === 'fulfilled') {
-            const imageUrl = result.value;
+            successfulGenerations++;
+            const { imageUrl, newCreditCount } = result.value;
+            // Update user state with the latest credit count from the last successful response
+            if (currentUser && newCreditCount !== undefined) {
+                updateUser({ ...currentUser, credits: newCreditCount });
+            }
+
             imgContainer.classList.add('cursor-pointer', 'gallery-item');
             const img = document.createElement('img');
             img.src = imageUrl;
@@ -637,29 +669,31 @@ async function generate() {
             imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
 
         } else {
-            // If one image fails, show an error in its placeholder
             const error = result.reason as Error;
             const errorMessage = error.message || 'Ошибка генерации';
             displayErrorInContainer(imgContainer, errorMessage, true);
             console.error(`Error generating variation ${i + 1}:`, error);
         }
     });
+    
+    // If all generations failed, we might not have an updated credit count. Re-fetch to be sure.
+    if (successfulGenerations === 0) {
+        fetchCurrentUser();
+    }
+
 
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
-    if (referenceImage) setWizardStep('PAGE2_PLAN'); // After generation, guide user to select a new plan
+    if (referenceImage) setWizardStep('PAGE2_PLAN');
 
   } catch (e) {
-    // This top-level catch is for setup errors before the loop starts
-    generationCredits += creditsNeeded;
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
     placeholders.forEach(p => p.remove());
     divider.remove();
     if (progressContainer) progressContainer.classList.add('hidden');
     const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
     showGalleryError(errorMessage, false);
     showStatusError('Произошла ошибка. См. подробности выше.');
+    fetchCurrentUser(); // Re-fetch user to restore correct credit count if call failed before deduction
   } finally {
     setControlsDisabled(false);
   }
@@ -679,7 +713,6 @@ function setupNavigation() {
             if (btn.dataset.page === pageId) btn.classList.add('active');
         });
 
-        // Update wizard step on page change
         if (pageId === 'page1') {
             updatePage1WizardState();
         } else if (pageId === 'page2') {
@@ -798,7 +831,7 @@ async function analyzeImageForText(image: ImageState, analysisPrompt: string): P
     }
 }
 
-async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState }> {
+async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState, newCreditCount: number }> {
     try {
         const data = await callApi('/api/generatePhotoshoot', { parts });
         return data;
@@ -807,42 +840,6 @@ async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; ge
         throw e;
     }
 }
-
-
-const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
-const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
-const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
-const paymentProceedButton = document.querySelector('#payment-proceed-button') as HTMLButtonElement;
-const paymentMethodsContainer = document.querySelector('#payment-methods') as HTMLDivElement;
-
-function showPaymentModal() {
-    if (paymentModalOverlay) {
-        paymentSelectionView.classList.remove('hidden');
-        paymentProcessingView.classList.add('hidden');
-        paymentFinalView.classList.add('hidden');
-        paymentModalOverlay.classList.remove('hidden');
-    }
-}
-
-function hidePaymentModal() {
-    paymentModalOverlay?.classList.add('hidden');
-    const page1 = document.getElementById('page1');
-    if (page1 && !page1.classList.contains('hidden')) {
-        updatePage1WizardState();
-    } else {
-        if(referenceImage) setWizardStep('PAGE2_GENERATE');
-    }
-}
-
-function handlePaymentConfirmation() {
-    generationCredits += 12;
-    updateCreditCounterUI(); // Save and update UI
-    hidePaymentModal();
-    updatePage1WizardState();
-    updateAllGenerateButtons();
-    if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
-}
-
 
 let updatePage1WizardState: () => void = () => {};
 
@@ -865,18 +862,13 @@ function initializePage1Wizard() {
     let page1LocationImage: ImageState | null = null;
     
     const doGeneratePhotoshoot = async () => {
-        if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
-        
-        const creditsNeeded = 1;
-
-        if (generationCredits < creditsNeeded) {
-            const modalTitle = document.querySelector('#payment-modal-title');
-            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
-            setWizardStep('CREDITS');
-            showPaymentModal();
+        if (!currentUser) {
+            displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, войдите, чтобы начать фотосессию.');
+            setWizardStep('LOGIN');
             return;
         }
-
+        if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
+        
         const clothingText = clothingPromptInput.value.trim();
         let locationText = locationPromptInput.value.trim();
         if (!page1ClothingImage && !clothingText) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, опишите одежду текстом или загрузите ее фото.'); return; }
@@ -911,10 +903,6 @@ function initializePage1Wizard() {
         }, 4000);
         
         try {
-            generationCredits -= creditsNeeded;
-            updateCreditCounterUI();
-            updatePage1WizardState();
-
             const img = new Image();
             await new Promise<void>((resolve, reject) => {
                 img.onload = () => resolve();
@@ -958,8 +946,10 @@ function initializePage1Wizard() {
             parts.push({ text: promptText.trim() });
     
             const data = await generatePhotoshoot(parts);
+             if (currentUser && data.newCreditCount !== undefined) {
+                updateUser({ ...currentUser, credits: data.newCreditCount });
+            }
             
-            // Cropping is now done on the input clothing image, not the output.
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
 
@@ -989,10 +979,9 @@ function initializePage1Wizard() {
                 (window as any).navigateToPage('page2');
             }
         } catch (e) {
-            generationCredits += creditsNeeded;
-            updateCreditCounterUI();
             const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
             displayErrorInContainer(photoshootResultContainer, errorMessage);
+            fetchCurrentUser(); // Re-fetch on error to ensure credits are correct
         } finally {
             clearInterval(messageInterval);
             updatePage1WizardState();
@@ -1005,19 +994,26 @@ function initializePage1Wizard() {
         const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
 
         if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
+        
         const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
         const creditsNeeded = 1;
-    
-        if (generationCredits >= creditsNeeded) {
-            generatePhotoshootButton.disabled = !isReady;
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
-        } else {
-            generatePhotoshootButton.disabled = false; // Always enable to trigger modal
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (${generationCredits} кредитов)`;
+        const creditsAvailable = currentUser?.credits ?? 0;
+
+        generatePhotoshootButton.disabled = !isReady || !currentUser;
+        generatePhotoshootButton.innerHTML = `Начать фотосессию (${creditsNeeded} кр.)`;
+
+        if (!currentUser) {
+            generatePhotoshootButton.innerHTML = 'Войдите, чтобы начать';
+        } else if (creditsAvailable < creditsNeeded) {
+            generatePhotoshootButton.innerHTML = `Нужен ${creditsNeeded} кредит`;
         }
 
+
         // Wizard Logic
-        if (!page1ReferenceImage) {
+        if (!currentUser) {
+            setWizardStep('LOGIN');
+        }
+        else if (!page1ReferenceImage) {
             setWizardStep('PAGE1_PHOTO');
         } else if (!page1ClothingImage && !clothingPromptInput.value.trim()) {
             setWizardStep('PAGE1_CLOTHING');
@@ -1087,11 +1083,8 @@ function initializePage1Wizard() {
             page1ClothingImage = null;
         } else {
             try {
-                // Apply the new cropping logic for tall images like screenshots
                 const croppedState = await cropImage(state);
                 page1ClothingImage = croppedState;
-                
-                // Update the preview with the potentially cropped image
                 const imagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
                 if (imagePreview) {
                     imagePreview.src = `data:${croppedState.mimeType};base64,${croppedState.base64}`;
@@ -1099,10 +1092,9 @@ function initializePage1Wizard() {
             } catch (err) {
                  console.error("Ошибка обрезки изображения одежды:", err);
                  showStatusError("Не удалось обрезать изображение одежды. Используется оригинал.");
-                 page1ClothingImage = state; // Fallback to original
+                 page1ClothingImage = state;
             }
         }
-
         clothingPromptInput.placeholder = page1ClothingImage ? 'Фото одежды загружено (можно добавить детали)' : 'Опишите или выберите вариант...';
         clothingPromptInput.value = '';
         updatePage1WizardState();
@@ -1189,30 +1181,68 @@ function getUploaderPlaceholderHtml(): string {
   </div>`;
 }
 
-function applyPromoCode() {
-    if (!promoCodeInput) return;
-    const code = promoCodeInput.value.trim().toUpperCase();
-    if (!code) { showStatusError("Пожалуйста, введите промокод."); return; }
-    const usedCodes: string[] = JSON.parse(localStorage.getItem('usedPromoCodes') || '[]');
-    if (usedCodes.includes(code)) {
-        showStatusError("Этот промокод уже был использован.");
-        promoCodeInput.value = '';
-        return;
-    }
-    const promo = PROMO_CODES[code];
-    if (promo?.type === 'credits') {
-        generationCredits += promo.value;
-        updateCreditCounterUI();
-        updateAllGenerateButtons();
-        updatePage1WizardState();
-        usedCodes.push(code);
-        localStorage.setItem('usedPromoCodes', JSON.stringify(usedCodes));
-        statusEl.innerHTML = `<span class="text-green-400">${promo.message}</span>`;
-        promoCodeInput.value = '';
-    } else {
-        showStatusError("Неверный промокод.");
+async function fetchCurrentUser() {
+    try {
+        const response = await fetch('/api/user/me');
+        if (!response.ok) {
+            updateUser(null);
+            return;
+        }
+        const data = await response.json();
+        updateUser(data.user);
+    } catch (error) {
+        console.error('Failed to fetch user:', error);
+        updateUser(null);
     }
 }
+
+function setupPromoCodeHandler() {
+    const promoInput = document.getElementById('promo-code-input') as HTMLInputElement;
+    const promoButton = document.getElementById('apply-promo-button') as HTMLButtonElement;
+
+    if (!promoInput || !promoButton) return;
+
+    promoButton.addEventListener('click', async () => {
+        const code = promoInput.value.trim();
+        if (!code) {
+            showStatusError('Пожалуйста, введите промокод.');
+            return;
+        }
+
+        const originalButtonText = promoButton.textContent;
+        promoButton.disabled = true;
+        promoButton.textContent = '...';
+        statusEl.innerText = 'Применение промокода...';
+
+        try {
+            const response = await fetch('/api/redeem-promo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ promoCode: code }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || `Ошибка ${response.status}`);
+            }
+            
+            statusEl.innerText = data.message;
+            promoInput.value = '';
+            if (currentUser && data.newCreditCount !== undefined) {
+                updateUser({ ...currentUser, credits: data.newCreditCount });
+            }
+
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
+            showStatusError(`Ошибка: ${message}`);
+        } finally {
+            promoButton.disabled = false;
+            promoButton.textContent = originalButtonText;
+        }
+    });
+}
+
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1242,22 +1272,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   uploadPlaceholder = document.querySelector('#upload-placeholder')!;
   customPromptInput = document.querySelector('#custom-prompt-input')!;
   referenceDownloadButton = document.querySelector('#reference-download-button')!;
-  paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
-  paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
-  paymentCloseButton = document.querySelector('#payment-close-button')!;
-  creditCounterEl = document.querySelector('#credit-counter')!;
-  promoCodeInput = document.querySelector('#promo-code-input')!;
-  applyPromoButton = document.querySelector('#apply-promo-button')!;
+  userAreaEl = document.querySelector('#user-area')!;
 
   try {
-    const savedCredits = localStorage.getItem('generationCredits');
-    if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
-        generationCredits = parseInt(savedCredits, 10);
-    } else {
-        // This handles both first-time users and corrupted data
-        generationCredits = 0; // Start with 0 credits
-        localStorage.setItem('generationCredits', '0');
-    }
+    
+    await fetchCurrentUser(); // Fetch user status on load
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1271,45 +1290,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setupNavigation();
     initializePage1Wizard();
+    setupPromoCodeHandler();
     
     selectPlan(selectedPlan);
     initializePoseSequences();
 
     // --- Attach all event listeners now that elements are guaranteed to exist ---
     lightboxOverlay.addEventListener('click', (e) => {
-        // Only close if the dark background itself is clicked, not children like the image or button.
-        if (e.target === lightboxOverlay) {
-          hideLightbox();
-        }
+        if (e.target === lightboxOverlay) hideLightbox();
     });
     lightboxCloseButton.addEventListener('click', hideLightbox);
 
     generateButton.addEventListener('click', generate);
     resetButton.addEventListener('click', resetApp);
-    applyPromoButton.addEventListener('click', applyPromoCode);
-    promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
-    paymentConfirmButton.addEventListener('click', handlePaymentConfirmation);
-    paymentCloseButton.addEventListener('click', hidePaymentModal);
-    paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
-    creditCounterEl.addEventListener('click', showPaymentModal);
     
-    paymentProceedButton.addEventListener('click', () => {
-        paymentSelectionView.classList.add('hidden');
-        paymentProcessingView.classList.remove('hidden');
-        setTimeout(() => {
-            paymentProcessingView.classList.add('hidden');
-            paymentFinalView.classList.remove('hidden');
-        }, 2000);
-    });
-
-    paymentMethodsContainer.addEventListener('click', (e) => {
-        const methodButton = (e.target as HTMLElement).closest('.payment-method');
-        if (methodButton) {
-            paymentMethodsContainer.querySelectorAll('.payment-method').forEach(btn => btn.classList.remove('selected'));
-            methodButton.classList.add('selected');
-        }
-    });
-
     referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
     
     planButtonsContainer.addEventListener('click', (event) => {
@@ -1378,11 +1372,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
     
     uploadContainer.addEventListener('click', (e) => {
-      // Если изображение загружено и клик происходит именно по нему, открываем лайтбокс
       if (referenceImage && e.target === referenceImagePreview) {
         openLightbox(referenceImagePreview.src);
       } else if (!(e.target as HTMLElement).closest('a')) {
-        // В противном случае (если клик по пустой области или плейсхолдеру и не по ссылке) открываем диалог загрузки файла
         imageUpload.click();
       }
     });
