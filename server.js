@@ -295,11 +295,16 @@ app.post('/api/analyzeImageForText', ensureAuthenticated, async (req, res) => {
 
 
 // --- Обслуживание статических файлов ---
-app.use(express.static(path.join(__dirname)));
+// Все статические ресурсы (JS, CSS, изображения) находятся в той же папке ('dist'), что и этот бандл.
+const staticPath = path.join(__dirname);
+logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${staticPath}`);
+app.use(express.static(staticPath));
 
-// Отдаем index.html для всех остальных запросов (для React Router)
+// Отдаем главный HTML файл для всех остальных запросов, чтобы работал React Router
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  const indexPath = path.join(__dirname, 'index.html');
+  // Мы не логируем каждый запрос, чтобы не засорять логи. Логируем только путь к статике при старте.
+  res.sendFile(indexPath);
 });
 // --- Конец обслуживания статики ---
 
