@@ -11,7 +11,7 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const Database = require('better-sqlite3');
-const winston = require('winston'); // <-- НОВАЯ БИБЛИОТЕКА ЛОГИРОВАНИЯ
+const winston = require('winston');
 
 // --- Настройка логгера Winston ---
 const logger = winston.createLogger({
@@ -294,23 +294,29 @@ app.post('/api/analyzeImageForText', ensureAuthenticated, async (req, res) => {
 // --- Конец API маршрутов ---
 
 
-// --- Обслуживание статических файлов и SPA ---
-// Определяем абсолютный путь к папке 'dist', где лежат все готовые файлы.
-const distPath = path.resolve(__dirname);
+// --- Обслуживание статических файлов и SPA (НОВАЯ НАДЕЖНАЯ ВЕРСИЯ) ---
+// Определяем абсолютный путь к папке `dist`.
+// `process.cwd()` - это папка, из которой был запущен node (т.е. корень проекта /home/dmitry/fotoclick).
+const distPath = path.join(process.cwd(), 'dist');
 logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${distPath}`);
 
-// Сначала настроим обслуживание статических файлов (JS, CSS, картинки).
-// Express будет автоматически искать файлы в папке 'dist'.
+// 1. Обслуживаем все статические файлы (JS, CSS, картинки) из папки 'dist'.
 app.use(express.static(distPath));
 
-// Затем, настроим "фолбэк" для одностраничного приложения (SPA).
-// Любой GET-запрос, который не является API-вызовом и не нашел статический файл,
-// должен вернуть главный index.html, чтобы заработал роутинг на клиенте.
-app.get('*', (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'), (err) => {
+// 2. Для ВСЕХ остальных GET-запросов, которые не являются API-вызовами
+// и для которых не нашелся статический файл, мы отдаем главный 'index.html'.
+// Это "catch-all" маршрут для одностраничного приложения (SPA).
+app.get('*', (req, res, next) => {
+  // Убедимся, что мы не отвечаем на API запросы этим правилом
+  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
+    return next(); // Это API-запрос, пусть его обработают другие маршруты
+  }
+  
+  const indexPath = path.join(distPath, 'index.html');
+  res.sendFile(indexPath, (err) => {
     if (err) {
-      logger.error(`DIAGNOSTICS: Не удалось найти и отправить index.html по пути ${path.join(distPath, 'index.html')}. Ошибка: ${err.message}`);
-      res.status(500).send('Не удалось загрузить приложение. Свяжитесь с поддержкой.');
+      logger.error(`DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА: Не удалось найти index.html по пути ${indexPath}. Ошибка: ${err.message}`);
+      res.status(500).send('Не удалось загрузить главный файл приложения.');
     }
   });
 });
