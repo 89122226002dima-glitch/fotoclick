@@ -78,10 +78,14 @@ db.exec(`
 logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
 
 // --- Настройка Passport.js ---
+// НОВАЯ ДИАГНОСТИЧЕСКАЯ СТРОКА
+const constructedCallbackURL = `${process.env.BASE_URL}/auth/google/callback`;
+logger.info(`DIAGNOSTICS: Passport настроен с callbackURL: [${constructedCallbackURL}]`);
+
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: `${process.env.BASE_URL}/auth/google/callback`
+    callbackURL: constructedCallbackURL
   },
   (accessToken, refreshToken, profile, done) => {
     const user = db.prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?').get('google', profile.id);
