@@ -1243,28 +1243,6 @@ function setupPromoCodeHandler() {
     });
 }
 
-function displayLoginError() {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('login_error')) {
-        const errorContainer = document.getElementById('login-error-container');
-        if (errorContainer) {
-            const googleConsoleUrl = "https://console.cloud.google.com/apis/credentials";
-            errorContainer.innerHTML = `
-                <h3 class="text-lg font-bold text-red-300 mb-2">Ошибка входа через Google</h3>
-                <p class="text-red-400 text-sm">
-                    После выбора аккаунта Google не смог вернуть вас на сайт. Это почти всегда означает ошибку в настройках.
-                </p>
-                <p class="text-gray-300 text-sm mt-3">
-                    <b>Что делать:</b> Убедитесь, что в настройках <a href="${googleConsoleUrl}" target="_blank" rel="noopener noreferrer" class="font-bold underline hover:text-white">Google Cloud Console</a> в разделе "Authorized redirect URIs" указан правильный адрес обратного вызова, и вы нажали кнопку "Save".
-                </p>
-            `;
-            errorContainer.classList.remove('hidden');
-            // Remove the parameter from the URL to avoid showing the message on refresh
-            window.history.replaceState({}, document.title, "/");
-        }
-    }
-}
-
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1298,7 +1276,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   try {
     
-    displayLoginError();
     await fetchCurrentUser(); // Fetch user status on load
 
     const response = await fetch('/prompts.json');
