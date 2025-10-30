@@ -45,7 +45,12 @@ requiredEnv.forEach(key => {
         logger.error(`[${currentTime}] DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная ${key} не найдена.`);
         missingEnv = true;
     } else {
-         logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена.`);
+        // ФИНАЛЬНАЯ ДИАГНОСТИКА: выводим значение ключа
+        if (key === 'GOOGLE_CLIENT_ID') {
+            logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена. Значение: [${process.env[key]}]`);
+        } else {
+            logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена.`);
+        }
     }
 });
 if (missingEnv) {
@@ -78,7 +83,6 @@ db.exec(`
 logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
 
 // --- Настройка Passport.js ---
-// НОВАЯ ДИАГНОСТИЧЕСКАЯ СТРОКА
 const constructedCallbackURL = `${process.env.BASE_URL}/auth/google/callback`;
 logger.info(`DIAGNOSTICS: Passport настроен с callbackURL: [${constructedCallbackURL}]`);
 
