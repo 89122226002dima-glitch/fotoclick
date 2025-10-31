@@ -1,4 +1,7 @@
-// server.js - Финальная, надежная версия с улучшенной диагностикой.
+// server.js - FINAL DIAGNOSTIC VERSION - 31.10.2025-20:30
+// If you see this message in the logs, the correct file is being used.
+console.log("--- EXECUTING SERVER.JS VERSION 4.0 (DIAGNOSTIC) ---");
+
 
 const express = require('express');
 const cors = require('cors');
@@ -30,6 +33,8 @@ const logger = winston.createLogger({
     new winston.transports.File({ filename: 'combined.log' })
   ]
 });
+
+logger.info("--- WINSTON LOGGER ACTIVE IN SERVER.JS VERSION 4.0 (DIAGNOSTIC) ---");
 
 if (process.env.NODE_ENV !== 'production') {
   logger.add(new winston.transports.Console({
