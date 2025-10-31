@@ -5,7 +5,8 @@
     "dev": "vite",
     "clean": "rm -rf dist",
     "build": "npm run clean && vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
-    "start": "node dist/server.bundle.js"
+    "start": "node dist/server.bundle.js",
+    "deploy": "npm run build && (pm2 delete fotoclick || true) && pm2 start dist/server.bundle.js --name fotoclick"
   },
   "dependencies": {
     "@google/genai": "^0.12.0",
