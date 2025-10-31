@@ -1178,46 +1178,10 @@ function setupPromoCodeHandler() {
     const promoButton = document.getElementById('apply-promo-button') as HTMLButtonElement;
 
     if (!promoInput || !promoButton) return;
-
-    promoButton.addEventListener('click', async () => {
-        const code = promoInput.value.trim();
-        if (!code) {
-            showStatusError('Пожалуйста, введите промокод.');
-            return;
-        }
-
-        const originalButtonText = promoButton.textContent;
-        promoButton.disabled = true;
-        promoButton.textContent = '...';
-        statusEl.innerText = 'Применение промокода...';
-
-        try {
-            const response = await fetch('/api/redeem-promo', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ promoCode: code }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-                throw new Error(data.error || `Ошибка ${response.status}`);
-            }
-            
-            statusEl.innerText = data.message;
-            promoInput.value = '';
-            if (currentUser && data.newCreditCount !== undefined) {
-                updateUser({ ...currentUser, credits: data.newCreditCount });
-            }
-
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Неизвестная ошибка';
-            showStatusError(`Ошибка: ${message}`);
-        } finally {
-            promoButton.disabled = false;
-            promoButton.textContent = originalButtonText;
-        }
-    });
+    
+    // Feature is disabled, hide the container.
+    const promoContainer = document.getElementById('promo-code-container');
+    promoContainer?.classList.add('hidden');
 }
 
 /**
