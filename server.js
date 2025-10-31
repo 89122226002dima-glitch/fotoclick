@@ -3,7 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const punycode = require('punycode'); // <-- ИЗМЕНЕНО: Используем надежный модуль punycode
+// Модуль punycode больше не нужен, так как мы используем BASE_URL напрямую
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
@@ -47,7 +47,7 @@ requiredEnv.forEach(key => {
         missingEnv = true;
     } else {
         // ФИНАЛЬНАЯ ДИАГНОСТИКА: выводим значение ключа
-        if (key === 'GOOGLE_CLIENT_ID') {
+        if (key === 'GOOGLE_CLIENT_ID' || key === 'BASE_URL') {
             logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена. Значение: [${process.env[key]}]`);
         } else {
             logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена.`);
@@ -84,15 +84,12 @@ db.exec(`
 logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
 
 // --- Настройка Passport.js ---
-// ИЗМЕНЕНО: Принудительное преобразование кириллического домена в Punycode для Google OAuth
-const baseURL = process.env.BASE_URL;
-const parsedBaseURL = new URL(baseURL);
-const punycodeHostname = punycode.toASCII(parsedBaseURL.hostname); // <-- ИЗМЕНЕНО: Используем punycode.toASCII
-const punycodeBaseURL = `${parsedBaseURL.protocol}//${punycodeHostname}`;
-const constructedCallbackURL = `${punycodeBaseURL}/auth/google/callback`;
+// ИЗМЕНЕНО: Полностью убрана логика конвертации. Используем BASE_URL из .env напрямую.
+// Это решает проблему сбоя и двойного кодирования.
+const baseURL = process.env.BASE_URL.replace(/\/$/, ''); // Убираем слэш в конце, если он есть
+const constructedCallbackURL = `${baseURL}/auth/google/callback`;
 
-logger.info(`DIAGNOSTICS: Original BASE_URL: [${baseURL}]`);
-logger.info(`DIAGNOSTICS: Punycode-converted BASE_URL for callback: [${punycodeBaseURL}]`);
+logger.info(`DIAGNOSTICS: Используем BASE_URL из .env: [${baseURL}]`);
 logger.info(`DIAGNOSTICS: Passport настроен с callbackURL: [${constructedCallbackURL}]`);
 
 passport.use(new GoogleStrategy({
