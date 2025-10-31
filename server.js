@@ -1,14 +1,10 @@
-// server.js - FINAL DIAGNOSTIC VERSION - 31.10.2025-20:30
-// If you see this message in the logs, the correct file is being used.
-console.log("--- EXECUTING SERVER.JS VERSION 4.0 (DIAGNOSTIC) ---");
-
+// server.js - FINAL CLEAN VERSION - 31.10.2025-20:35
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-// Модуль punycode больше не нужен, так как мы используем BASE_URL напрямую
 require('dotenv').config();
-const { GoogleGenAI, Type, Modality } = require('@google/genai');
+const { GoogleGenAI, Modality } = require('@google/genai');
 
 const session = require('express-session');
 const passport = require('passport');
@@ -34,36 +30,22 @@ const logger = winston.createLogger({
   ]
 });
 
-logger.info("--- WINSTON LOGGER ACTIVE IN SERVER.JS VERSION 4.0 (DIAGNOSTIC) ---");
-
 if (process.env.NODE_ENV !== 'production') {
   logger.add(new winston.transports.Console({
     format: winston.format.simple()
   }));
 }
 
-// --- Диагностика .env ---
+// --- Проверка .env ---
 const requiredEnv = ['API_KEY', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'SESSION_SECRET', 'BASE_URL'];
-let missingEnv = false;
 requiredEnv.forEach(key => {
     if (!process.env[key]) {
-        const currentTime = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        logger.error(`[${currentTime}] DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная ${key} не найдена.`);
-        missingEnv = true;
+        logger.error(`КРИТИЧЕСКАЯ ОШИБКА! Переменная окружения ${key} не найдена. Сервер не может запуститься.`);
+        process.exit(1);
     } else {
-        // ФИНАЛЬНАЯ ДИАГНОСТИКА: выводим значение ключа
-        if (key === 'GOOGLE_CLIENT_ID' || key === 'BASE_URL') {
-            logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена. Значение: [${process.env[key]}]`);
-        } else {
-            logger.info(`DIAGNOSTICS: Переменная ${key} успешно загружена.`);
-        }
+        logger.info(`Переменная ${key} успешно загружена.`);
     }
 });
-if (missingEnv) {
-    const currentTime = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    logger.error(`[${currentTime}] DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют переменные окружения.`);
-    process.exit(1);
-}
 
 // --- Настройка Базы Данных (SQLite) ---
 const db = new Database('fotoclick.db');
@@ -86,16 +68,14 @@ db.exec(`
     UNIQUE(user_id, promo_code)
   )
 `);
-logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
+logger.info('База данных SQLite успешно подключена и таблицы проверены.');
 
 // --- Настройка Passport.js ---
-// ИЗМЕНЕНО: Полностью убрана логика конвертации. Используем BASE_URL из .env напрямую.
-// Это решает проблему сбоя и двойного кодирования.
+// ФИНАЛЬНОЕ РЕШЕНИЕ: Используем BASE_URL из .env напрямую.
 const baseURL = process.env.BASE_URL.replace(/\/$/, ''); // Убираем слэш в конце, если он есть
 const constructedCallbackURL = `${baseURL}/auth/google/callback`;
 
-logger.info(`DIAGNOSTICS: Используем BASE_URL из .env: [${baseURL}]`);
-logger.info(`DIAGNOSTICS: Passport настроен с callbackURL: [${constructedCallbackURL}]`);
+logger.info(`Passport настроен с callbackURL: [${constructedCallbackURL}]`);
 
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
@@ -156,12 +136,10 @@ app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'em
 
 app.get('/auth/google/callback', 
   passport.authenticate('google', { 
-    // ВАЖНО: При ошибке редиректим на главную с параметром, который отловит фронтенд
     failureRedirect: '/?login_error=true', 
     failureMessage: true 
   }),
   (req, res) => {
-    // При успехе редиректим на главную страницу
     res.redirect('/');
   }
 );
@@ -178,7 +156,6 @@ app.get('/api/user/me', (req, res) => {
   if (req.isAuthenticated()) {
     res.json({ user: { id: req.user.id, email: req.user.email, displayName: req.user.displayName, credits: req.user.credits } });
   } else {
-    // Используем статус 200, чтобы не показывать ошибку в консоли, фронтенд обработает null
     res.json({ user: null });
   }
 });
@@ -204,7 +181,7 @@ async function makeApiCall(res, action) {
     const result = await action();
     res.json(result);
   } catch (error) {
-    logger.error('Ошибка при вызове Gemini API:', error);
+    logger.error('Ошибка при вызове Gemini API:', { message: error.message, stack: error.stack });
     res.status(500).json({ error: 'Произошла ошибка при генерации изображения. Попробуйте позже.' });
   }
 }
@@ -294,30 +271,22 @@ app.post('/api/analyzeImageForText', ensureAuthenticated, async (req, res) => {
     });
 });
 
-// --- Обслуживание статических файлов и SPA (ФИНАЛЬНАЯ ВЕРСИЯ) ---
+// --- Обслуживание статических файлов и SPA ---
 const distPath = path.join(process.cwd(), 'dist');
-logger.info(`DIAGNOSTICS: Статические файлы будут отдаваться из папки: ${distPath}`);
+logger.info(`Статические файлы будут отдаваться из папки: ${distPath}`);
 
-// 1. Обслуживаем все статические файлы (JS, CSS, картинки) из папки 'dist'.
-// Это должно обработать запросы типа /index.css, /assets/index-....js и т.д.
 app.use(express.static(distPath));
 
-// 2. Для ВСЕХ остальных GET-запросов, которые не являются API-вызовами
-// и для которых не нашелся статический файл, мы отдаем главный 'index.html'.
-// Это "catch-all" маршрут для одностраничного приложения (SPA).
 app.get('*', (req, res) => {
-  // Исключаем API и auth маршруты из этого правила, чтобы они не перехватывались.
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/')) {
-    // В Express 4, если маршрут не найден, он автоматически перейдет к следующему обработчику ошибок.
-    // Если мы здесь, значит, ни один из API маршрутов не совпал.
     return res.status(404).send('API endpoint not found');
   }
   
   const indexPath = path.join(distPath, 'index.html');
-  logger.info(`DIAGNOSTICS: Отдаем SPA fallback: ${indexPath} для запроса ${req.path}`);
+  logger.info(`Отдаем SPA fallback: ${indexPath} для запроса ${req.path}`);
   res.sendFile(indexPath, (err) => {
     if (err) {
-      logger.error(`DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА: Не удалось найти index.html по пути ${indexPath}.`, err);
+      logger.error(`КРИТИЧЕСКАЯ ОШИБКА: Не удалось найти index.html по пути ${indexPath}.`, err);
       res.status(500).send('Не удалось загрузить главный файл приложения.');
     }
   });
