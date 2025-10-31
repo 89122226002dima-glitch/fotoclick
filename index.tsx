@@ -44,12 +44,12 @@ interface Prompts {
     couplePosePrompts: string[];
 }
 
-// --- NEW User State ---
+// --- NEW User State (Simplified - No DB) ---
 interface User {
-    id: number;
+    id: string; // From Google Profile
     email: string;
     displayName: string;
-    credits: number;
+    credits: number; // Will be static for now
 }
 
 
@@ -486,17 +486,15 @@ async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
 }
 
 function updateAllGenerateButtons() {
-    const creditsNeededPage2 = 4;
-    const creditsAvailable = currentUser?.credits ?? 0;
+    // Since we removed credits for now, we just check for login and image
+    const isReady = !!referenceImage && !!currentUser;
 
     if (generateButton) {
-        generateButton.disabled = !referenceImage || !currentUser;
-        generateButton.innerHTML = `Создать ${creditsNeededPage2} фото (${creditsNeededPage2} кр.)`;
+        generateButton.disabled = !isReady;
+        generateButton.innerHTML = `Создать 4 фото`;
         
         if (!currentUser) {
            generateButton.innerHTML = 'Войдите, чтобы генерировать';
-        } else if (creditsAvailable < creditsNeededPage2) {
-            generateButton.innerHTML = `Нужно ${creditsNeededPage2} кредита`;
         }
     }
 }
@@ -612,7 +610,6 @@ async function generate() {
     const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
     
     const results = await Promise.allSettled(generationPromises);
-    let successfulGenerations = 0;
     
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
@@ -625,13 +622,8 @@ async function generate() {
         imgContainer.innerHTML = '';
         
         if (result.status === 'fulfilled') {
-            successfulGenerations++;
-            const { imageUrl, newCreditCount } = result.value;
-            // Update user state with the latest credit count from the last successful response
-            if (currentUser && newCreditCount !== undefined) {
-                updateUser({ ...currentUser, credits: newCreditCount });
-            }
-
+            const { imageUrl } = result.value;
+            // No need to update credits as they are static now
             imgContainer.classList.add('cursor-pointer', 'gallery-item');
             const img = document.createElement('img');
             img.src = imageUrl;
@@ -675,12 +667,6 @@ async function generate() {
             console.error(`Error generating variation ${i + 1}:`, error);
         }
     });
-    
-    // If all generations failed, we might not have an updated credit count. Re-fetch to be sure.
-    if (successfulGenerations === 0) {
-        fetchCurrentUser();
-    }
-
 
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
@@ -693,7 +679,6 @@ async function generate() {
     const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
     showGalleryError(errorMessage, false);
     showStatusError('Произошла ошибка. См. подробности выше.');
-    fetchCurrentUser(); // Re-fetch user to restore correct credit count if call failed before deduction
   } finally {
     setControlsDisabled(false);
   }
@@ -946,9 +931,7 @@ function initializePage1Wizard() {
             parts.push({ text: promptText.trim() });
     
             const data = await generatePhotoshoot(parts);
-             if (currentUser && data.newCreditCount !== undefined) {
-                updateUser({ ...currentUser, credits: data.newCreditCount });
-            }
+            // No need to update credits, they are static
             
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
@@ -981,7 +964,6 @@ function initializePage1Wizard() {
         } catch (e) {
             const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
             displayErrorInContainer(photoshootResultContainer, errorMessage);
-            fetchCurrentUser(); // Re-fetch on error to ensure credits are correct
         } finally {
             clearInterval(messageInterval);
             updatePage1WizardState();
@@ -996,18 +978,13 @@ function initializePage1Wizard() {
         if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
         
         const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
-        const creditsNeeded = 1;
-        const creditsAvailable = currentUser?.credits ?? 0;
 
         generatePhotoshootButton.disabled = !isReady || !currentUser;
-        generatePhotoshootButton.innerHTML = `Начать фотосессию (${creditsNeeded} кр.)`;
+        generatePhotoshootButton.innerHTML = `Начать фотосессию`;
 
         if (!currentUser) {
             generatePhotoshootButton.innerHTML = 'Войдите, чтобы начать';
-        } else if (creditsAvailable < creditsNeeded) {
-            generatePhotoshootButton.innerHTML = `Нужен ${creditsNeeded} кредит`;
         }
-
 
         // Wizard Logic
         if (!currentUser) {
@@ -1318,7 +1295,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setupNavigation();
     initializePage1Wizard();
-    // setupPromoCodeHandler(); // Temporarily disabled
+    setupPromoCodeHandler();
 
     selectPlan(selectedPlan);
     initializePoseSequences();
