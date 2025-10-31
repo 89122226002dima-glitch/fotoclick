@@ -3,7 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const url = require('url'); // <-- ДОБАВЛЕНО для Punycode
+const punycode = require('punycode'); // <-- ИЗМЕНЕНО: Используем надежный модуль punycode
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
@@ -87,7 +87,7 @@ logger.info('DIAGNOSTICS: База данных SQLite успешно подкл
 // ИЗМЕНЕНО: Принудительное преобразование кириллического домена в Punycode для Google OAuth
 const baseURL = process.env.BASE_URL;
 const parsedBaseURL = new URL(baseURL);
-const punycodeHostname = url.domainToASCII(parsedBaseURL.hostname);
+const punycodeHostname = punycode.toASCII(parsedBaseURL.hostname); // <-- ИЗМЕНЕНО: Используем punycode.toASCII
 const punycodeBaseURL = `${parsedBaseURL.protocol}//${punycodeHostname}`;
 const constructedCallbackURL = `${punycodeBaseURL}/auth/google/callback`;
 
