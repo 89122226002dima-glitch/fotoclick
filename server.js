@@ -1,4 +1,4 @@
-// server.js - FINAL VERSION with sql.js - 31.10.2025
+// server.js - RADICALLY SIMPLIFIED VERSION - NO DATABASE - 31.10.2025
 
 const express = require('express');
 const cors = require('cors');
@@ -10,10 +10,6 @@ const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const winston = require('winston');
-
-// --- NEW DB DEPS ---
-const fs = require('fs');
-const initSqlJs = require('sql.js');
 
 // --- Настройка логгера Winston ---
 const logger = winston.createLogger({
@@ -45,58 +41,7 @@ requiredEnv.forEach(key => {
     }
 });
 
-// --- NEW ASYNC DATABASE SETUP (sql.js) ---
-let db;
-const dbPath = 'fotoclick.db';
-
-async function initializeDatabase() {
-    const SQL = await initSqlJs({ locateFile: file => require.resolve('sql.js/dist/' + file) });
-    
-    if (fs.existsSync(dbPath)) {
-        const fileBuffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(fileBuffer);
-        logger.info('Существующая база данных SQLite успешно загружена в память.');
-    } else {
-        db = new SQL.Database();
-        logger.info('Новая база данных SQLite создана в памяти.');
-        // Create schema only if the DB is new
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            provider TEXT NOT NULL,
-            provider_id TEXT NOT NULL UNIQUE,
-            email TEXT UNIQUE,
-            displayName TEXT,
-            credits INTEGER DEFAULT 5
-          );
-        `);
-        db.exec(`
-          CREATE TABLE IF NOT EXISTS used_promos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            promo_code TEXT NOT NULL,
-            used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, promo_code)
-          );
-        `);
-        persistDatabase(); // Save the new empty DB file
-    }
-    logger.info('База данных готова к работе.');
-}
-
-function persistDatabase() {
-    if (!db) return;
-    try {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(dbPath, buffer);
-    } catch (e) {
-        logger.error('КРИТИЧЕСКАЯ ОШИБКА: Не удалось сохранить базу данных на диск!', e);
-    }
-}
-
-
-// --- Настройка Passport.js ---
+// --- Настройка Passport.js (БЕЗ БАЗЫ ДАННЫХ) ---
 const baseURL = process.env.BASE_URL.replace(/\/$/, '');
 const constructedCallbackURL = `${baseURL}/auth/google/callback`;
 logger.info(`Passport настроен с callbackURL: [${constructedCallbackURL}]`);
@@ -107,46 +52,17 @@ passport.use(new GoogleStrategy({
     callbackURL: constructedCallbackURL
   },
   (accessToken, refreshToken, profile, done) => {
-    try {
-        const stmt = db.prepare('SELECT * FROM users WHERE provider = :prov AND provider_id = :pid');
-        stmt.bind({ ':prov': 'google', ':pid': profile.id });
-        let user = null;
-        if (stmt.step()) user = stmt.getAsObject();
-        stmt.free();
-
-        if (user) {
-          return done(null, user);
-        } else {
-          const insertStmt = db.prepare(`INSERT INTO users (provider, provider_id, email, displayName) VALUES (?, ?, ?, ?)`);
-          insertStmt.run('google', profile.id, profile.emails[0].value, profile.displayName);
-          insertStmt.free();
-          persistDatabase();
-
-          const selectStmt = db.prepare('SELECT * FROM users WHERE provider_id = ?');
-          selectStmt.bind([profile.id]);
-          let createdUser = null;
-          if(selectStmt.step()) createdUser = selectStmt.getAsObject();
-          selectStmt.free();
-          
-          return done(null, createdUser);
-        }
-    } catch(e) {
-        logger.error("Ошибка в стратегии Passport:", e);
-        return done(e, null);
-    }
+    // Просто возвращаем профиль Google без сохранения в базу
+    return done(null, profile);
   }
 ));
 
+// Сериализуем и десериализуем весь объект пользователя
 passport.serializeUser((user, done) => {
-  done(null, user.id);
+  done(null, user);
 });
 
-passport.deserializeUser((id, done) => {
-  const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
-  stmt.bind([id]);
-  let user = null;
-  if(stmt.step()) user = stmt.getAsObject();
-  stmt.free();
+passport.deserializeUser((user, done) => {
   done(null, user);
 });
 
@@ -199,39 +115,22 @@ app.get('/auth/logout', (req, res, next) => {
 // --- API маршруты ---
 app.get('/api/user/me', (req, res) => {
   if (req.isAuthenticated()) {
-    res.json({ user: { id: req.user.id, email: req.user.email, displayName: req.user.displayName, credits: req.user.credits } });
+    // Создаем объект пользователя на лету, всегда с 999 кредитами
+    const userProfile = {
+        id: req.user.id,
+        email: req.user.emails && req.user.emails[0] ? req.user.emails[0].value : 'no-email',
+        displayName: req.user.displayName,
+        credits: 999 // Временно даем много кредитов, чтобы фронтенд работал
+    };
+    res.json({ user: userProfile });
   } else {
     res.json({ user: null });
   }
 });
 
+// Промокоды временно отключены
 app.post('/api/redeem-promo', ensureAuthenticated, (req, res) => {
-    const { promoCode } = req.body;
-    const userId = req.user.id;
-    if (promoCode !== "FOTOSTART50") {
-        return res.status(400).json({ error: "Неверный промокод." });
-    }
-
-    const stmtCheck = db.prepare('SELECT * FROM used_promos WHERE user_id = ? AND promo_code = ?');
-    stmtCheck.bind([userId, promoCode]);
-    const alreadyUsed = stmtCheck.step();
-    stmtCheck.free();
-
-    if (alreadyUsed) {
-        return res.status(409).json({ error: "Вы уже использовали этот промокод." });
-    }
-
-    db.run('UPDATE users SET credits = credits + 50 WHERE id = ?', [userId]);
-    db.run('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)', [userId, promoCode]);
-    persistDatabase();
-    
-    const stmtSelect = db.prepare('SELECT credits FROM users WHERE id = ?');
-    stmtSelect.bind([userId]);
-    let updatedUser = null;
-    if(stmtSelect.step()) updatedUser = stmtSelect.getAsObject();
-    stmtSelect.free();
-
-    res.json({ message: "Промокод успешно применен! +50 кредитов.", newCreditCount: updatedUser.credits });
+    res.status(404).json({ error: "Промокоды временно отключены." });
 });
 
 async function makeApiCall(res, action) {
@@ -244,33 +143,7 @@ async function makeApiCall(res, action) {
   }
 }
 
-function deductCredits(userId, amount) {
-    const stmtSelect = db.prepare('SELECT credits FROM users WHERE id = ?');
-    stmtSelect.bind([userId]);
-    let user = null;
-    if(stmtSelect.step()) user = stmtSelect.getAsObject();
-    stmtSelect.free();
-
-    if (user.credits < amount) {
-        return { success: false, error: "Недостаточно кредитов." };
-    }
-    
-    db.run('UPDATE users SET credits = credits - ? WHERE id = ?', [amount, userId]);
-    persistDatabase();
-
-    const stmtSelectUpdated = db.prepare('SELECT credits FROM users WHERE id = ?');
-    stmtSelectUpdated.bind([userId]);
-    let updatedUser = null;
-    if(stmtSelectUpdated.step()) updatedUser = stmtSelectUpdated.getAsObject();
-    stmtSelectUpdated.free();
-    
-    return { success: true, newCreditCount: updatedUser.credits };
-}
-
 app.post('/api/generateVariation', ensureAuthenticated, async (req, res) => {
-  const creditCheck = deductCredits(req.user.id, 1);
-  if (!creditCheck.success) return res.status(402).json({ error: creditCheck.error });
-  
   await makeApiCall(res, async () => {
     const { prompt, image } = req.body;
     const response = await ai.models.generateContent({
@@ -282,14 +155,11 @@ app.post('/api/generateVariation', ensureAuthenticated, async (req, res) => {
     });
     const resultPart = response.candidates[0].content.parts[0];
     const imageUrl = `data:${resultPart.inlineData.mimeType};base64,${resultPart.inlineData.data}`;
-    return { imageUrl, newCreditCount: creditCheck.newCreditCount };
+    return { imageUrl, newCreditCount: 999 }; // Возвращаем фейковый счетчик кредитов
   });
 });
 
 app.post('/api/generatePhotoshoot', ensureAuthenticated, async (req, res) => {
-    const creditCheck = deductCredits(req.user.id, 1);
-    if (!creditCheck.success) return res.status(402).json({ error: creditCheck.error });
-    
     await makeApiCall(res, async () => {
         const { parts } = req.body;
         const response = await ai.models.generateContent({
@@ -303,7 +173,7 @@ app.post('/api/generatePhotoshoot', ensureAuthenticated, async (req, res) => {
             base64: resultPart.inlineData.data,
             mimeType: resultPart.inlineData.mimeType
         };
-        return { generatedPhotoshootResult, newCreditCount: creditCheck.newCreditCount };
+        return { generatedPhotoshootResult, newCreditCount: 999 }; // Возвращаем фейковый счетчик кредитов
     });
 });
 
@@ -364,12 +234,7 @@ app.get('*', (req, res) => {
 });
 
 
-// --- Start Server after DB is ready ---
-async function startServer() {
-    await initializeDatabase();
-    app.listen(port, () => {
-        logger.info(`Сервер слушает порт ${port}`);
-    });
-}
-
-startServer();
+// --- Start Server ---
+app.listen(port, () => {
+    logger.info(`Сервер слушает порт ${port}`);
+});
