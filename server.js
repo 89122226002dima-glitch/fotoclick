@@ -1,4 +1,4 @@
-// server.js - FINAL CLEAN VERSION - 31.10.2025-20:35
+// server.js - FINAL VERSION with sql.js - 31.10.2025
 
 const express = require('express');
 const cors = require('cors');
@@ -9,16 +9,17 @@ const { GoogleGenAI, Modality } = require('@google/genai');
 const session = require('express-session');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const Database = require('better-sqlite3');
 const winston = require('winston');
+
+// --- NEW DB DEPS ---
+const fs = require('fs');
+const initSqlJs = require('sql.js');
 
 // --- Настройка логгера Winston ---
 const logger = winston.createLogger({
   level: 'info',
   format: winston.format.combine(
-    winston.format.timestamp({
-      format: 'YYYY-MM-DD HH:mm:ss'
-    }),
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     winston.format.errors({ stack: true }),
     winston.format.splat(),
     winston.format.json()
@@ -29,11 +30,8 @@ const logger = winston.createLogger({
     new winston.transports.File({ filename: 'combined.log' })
   ]
 });
-
 if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: winston.format.simple()
-  }));
+  logger.add(new winston.transports.Console({ format: winston.format.simple() }));
 }
 
 // --- Проверка .env ---
@@ -47,34 +45,60 @@ requiredEnv.forEach(key => {
     }
 });
 
-// --- Настройка Базы Данных (SQLite) ---
-const db = new Database('fotoclick.db');
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT NOT NULL,
-    provider_id TEXT NOT NULL UNIQUE,
-    email TEXT UNIQUE,
-    displayName TEXT,
-    credits INTEGER DEFAULT 5
-  )
-`);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS used_promos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    promo_code TEXT NOT NULL,
-    used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, promo_code)
-  )
-`);
-logger.info('База данных SQLite успешно подключена и таблицы проверены.');
+// --- NEW ASYNC DATABASE SETUP (sql.js) ---
+let db;
+const dbPath = 'fotoclick.db';
+
+async function initializeDatabase() {
+    const SQL = await initSqlJs({ locateFile: file => require.resolve('sql.js/dist/' + file) });
+    
+    if (fs.existsSync(dbPath)) {
+        const fileBuffer = fs.readFileSync(dbPath);
+        db = new SQL.Database(fileBuffer);
+        logger.info('Существующая база данных SQLite успешно загружена в память.');
+    } else {
+        db = new SQL.Database();
+        logger.info('Новая база данных SQLite создана в памяти.');
+        // Create schema only if the DB is new
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            provider_id TEXT NOT NULL UNIQUE,
+            email TEXT UNIQUE,
+            displayName TEXT,
+            credits INTEGER DEFAULT 5
+          );
+        `);
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS used_promos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            promo_code TEXT NOT NULL,
+            used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, promo_code)
+          );
+        `);
+        persistDatabase(); // Save the new empty DB file
+    }
+    logger.info('База данных готова к работе.');
+}
+
+function persistDatabase() {
+    if (!db) return;
+    try {
+        const data = db.export();
+        const buffer = Buffer.from(data);
+        fs.writeFileSync(dbPath, buffer);
+    } catch (e) {
+        logger.error('КРИТИЧЕСКАЯ ОШИБКА: Не удалось сохранить базу данных на диск!', e);
+    }
+}
+
 
 // --- Настройка Passport.js ---
-// ФИНАЛЬНОЕ РЕШЕНИЕ: Используем BASE_URL из .env напрямую.
-const baseURL = process.env.BASE_URL.replace(/\/$/, ''); // Убираем слэш в конце, если он есть
+const baseURL = process.env.BASE_URL.replace(/\/$/, '');
 const constructedCallbackURL = `${baseURL}/auth/google/callback`;
-
 logger.info(`Passport настроен с callbackURL: [${constructedCallbackURL}]`);
 
 passport.use(new GoogleStrategy({
@@ -83,15 +107,32 @@ passport.use(new GoogleStrategy({
     callbackURL: constructedCallbackURL
   },
   (accessToken, refreshToken, profile, done) => {
-    const user = db.prepare('SELECT * FROM users WHERE provider = ? AND provider_id = ?').get('google', profile.id);
-    if (user) {
-      return done(null, user);
-    } else {
-      const newUser = db.prepare(`
-        INSERT INTO users (provider, provider_id, email, displayName) VALUES (?, ?, ?, ?)
-      `).run('google', profile.id, profile.emails[0].value, profile.displayName);
-      const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(newUser.lastInsertRowid);
-      return done(null, createdUser);
+    try {
+        const stmt = db.prepare('SELECT * FROM users WHERE provider = :prov AND provider_id = :pid');
+        stmt.bind({ ':prov': 'google', ':pid': profile.id });
+        let user = null;
+        if (stmt.step()) user = stmt.getAsObject();
+        stmt.free();
+
+        if (user) {
+          return done(null, user);
+        } else {
+          const insertStmt = db.prepare(`INSERT INTO users (provider, provider_id, email, displayName) VALUES (?, ?, ?, ?)`);
+          insertStmt.run('google', profile.id, profile.emails[0].value, profile.displayName);
+          insertStmt.free();
+          persistDatabase();
+
+          const selectStmt = db.prepare('SELECT * FROM users WHERE provider_id = ?');
+          selectStmt.bind([profile.id]);
+          let createdUser = null;
+          if(selectStmt.step()) createdUser = selectStmt.getAsObject();
+          selectStmt.free();
+          
+          return done(null, createdUser);
+        }
+    } catch(e) {
+        logger.error("Ошибка в стратегии Passport:", e);
+        return done(e, null);
     }
   }
 ));
@@ -101,7 +142,11 @@ passport.serializeUser((user, done) => {
 });
 
 passport.deserializeUser((id, done) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
+  stmt.bind([id]);
+  let user = null;
+  if(stmt.step()) user = stmt.getAsObject();
+  stmt.free();
   done(null, user);
 });
 
@@ -166,13 +211,26 @@ app.post('/api/redeem-promo', ensureAuthenticated, (req, res) => {
     if (promoCode !== "FOTOSTART50") {
         return res.status(400).json({ error: "Неверный промокод." });
     }
-    const alreadyUsed = db.prepare('SELECT * FROM used_promos WHERE user_id = ? AND promo_code = ?').get(userId, promoCode);
+
+    const stmtCheck = db.prepare('SELECT * FROM used_promos WHERE user_id = ? AND promo_code = ?');
+    stmtCheck.bind([userId, promoCode]);
+    const alreadyUsed = stmtCheck.step();
+    stmtCheck.free();
+
     if (alreadyUsed) {
         return res.status(409).json({ error: "Вы уже использовали этот промокод." });
     }
-    db.prepare('UPDATE users SET credits = credits + 50 WHERE id = ?').run(userId);
-    db.prepare('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)').run(userId, promoCode);
-    const updatedUser = db.prepare('SELECT credits FROM users WHERE id = ?').get(userId);
+
+    db.run('UPDATE users SET credits = credits + 50 WHERE id = ?', [userId]);
+    db.run('INSERT INTO used_promos (user_id, promo_code) VALUES (?, ?)', [userId, promoCode]);
+    persistDatabase();
+    
+    const stmtSelect = db.prepare('SELECT credits FROM users WHERE id = ?');
+    stmtSelect.bind([userId]);
+    let updatedUser = null;
+    if(stmtSelect.step()) updatedUser = stmtSelect.getAsObject();
+    stmtSelect.free();
+
     res.json({ message: "Промокод успешно применен! +50 кредитов.", newCreditCount: updatedUser.credits });
 });
 
@@ -187,12 +245,25 @@ async function makeApiCall(res, action) {
 }
 
 function deductCredits(userId, amount) {
-    const user = db.prepare('SELECT credits FROM users WHERE id = ?').get(userId);
+    const stmtSelect = db.prepare('SELECT credits FROM users WHERE id = ?');
+    stmtSelect.bind([userId]);
+    let user = null;
+    if(stmtSelect.step()) user = stmtSelect.getAsObject();
+    stmtSelect.free();
+
     if (user.credits < amount) {
         return { success: false, error: "Недостаточно кредитов." };
     }
-    db.prepare('UPDATE users SET credits = credits - ? WHERE id = ?').run(amount, userId);
-    const updatedUser = db.prepare('SELECT credits FROM users WHERE id = ?').get(userId);
+    
+    db.run('UPDATE users SET credits = credits - ? WHERE id = ?', [amount, userId]);
+    persistDatabase();
+
+    const stmtSelectUpdated = db.prepare('SELECT credits FROM users WHERE id = ?');
+    stmtSelectUpdated.bind([userId]);
+    let updatedUser = null;
+    if(stmtSelectUpdated.step()) updatedUser = stmtSelectUpdated.getAsObject();
+    stmtSelectUpdated.free();
+    
     return { success: true, newCreditCount: updatedUser.credits };
 }
 
@@ -292,6 +363,13 @@ app.get('*', (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  logger.info(`Сервер слушает порт ${port}`);
-});
+
+// --- Start Server after DB is ready ---
+async function startServer() {
+    await initializeDatabase();
+    app.listen(port, () => {
+        logger.info(`Сервер слушает порт ${port}`);
+    });
+}
+
+startServer();
