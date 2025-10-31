@@ -3,6 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const url = require('url'); // <-- ДОБАВЛЕНО для Punycode
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
@@ -11,7 +12,6 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const Database = require('better-sqlite3');
 const winston = require('winston');
-const url = require('url'); // <--- ДОБАВЛЕНО: Модуль для работы с URL, включая Punycode
 
 // --- Настройка логгера Winston ---
 const logger = winston.createLogger({
@@ -84,13 +84,15 @@ db.exec(`
 logger.info('DIAGNOSTICS: База данных SQLite успешно подключена и таблицы проверены.');
 
 // --- Настройка Passport.js ---
-// ФИНАЛЬНЫЙ ФИКС: Принудительно конвертируем BASE_URL в Punycode.
-// Google Cloud не принимает кириллические домены в redirect URI,
-// поэтому мы должны гарантировать, что наш сервер отправляет Punycode-версию.
-const punycodeBaseUrl = url.toASCII(process.env.BASE_URL);
-const constructedCallbackURL = `${punycodeBaseUrl}/auth/google/callback`;
-logger.info(`DIAGNOSTICS: Исходный BASE_URL: [${process.env.BASE_URL}]`);
-logger.info(`DIAGNOSTICS: Punycode-версия BASE_URL: [${punycodeBaseUrl}]`);
+// ИЗМЕНЕНО: Принудительное преобразование кириллического домена в Punycode для Google OAuth
+const baseURL = process.env.BASE_URL;
+const parsedBaseURL = new URL(baseURL);
+const punycodeHostname = url.domainToASCII(parsedBaseURL.hostname);
+const punycodeBaseURL = `${parsedBaseURL.protocol}//${punycodeHostname}`;
+const constructedCallbackURL = `${punycodeBaseURL}/auth/google/callback`;
+
+logger.info(`DIAGNOSTICS: Original BASE_URL: [${baseURL}]`);
+logger.info(`DIAGNOSTICS: Punycode-converted BASE_URL for callback: [${punycodeBaseURL}]`);
 logger.info(`DIAGNOSTICS: Passport настроен с callbackURL: [${constructedCallbackURL}]`);
 
 passport.use(new GoogleStrategy({
