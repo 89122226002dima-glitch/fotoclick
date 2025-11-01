@@ -1280,7 +1280,7 @@ function applyPromoCode() {
 }
 
 // --- MAIN APP INITIALIZATION ---
-document.addEventListener('DOMContentLoaded', async () => {
+window.addEventListener('load', async () => {
   // --- Register Service Worker for PWA functionality ---
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
