@@ -1,4 +1,4 @@
-// server.js - Версия с заменой кавычек на ` (backticks) для устранения ошибки сборки.
+// server.js - Версия с исправленной логикой путей.
 
 const express = require('express');
 const cors = require('cors');
@@ -179,15 +179,32 @@ app.post(`/api/generatePhotoshoot`, createApiHandler(async ({ parts }) => {
     throw new Error(`Изображение для фотосессии не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 }));
 
-// --- Обслуживание статических файлов и SPA ---
-// Указываем, что папка 'dist' содержит статические файлы фронтенда
-app.use(express.static(path.join(__dirname, `..`, `dist`)));
+// --- Обслуживание статических файлов и SPA (ИСПРАВЛЕННАЯ ЛОГИКА) ---
+// Прямой и надежный способ указать путь к статическим файлам.
+// Так как server.bundle.js находится внутри папки 'dist',
+// __dirname указывает прямо на эту папку.
+const distPath = path.resolve(__dirname);
+console.log(`[Server Info] Обслуживание статических файлов из папки: ${distPath}`);
+app.use(express.static(distPath));
 
-// Для всех остальных GET-запросов, не относящихся к API, отдаем index.html
-// Это нужно для корректной работы роутинга в React (SPA)
+// Для всех GET-запросов, не относящихся к API, отдаем index.html
 app.get(`*`, (req, res) => {
-    res.sendFile(path.join(__dirname, `..`, `dist`, `index.html`));
+    const indexPath = path.join(distPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            console.error(`[Server Error] Не удалось отправить index.html. Путь: ${indexPath}`, err);
+            res.status(500).send(`
+                <h1>Ошибка сервера 500</h1>
+                <p>Не удалось найти главный файл приложения (index.html).</p>
+                <p>Проверьте, что сборка проекта (npm run build) прошла успешно.</p>
+                <hr>
+                <pre>Ожидаемый путь: ${indexPath}</pre>
+                <pre>Ошибка: ${err.message}</pre>
+            `);
+        }
+    });
 });
+
 
 // --- Запуск сервера ---
 app.listen(port, () => {
