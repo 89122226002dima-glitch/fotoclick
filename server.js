@@ -88,40 +88,16 @@ app.get('/auth/google', (req, res) => {
             'https://www.googleapis.com/auth/userinfo.profile',
             'https://www.googleapis.com/auth/userinfo.email',
         ],
+        // ИСПРАВЛЕНИЕ ИСТОЧНИКА: Принудительно передаем правильный URI, чтобы
+        // библиотека не сгенерировала неверный URL из-за прокси.
+        redirect_uri: REDIRECT_URI
     });
     res.redirect(authorizeUrl);
 });
 
-// Helper function to render a redirect page
-const renderRedirectPage = (url, message) => `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Перенаправление...</title>
-        <meta charset="UTF-8">
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0e9e4; color: #5c4b4b; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .container { text-align: center; padding: 20px; background-color: rgba(253, 250, 248, 0.75); border-radius: 12px; }
-            a { color: #c9a799; }
-        </style>
-        <script>
-            // JS-редирект для обхода ошибки браузера с IDN-доменами в HTTP-заголовках
-            window.location.replace('${url}');
-        </script>
-    </head>
-    <body>
-        <div class="container">
-            <p>${message}</p>
-            <p><a href="${url}">Если перенаправление не произошло, нажмите сюда.</a></p>
-        </div>
-    </body>
-    </html>
-`;
 
 app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query;
-    const safeRedirectUrl = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_success=true';
-    const errorRedirectUrl = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_error=true';
     
     try {
         const { tokens } = await oAuth2Client.getToken(code);
@@ -136,12 +112,13 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        // Отправляем HTML-страницу с JS-редиректом на БЕЗОПАСНЫЙ Punycode URL
-        res.send(renderRedirectPage(safeRedirectUrl, 'Вы успешно вошли в систему. Перенаправляем...'));
+        // БЕЗОПАСНОЕ ВОЗВРАЩЕНИЕ: Перенаправляем на "безопасный" Punycode URL.
+        // Клиентский скрипт затем "очистит" его до кириллицы.
+        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?clean_url=true');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        // Отправляем HTML-страницу с JS-редиректом на БЕЗОПАСНЫЙ Punycode URL в случае ошибки
-        res.send(renderRedirectPage(errorRedirectUrl, 'Произошла ошибка аутентификации. Перенаправляем на главную...'));
+        // В случае ошибки, также возвращаем на главный сайт.
+        res.redirect('https://фото-клик.рф/?auth_error=true');
     }
 });
 

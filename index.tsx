@@ -5,17 +5,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Очистка URL в браузере ---
-// Этот код выполняется до всего остального и мгновенно "украшает" URL
-// после безопасного редиректа от сервера.
-if (window.location.hostname.startsWith('xn--')) {
-    const cleanUrl = new URL('https://фото-клик.рф');
-    cleanUrl.pathname = window.location.pathname;
-    cleanUrl.search = window.location.search.replace(/&?auth_success=true/, '');
-    window.history.replaceState({}, document.title, cleanUrl.href);
-}
-
-
 // --- Type Definitions ---
 interface ImageState {
   base64: string;
@@ -1250,6 +1239,14 @@ function applyPromoCode() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
+  // КОСМЕТИЧЕСКАЯ ОЧИСТКА: Если мы пришли с технического URL после логина,
+  // меняем его на красивый кириллический URL без перезагрузки.
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.has('clean_url')) {
+    const newUrl = 'https://фото-клик.рф/';
+    window.history.replaceState({ path: newUrl }, '', newUrl);
+  }
+
   // --- Register Service Worker for PWA functionality ---
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
