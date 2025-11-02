@@ -1239,14 +1239,6 @@ function applyPromoCode() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // КОСМЕТИЧЕСКАЯ ОЧИСТКА: Если мы пришли с технического URL после логина,
-  // меняем его на красивый кириллический URL без перезагрузки.
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('clean_url')) {
-    const newUrl = 'https://фото-клик.рф/';
-    window.history.replaceState({ path: newUrl }, '', newUrl);
-  }
-
   // --- Register Service Worker for PWA functionality ---
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

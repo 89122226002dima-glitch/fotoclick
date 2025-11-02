@@ -24,9 +24,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
 
-// --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Жестко задаем Punycode-версию callback URL ---
-// Это гарантирует, что мы всегда отправляем Google тот URI, который он ожидает.
-const REDIRECT_URI = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/auth/google/callback';
+// --- ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: Жестко задаем callback URL для нового домена ---
+const REDIRECT_URI = 'https://photo-click-ai.ru/auth/google/callback';
 
 const oAuth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
@@ -112,13 +111,12 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        // БЕЗОПАСНОЕ ВОЗВРАЩЕНИЕ: Перенаправляем на "безопасный" Punycode URL.
-        // Клиентский скрипт затем "очистит" его до кириллицы.
-        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?clean_url=true');
+        // ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: Простое перенаправление на главный сайт.
+        res.redirect('https://photo-click-ai.ru/');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        // В случае ошибки, также возвращаем на главный сайт.
-        res.redirect('https://фото-клик.рф/?auth_error=true');
+        // ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: В случае ошибки, также возвращаем на главный сайт.
+        res.redirect('https://photo-click-ai.ru/?auth_error=true');
     }
 });
 
@@ -202,12 +200,9 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 // --- Раздача статических файлов ---
-// ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Используем __dirname для построения надежных путей
-// __dirname -> /home/dmitry/fotoclick/dist
-// projectRoot -> /home/dmitry/fotoclick
-const projectRoot = path.join(__dirname, '..'); 
-const distPath = path.join(projectRoot, 'dist');
-const publicPath = path.join(projectRoot, 'public');
+// Express будет автоматически использовать правильные пути, так как PM2 запускает его из /home/dmitry/fotoclick
+const distPath = path.join(process.cwd(), 'dist');
+const publicPath = path.join(process.cwd(), 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
