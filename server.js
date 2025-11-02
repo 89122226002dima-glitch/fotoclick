@@ -1,4 +1,4 @@
-// server.js - Версия с усиленной диагностикой путей
+// server.js - Финальная исправленная версия
 
 const express = require('express');
 const cors = require('cors');
@@ -8,63 +8,36 @@ const cookieParser = require('cookie-parser');
 const { OAuth2Client } = require('google-auth-library');
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
-// --- УСИЛЕННАЯ ДИАГНОСТИКА ПУТЕЙ ---
-console.log('--- STARTING SERVER DIAGNOSTICS ---');
-console.log(`[DIAG] Текущий __dirname (местоположение файла сервера): ${__dirname}`);
-
+// --- ШАГ 1: ОПРЕДЕЛЕНИЕ ПУТИ И ЗАГРУЗКА .ENV ---
+// Определяем абсолютный путь к файлу .env, который лежит на один уровень выше, чем папка dist, где будет этот скрипт.
 const envPath = path.resolve(__dirname, '..', '.env');
-console.log(`[DIAG] Попытка загрузить .env из АБСОЛЮТНОГО пути: ${envPath}`);
-
 require('dotenv').config({ path: envPath });
 
-// --- ПРОВЕРКА ПЕРЕМЕННЫХ ПОСЛЕ ЗАГРУЗКИ ---
-if (process.env.API_KEY) {
-  console.log('[DIAG] УСПЕХ: API_KEY загружен.');
-} else {
-  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: API_KEY не найден в process.env!');
-}
-if (process.env.GOOGLE_CLIENT_ID) {
-  console.log('[DIAG] УСПЕХ: GOOGLE_CLIENT_ID загружен.');
-} else {
-  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: GOOGLE_CLIENT_ID не найден!');
-}
-if (process.env.GOOGLE_CLIENT_SECRET) {
-  console.log('[DIAG] УСПЕХ: GOOGLE_CLIENT_SECRET загружен.');
-} else {
-  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: GOOGLE_CLIENT_SECRET не найден!');
-}
-if (process.env.SESSION_SECRET) {
-  console.log('[DIAG] УСПЕХ: SESSION_SECRET загружен.');
-} else {
-  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: SESSION_SECRET не найден!');
-}
-
-const distPath = __dirname;
-const publicPath = path.resolve(__dirname, '..', 'public');
-console.log(`[DIAG] Путь для статики (dist) определен как: ${distPath}`);
-console.log(`[DIAG] Путь для статики (public) определен как: ${publicPath}`);
-console.log('--- END OF DIAGNOSTICS ---');
-// ------------------------------------
-
-const app = express();
-const port = process.env.PORT || 3001;
-
+// --- ШАГ 2: КРИТИЧЕСКАЯ ПРОВЕРКА ПЕРЕМЕННЫХ ---
+// Если хотя бы одна из ключевых переменных отсутствует, сервер не сможет работать.
+// Мы немедленно останавливаем процесс с информативным сообщением.
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.SESSION_SECRET) {
-    console.error('DIAGNOSTICS [v2]: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Пожалуйста, проверьте ваш .env файл.');
-    process.exit(1); // Останавливаем сервер, если нет ключей
+    console.error('DIAGNOSTICS [v3]: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Проверьте ваш .env файл и его содержимое.');
+    console.error(`DIAGNOSTICS [v3]: Ожидаемый путь к .env: ${envPath}`);
+    process.exit(1); // Останавливаем сервер
 }
+console.log('DIAGNOSTICS [v3]: Все переменные окружения (API_KEY, GOOGLE_CLIENT_ID) успешно загружены.');
 
-// --- Инициализация Gemini ---
+// --- ШАГ 3: ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ПОСЛЕ УСПЕШНОЙ ЗАГРУЗКИ КЛЮЧЕЙ ---
+// Теперь, когда мы уверены, что process.env содержит все ключи, мы можем безопасно инициализировать клиенты.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
 
-// --- Инициализация Google OAuth Client ---
 const oAuth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  '/auth/google/callback'
+  '/auth/google/callback' // Redirect URI
 );
+
+// --- НАСТРОЙКА ПРИЛОЖЕНИЯ EXPRESS ---
+const app = express();
+const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
@@ -76,7 +49,8 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 1000 * 60 * 60 * 24 * 7
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
     }
 }));
 
@@ -216,7 +190,10 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 
-// Раздача статических файлов
+// --- Раздача статических файлов ---
+const distPath = path.resolve(__dirname); // Папка dist
+const publicPath = path.resolve(__dirname, '..', 'public'); // Папка public
+
 app.use(express.static(distPath));
 console.log(`[Server Info] Обслуживание статических файлов из папки: ${distPath}`);
 app.use(express.static(publicPath));
