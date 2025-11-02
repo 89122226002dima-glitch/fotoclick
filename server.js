@@ -135,8 +135,11 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // Раздача статических файлов
-const distPath = path.join(__dirname, 'dist');
-const publicPath = path.join(__dirname, 'public');
+// *** ИЗМЕНЕНИЕ: Используем process.cwd() для получения корневой директории проекта, независимо от места запуска ***
+const projectRoot = process.cwd();
+const distPath = path.join(projectRoot, 'dist');
+const publicPath = path.join(projectRoot, 'public');
+
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
