@@ -1,4 +1,4 @@
-// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
+// server.js - Версия с усиленной диагностикой путей
 
 const express = require('express');
 const cors = require('cors');
@@ -6,26 +6,51 @@ const path = require('path');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const { OAuth2Client } = require('google-auth-library');
-// ВАЖНО: Указываем правильный путь к .env файлу, когда скрипт запускается из папки 'dist'
-require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
-// --- Диагностика .env для Gemini ---
-console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
+// --- УСИЛЕННАЯ ДИАГНОСТИКА ПУТЕЙ ---
+console.log('--- STARTING SERVER DIAGNOSTICS ---');
+console.log(`[DIAG] Текущий __dirname (местоположение файла сервера): ${__dirname}`);
+
+const envPath = path.resolve(__dirname, '..', '.env');
+console.log(`[DIAG] Попытка загрузить .env из АБСОЛЮТНОГО пути: ${envPath}`);
+
+require('dotenv').config({ path: envPath });
+
+// --- ПРОВЕРКА ПЕРЕМЕННЫХ ПОСЛЕ ЗАГРУЗКИ ---
 if (process.env.API_KEY) {
-  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
+  console.log('[DIAG] УСПЕХ: API_KEY загружен.');
 } else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
+  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: API_KEY не найден в process.env!');
 }
-if (process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: GOOGLE_CLIENT_ID загружен.');
-else console.warn('DIAGNOSTICS: ПРЕДУПРЕЖДЕНИЕ: GOOGLE_CLIENT_ID не найден. Авторизация не будет работать.');
-// --- Конец диагностики ---
+if (process.env.GOOGLE_CLIENT_ID) {
+  console.log('[DIAG] УСПЕХ: GOOGLE_CLIENT_ID загружен.');
+} else {
+  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: GOOGLE_CLIENT_ID не найден!');
+}
+if (process.env.GOOGLE_CLIENT_SECRET) {
+  console.log('[DIAG] УСПЕХ: GOOGLE_CLIENT_SECRET загружен.');
+} else {
+  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: GOOGLE_CLIENT_SECRET не найден!');
+}
+if (process.env.SESSION_SECRET) {
+  console.log('[DIAG] УСПЕХ: SESSION_SECRET загружен.');
+} else {
+  console.error('[DIAG] КРИТИЧЕСКАЯ ОШИБКА: SESSION_SECRET не найден!');
+}
+
+const distPath = __dirname;
+const publicPath = path.resolve(__dirname, '..', 'public');
+console.log(`[DIAG] Путь для статики (dist) определен как: ${distPath}`);
+console.log(`[DIAG] Путь для статики (public) определен как: ${publicPath}`);
+console.log('--- END OF DIAGNOSTICS ---');
+// ------------------------------------
 
 const app = express();
 const port = process.env.PORT || 3001;
 
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.SESSION_SECRET) {
-    console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Одна или несколько переменных окружения (API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET) отсутствуют. Сервер не может запуститься.');
+    console.error('DIAGNOSTICS [v2]: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Пожалуйста, проверьте ваш .env файл.');
     process.exit(1); // Останавливаем сервер, если нет ключей
 }
 
@@ -38,9 +63,8 @@ const textModelName = 'gemini-2.5-flash';
 const oAuth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  '/auth/google/callback' // Redirect URI path. Host/port are determined by Google based on where request comes from.
+  '/auth/google/callback'
 );
-
 
 // Middleware
 app.use(cors());
@@ -51,13 +75,12 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-        maxAge: 1000 * 60 * 60 * 24 * 7 // 1 week
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 1000 * 60 * 60 * 24 * 7
     }
 }));
 
 
-// Хелпер для преобразования base64 в формат Gemini Part
 const fileToPart = (base64, mimeType) => ({
     inlineData: {
         data: base64,
@@ -65,7 +88,6 @@ const fileToPart = (base64, mimeType) => ({
     },
 });
 
-// Общий обработчик для всех API-запросов
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
         const responsePayload = await actionLogic(req.body);
@@ -99,23 +121,19 @@ app.get('/auth/google/callback', async (req, res) => {
         const { tokens } = await oAuth2Client.getToken(code);
         oAuth2Client.setCredentials(tokens);
         
-        // Получаем информацию о пользователе из ID-токена
         const ticket = await oAuth2Client.verifyIdToken({
             idToken: tokens.id_token,
             audience: process.env.GOOGLE_CLIENT_ID,
         });
         const payload = ticket.getPayload();
         
-        const user = {
-            name: payload.name,
-            email: payload.email,
-        };
+        const user = { name: payload.name, email: payload.email };
         
-        req.session.user = user; // Сохраняем пользователя в сессию
-        res.redirect('/'); // Перенаправляем на главную страницу
+        req.session.user = user;
+        res.redirect('/');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        res.redirect('/?auth_error=true'); // В случае ошибки, возвращаем на главную с параметром
+        res.redirect('/?auth_error=true');
     }
 });
 
@@ -132,33 +150,26 @@ app.post('/auth/logout', (req, res) => {
         if (err) {
             return res.status(500).json({ error: 'Не удалось выйти из системы' });
         }
-        res.clearCookie('connect.sid'); // connect.sid - имя куки по умолчанию для express-session
+        res.clearCookie('connect.sid');
         res.status(200).json({ message: 'Выход выполнен успешно' });
     });
 });
 
-
 // --- API маршруты приложения ---
 
-const generateImageApiCall = async ({ prompt, image }) => {
+app.post('/api/generateVariation', createApiHandler(async ({ prompt, image }) => {
     const response = await ai.models.generateContent({
         model: imageModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
+        config: { responseModalities: [Modality.IMAGE] },
     });
-    
-    // Проверяем, есть ли изображение в ответе
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart && imagePart.inlineData) {
+    if (imagePart?.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
         return { imageUrl: `data:${mimeType};base64,${data}` };
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-};
-
-app.post('/api/generateVariation', createApiHandler(generateImageApiCall));
+}));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
@@ -169,11 +180,9 @@ app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
             responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
         }
     });
-
     try {
-        const jsonText = response.text.trim();
-        const subjectDetails = JSON.parse(jsonText);
-        if (typeof subjectDetails !== 'object' || subjectDetails === null || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
+        const subjectDetails = JSON.parse(response.text.trim());
+        if (typeof subjectDetails !== 'object' || !subjectDetails || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
             throw new Error('Получен некорректный формат данных от AI.');
         }
         return { subjectDetails };
@@ -192,53 +201,39 @@ app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPr
 }));
 
 app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
-    const geminiParts = parts.map(part => {
-        if (part.inlineData) {
-            return fileToPart(part.inlineData.data, part.inlineData.mimeType);
-        }
-        return part; // Для текстовых частей
-    });
-
+    const geminiParts = parts.map(part => part.inlineData ? fileToPart(part.inlineData.data, part.inlineData.mimeType) : part);
     const response = await ai.models.generateContent({
         model: imageModelName,
         contents: { parts: geminiParts },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
+        config: { responseModalities: [Modality.IMAGE] },
     });
-    
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart && imagePart.inlineData) {
+    if (imagePart?.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
-        const resultUrl = `data:${mimeType};base64,${data}`;
-        return { resultUrl, generatedPhotoshootResult: { base64: data, mimeType: mimeType } };
+        return { resultUrl: `data:${mimeType};base64,${data}`, generatedPhotoshootResult: { base64: data, mimeType: mimeType } };
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 }));
 
 
-// Раздача статических файлов - ИСПРАВЛЕННЫЕ ПУТИ
-// Когда скрипт запущен из /dist, __dirname указывает на /dist.
-// Все собранные файлы фронтенда (index.html, assets) находятся прямо здесь.
-const distPath = __dirname;
-// Папка 'public' находится на один уровень выше, в корне проекта.
-const publicPath = path.join(__dirname, '..', 'public');
-
+// Раздача статических файлов
 app.use(express.static(distPath));
+console.log(`[Server Info] Обслуживание статических файлов из папки: ${distPath}`);
 app.use(express.static(publicPath));
+console.log(`[Server Info] Обслуживание статических файлов из папки: ${publicPath}`);
 
-// "Catchall" обработчик для SPA
+
+// "Catchall" обработчик для SPA (Single Page Application)
 app.get('*', (req, res) => {
-    // index.html теперь находится прямо в distPath (который = __dirname)
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {
         if (err) {
-            console.error(`Error sending file: ${indexPath}`, err);
-            res.status(500).send('Error serving the application.');
+            console.error(`[CRITICAL] Ошибка отправки файла index.html из ${indexPath}`, err);
+            res.status(500).send('Ошибка сервера: не удалось обслужить приложение.');
         }
     });
 });
 
 app.listen(port, () => {
-  console.log(`Сервер слушает порт ${port}`);
+  console.log(`[Server Info] Сервер 'Фото-Клик' запущен на порту ${port}`);
 });
