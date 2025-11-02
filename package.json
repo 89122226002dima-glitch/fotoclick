@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
+    "clean": "rm -rf dist",
+    "build": "npm run clean && vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
     "start": "pm2 start ecosystem.config.js",
     "stop": "pm2 stop fotoclick",
     "restart": "pm2 restart fotoclick",
