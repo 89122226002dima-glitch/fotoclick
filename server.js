@@ -6,7 +6,8 @@ const path = require('path');
 const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const { OAuth2Client } = require('google-auth-library');
-require('dotenv').config();
+// ВАЖНО: Указываем правильный путь к .env файлу, когда скрипт запускается из папки 'dist'
+require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
 // --- Диагностика .env для Gemini ---
@@ -216,15 +217,19 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 
-// Раздача статических файлов
-const distPath = path.join(__dirname, 'dist');
-const publicPath = path.join(__dirname, 'public');
+// Раздача статических файлов - ИСПРАВЛЕННЫЕ ПУТИ
+// Когда скрипт запущен из /dist, __dirname указывает на /dist.
+// Все собранные файлы фронтенда (index.html, assets) находятся прямо здесь.
+const distPath = __dirname;
+// Папка 'public' находится на один уровень выше, в корне проекта.
+const publicPath = path.join(__dirname, '..', 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
 
 // "Catchall" обработчик для SPA
 app.get('*', (req, res) => {
+    // index.html теперь находится прямо в distPath (который = __dirname)
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {
         if (err) {
