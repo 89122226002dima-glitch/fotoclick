@@ -103,10 +103,10 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        res.redirect('/');
+        res.redirect('https://фото-клик.рф/');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        res.redirect('/?auth_error=true');
+        res.redirect('https://фото-клик.рф/?auth_error=true');
     }
 });
 
