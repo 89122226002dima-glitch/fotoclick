@@ -1,4 +1,4 @@
-// server.js - Возвращение к стабильной версии CommonJS
+// server.js - Финальная исправленная версия
 
 const express = require('express');
 const cors = require('cors');
@@ -7,11 +7,11 @@ const session = require('express-session');
 const cookieParser = require('cookie-parser');
 const { OAuth2Client } = require('google-auth-library');
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
-const dotenv = require('dotenv');
 
-// --- ШАГ 1: ЗАГРУЗКА .ENV ---
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
-
+// --- ШАГ 1: ОПРЕДЕЛЕНИЕ ПУТИ И ЗАГРУЗКА .ENV ---
+// Загружаем переменные окружения. PM2, благодаря ecosystem.config.js,
+// запустит этот скрипт из правильной папки, и .env будет найден.
+require('dotenv').config();
 
 // --- ШАГ 2: КРИТИЧЕСКАЯ ПРОВЕРКА ПЕРЕМЕННЫХ ---
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.SESSION_SECRET) {
@@ -24,6 +24,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
 
+// --- ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: Жестко задаем callback URL для нового домена ---
 const REDIRECT_URI = 'https://photo-click-ai.ru/auth/google/callback';
 
 const oAuth2Client = new OAuth2Client(
@@ -36,6 +37,8 @@ const oAuth2Client = new OAuth2Client(
 const app = express();
 const port = process.env.PORT || 3001;
 
+// ---> КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ <---
+// Сообщаем Express, что он находится за прокси-сервером (Caddy).
 app.set('trust proxy', 1);
 
 // Middleware
@@ -84,6 +87,8 @@ app.get('/auth/google', (req, res) => {
             'https://www.googleapis.com/auth/userinfo.profile',
             'https://www.googleapis.com/auth/userinfo.email',
         ],
+        // ИСПРАВЛЕНИЕ ИСТОЧНИКА: Принудительно передаем правильный URI, чтобы
+        // библиотека не сгенерировала неверный URL из-за прокси.
         redirect_uri: REDIRECT_URI
     });
     res.redirect(authorizeUrl);
@@ -106,9 +111,11 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
+        // ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: Простое перенаправление на главный сайт.
         res.redirect('https://photo-click-ai.ru/');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
+        // ИЗМЕНЕНИЕ ДЛЯ НОВОГО ДОМЕНА: В случае ошибки, также возвращаем на главный сайт.
         res.redirect('https://photo-click-ai.ru/?auth_error=true');
     }
 });
@@ -193,12 +200,14 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 // --- Раздача статических файлов ---
+// Express будет автоматически использовать правильные пути, так как PM2 запускает его из /home/dmitry/fotoclick
 const distPath = path.join(process.cwd(), 'dist');
 const publicPath = path.join(process.cwd(), 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
 
+// "Catchall" обработчик для SPA (Single Page Application)
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {
