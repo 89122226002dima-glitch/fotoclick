@@ -111,10 +111,12 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        res.redirect('https://фото-клик.рф/');
+        // Безопасный редирект на Punycode URL с флагом для клиентского скрипта
+        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?clean_url=true');
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        res.redirect('https://фото-клик.рф/?auth_error=true');
+        // Безопасный редирект в случае ошибки
+        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_error=true&clean_url=true');
     }
 });
 
