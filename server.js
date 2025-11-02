@@ -38,6 +38,14 @@ const oAuth2Client = new OAuth2Client(
 const app = express();
 const port = process.env.PORT || 3001;
 
+// ---> КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ <---
+// Сообщаем Express, что он находится за прокси-сервером (Caddy).
+// Это заставляет Express доверять заголовкам X-Forwarded-*,
+// что позволяет библиотеке аутентификации Google правильно определять
+// публичный URL (https://фото-клик.рф), а не внутренний (http://localhost:3001).
+// Это решает ошибку 'redirect_uri_mismatch'.
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
