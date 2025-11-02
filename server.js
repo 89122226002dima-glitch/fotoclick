@@ -202,9 +202,12 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 // --- Раздача статических файлов ---
-// Express будет автоматически использовать правильные пути, так как PM2 запускает его из /home/dmitry/fotoclick
-const distPath = path.join(process.cwd(), 'dist');
-const publicPath = path.join(process.cwd(), 'public');
+// ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Используем __dirname для построения надежных путей
+// __dirname -> /home/dmitry/fotoclick/dist
+// projectRoot -> /home/dmitry/fotoclick
+const projectRoot = path.join(__dirname, '..'); 
+const distPath = path.join(projectRoot, 'dist');
+const publicPath = path.join(projectRoot, 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
