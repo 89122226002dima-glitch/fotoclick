@@ -358,46 +358,6 @@ body {
     color: var(--font-color-dark);
 }
 
-/* --- Auth Container --- */
-.user-info-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background-color: rgba(224, 201, 166, 0.2);
-    padding: 4px;
-    border-radius: 9999px;
-    border: 1px solid var(--border-color);
-    transition: all 0.3s ease;
-}
-.user-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 2px solid var(--secondary-color);
-    object-fit: cover;
-}
-.user-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--font-color);
-}
-.logout-button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--font-color-dark);
-    transition: all 0.2s ease;
-    margin-right: 4px;
-}
-.logout-button:hover {
-    color: #ef4444; /* red-500 */
-    transform: scale(1.1);
-}
-
 /* --- Page 1 Specific --- */
 @keyframes step-fade-in {
     from { opacity: 0; transform: translateY(20px); }

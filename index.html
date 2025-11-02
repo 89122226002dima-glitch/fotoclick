@@ -11,7 +11,6 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="icon-192.png">
 
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -71,12 +70,9 @@
               </button>
             </nav>
 
-            <!-- Right side container -->
-            <div class="order-2 sm:order-3 flex items-center gap-4">
-                <div id="auth-container"></div>
-                <div id="credit-counter" class="credit-counter-glow bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-full text-base font-semibold flex items-center gap-1.5 cursor-pointer" title="Пополнить кредиты">
-                    <!-- SVG and spans will be inserted here by JS -->
-                </div>
+            <!-- Right: Credits -->
+            <div id="credit-counter" class="credit-counter-glow order-2 sm:order-3 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-full text-base font-semibold flex items-center gap-1.5 cursor-pointer" title="Пополнить кредиты">
+                <!-- SVG and spans will be inserted here by JS -->
             </div>
         </div>
         
