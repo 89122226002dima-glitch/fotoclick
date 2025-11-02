@@ -5,6 +5,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Очистка URL в браузере ---
+// Этот код выполняется до всего остального и мгновенно "украшает" URL
+// после безопасного редиректа от сервера.
+if (window.location.hostname.startsWith('xn--')) {
+    const cleanUrl = new URL('https://фото-клик.рф');
+    cleanUrl.pathname = window.location.pathname;
+    cleanUrl.search = window.location.search.replace(/&?auth_success=true/, '');
+    window.history.replaceState({}, document.title, cleanUrl.href);
+}
+
+
 // --- Type Definitions ---
 interface ImageState {
   base64: string;

@@ -120,6 +120,9 @@ const renderRedirectPage = (url, message) => `
 
 app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query;
+    const safeRedirectUrl = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_success=true';
+    const errorRedirectUrl = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_error=true';
+    
     try {
         const { tokens } = await oAuth2Client.getToken(code);
         oAuth2Client.setCredentials(tokens);
@@ -133,12 +136,12 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        // Отправляем HTML-страницу с JS-редиректом
-        res.send(renderRedirectPage('https://фото-клик.рф/', 'Вы успешно вошли в систему. Перенаправляем...'));
+        // Отправляем HTML-страницу с JS-редиректом на БЕЗОПАСНЫЙ Punycode URL
+        res.send(renderRedirectPage(safeRedirectUrl, 'Вы успешно вошли в систему. Перенаправляем...'));
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        // Отправляем HTML-страницу с JS-редиректом в случае ошибки
-        res.send(renderRedirectPage('https://фото-клик.рф/?auth_error=true', 'Произошла ошибка аутентификации. Перенаправляем на главную...'));
+        // Отправляем HTML-страницу с JS-редиректом на БЕЗОПАСНЫЙ Punycode URL в случае ошибки
+        res.send(renderRedirectPage(errorRedirectUrl, 'Произошла ошибка аутентификации. Перенаправляем на главную...'));
     }
 });
 
