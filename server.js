@@ -9,22 +9,17 @@ const { OAuth2Client } = require('google-auth-library');
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
 // --- ШАГ 1: ОПРЕДЕЛЕНИЕ ПУТИ И ЗАГРУЗКА .ENV ---
-// Определяем абсолютный путь к файлу .env, который лежит на один уровень выше, чем папка dist, где будет этот скрипт.
-const envPath = path.resolve(__dirname, '..', '.env');
-require('dotenv').config({ path: envPath });
+// Загружаем переменные окружения. PM2, благодаря ecosystem.config.js,
+// запустит этот скрипт из правильной папки, и .env будет найден.
+require('dotenv').config();
 
 // --- ШАГ 2: КРИТИЧЕСКАЯ ПРОВЕРКА ПЕРЕМЕННЫХ ---
-// Если хотя бы одна из ключевых переменных отсутствует, сервер не сможет работать.
-// Мы немедленно останавливаем процесс с информативным сообщением.
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.SESSION_SECRET) {
-    console.error('DIAGNOSTICS [v3]: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Проверьте ваш .env файл и его содержимое.');
-    console.error(`DIAGNOSTICS [v3]: Ожидаемый путь к .env: ${envPath}`);
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Проверьте ваш .env файл.');
     process.exit(1); // Останавливаем сервер
 }
-console.log('DIAGNOSTICS [v3]: Все переменные окружения (API_KEY, GOOGLE_CLIENT_ID) успешно загружены.');
 
-// --- ШАГ 3: ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ПОСЛЕ УСПЕШНОЙ ЗАГРУЗКИ КЛЮЧЕЙ ---
-// Теперь, когда мы уверены, что process.env содержит все ключи, мы можем безопасно инициализировать клиенты.
+// --- ШАГ 3: ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
@@ -189,16 +184,13 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 }));
 
-
 // --- Раздача статических файлов ---
-const distPath = path.resolve(__dirname); // Папка dist
-const publicPath = path.resolve(__dirname, '..', 'public'); // Папка public
+// Express будет автоматически использовать правильные пути, так как PM2 запускает его из /home/dmitry/fotoclick
+const distPath = path.join(process.cwd(), 'dist');
+const publicPath = path.join(process.cwd(), 'public');
 
 app.use(express.static(distPath));
-console.log(`[Server Info] Обслуживание статических файлов из папки: ${distPath}`);
 app.use(express.static(publicPath));
-console.log(`[Server Info] Обслуживание статических файлов из папки: ${publicPath}`);
-
 
 // "Catchall" обработчик для SPA (Single Page Application)
 app.get('*', (req, res) => {
