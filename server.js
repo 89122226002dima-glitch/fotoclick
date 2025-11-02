@@ -1,63 +1,46 @@
-// server.js - Финальная исправленная версия
+// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
 
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const session = require('express-session');
-const cookieParser = require('cookie-parser');
-const { OAuth2Client } = require('google-auth-library');
-const { GoogleGenAI, Type, Modality } = require('@google/genai');
-
-// --- ШАГ 1: ОПРЕДЕЛЕНИЕ ПУТИ И ЗАГРУЗКА .ENV ---
-// Загружаем переменные окружения. PM2, благодаря ecosystem.config.js,
-// запустит этот скрипт из правильной папки, и .env будет найден.
 require('dotenv').config();
+const { GoogleGenAI, Type, Modality } = require('@google/genai');
+const { OAuth2Client } = require('google-auth-library');
 
-// --- ШАГ 2: КРИТИЧЕСКАЯ ПРОВЕРКА ПЕРЕМЕННЫХ ---
-if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.SESSION_SECRET) {
-    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Отсутствуют необходимые переменные окружения. Проверьте ваш .env файл.');
-    process.exit(1); // Останавливаем сервер
+// --- Диагностика .env для Gemini ---
+console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
+if (process.env.API_KEY) {
+  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
+} else {
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
 }
+if (process.env.GOOGLE_CLIENT_ID) {
+  console.log('DIAGNOSTICS: GOOGLE_CLIENT_ID успешно загружен.');
+} else {
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_CLIENT_ID не найдена. Авторизация не будет работать.');
+}
+// --- Конец диагностики ---
 
-// --- ШАГ 3: ИНИЦИАЛИЗАЦИЯ КЛИЕНТОВ ---
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const imageModelName = 'gemini-2.5-flash-image';
-const textModelName = 'gemini-2.5-flash';
-
-// --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Жестко задаем Punycode-версию callback URL ---
-// Это гарантирует, что мы всегда отправляем Google тот URI, который он ожидает.
-const REDIRECT_URI = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/auth/google/callback';
-
-const oAuth2Client = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  REDIRECT_URI
-);
-
-// --- НАСТРОЙКА ПРИЛОЖЕНИЯ EXPRESS ---
 const app = express();
 const port = process.env.PORT || 3001;
 
-// ---> КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ <---
-// Сообщаем Express, что он находится за прокси-сервером (Caddy).
-app.set('trust proxy', 1);
+if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID) {
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! Одна из критических переменных окружения не найдена.');
+    process.exit(1); // Останавливаем сервер, если нет ключа
+}
+
+// --- Инициализация клиентов ---
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const imageModelName = 'gemini-2.5-flash-image';
+const textModelName = 'gemini-2.5-flash';
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(cookieParser());
-app.use(session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        maxAge: 1000 * 60 * 60 * 24 * 7 // 7 дней
-    }
-}));
 
-
+// Хелпер для преобразования base64 в формат Gemini Part
 const fileToPart = (base64, mimeType) => ({
     inlineData: {
         data: base64,
@@ -65,9 +48,10 @@ const fileToPart = (base64, mimeType) => ({
     },
 });
 
+// Общий обработчик для всех API-запросов
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
-        const responsePayload = await actionLogic(req.body);
+        const responsePayload = await actionLogic(req.body, req);
         return res.status(200).json(responsePayload);
     } catch (error) {
         console.error(`API Error in action:`, error);
@@ -79,83 +63,58 @@ const createApiHandler = (actionLogic) => async (req, res) => {
     }
 };
 
-// --- Маршруты аутентификации ---
+// --- API маршруты ---
 
-app.get('/auth/google', (req, res) => {
-    const authorizeUrl = oAuth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: [
-            'https://www.googleapis.com/auth/userinfo.profile',
-            'https://www.googleapis.com/auth/userinfo.email',
-        ],
-        // ИСПРАВЛЕНИЕ ИСТОЧНИКА: Принудительно передаем правильный URI, чтобы
-        // библиотека не сгенерировала неверный URL из-за прокси.
-        redirect_uri: REDIRECT_URI
-    });
-    res.redirect(authorizeUrl);
+// Маршрут для передачи конфигурации на фронтенд
+app.get('/api/config', (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ error: 'Google Client ID не настроен на сервере.' });
+  }
+  res.status(200).json({ clientId: process.env.GOOGLE_CLIENT_ID });
 });
 
 
-app.get('/auth/google/callback', async (req, res) => {
-    const { code } = req.query;
-    
-    try {
-        const { tokens } = await oAuth2Client.getToken(code);
-        oAuth2Client.setCredentials(tokens);
-        
-        const ticket = await oAuth2Client.verifyIdToken({
-            idToken: tokens.id_token,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        
-        const user = { name: payload.name, email: payload.email };
-        
-        req.session.user = user;
-        // БЕЗОПАСНОЕ ВОЗВРАЩЕНИЕ: Перенаправляем на "безопасный" Punycode URL.
-        // Клиентский скрипт затем "очистит" его до кириллицы.
-        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?clean_url=true');
-    } catch (error) {
-        console.error('Ошибка при аутентификации Google:', error);
-        // В случае ошибки, также возвращаем на главный сайт.
-        res.redirect('https://фото-клик.рф/?auth_error=true');
+// Новый маршрут для Google Auth
+app.post('/api/auth/google', createApiHandler(async ({ token }) => {
+    if (!token) {
+        throw new Error('Токен аутентификации не предоставлен.');
     }
-});
-
-
-app.get('/api/me', (req, res) => {
-    if (req.session.user) {
-        res.json(req.session.user);
-    } else {
-        res.status(401).json({ error: 'Не авторизован' });
-    }
-});
-
-app.post('/auth/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            return res.status(500).json({ error: 'Не удалось выйти из системы' });
-        }
-        res.clearCookie('connect.sid');
-        res.status(200).json({ message: 'Выход выполнен успешно' });
+    const ticket = await googleClient.verifyIdToken({
+        idToken: token,
+        audience: process.env.GOOGLE_CLIENT_ID,
     });
-});
+    const payload = ticket.getPayload();
+    if (!payload) {
+        throw new Error('Не удалось верифицировать токен.');
+    }
+    // Возвращаем фронтенду только нужные данные
+    return {
+        name: payload.name,
+        email: payload.email,
+        picture: payload.picture,
+    };
+}));
 
-// --- API маршруты приложения ---
 
-app.post('/api/generateVariation', createApiHandler(async ({ prompt, image }) => {
+const generateImageApiCall = async ({ prompt, image }) => {
     const response = await ai.models.generateContent({
         model: imageModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
-        config: { responseModalities: [Modality.IMAGE] },
+        config: {
+            responseModalities: [Modality.IMAGE],
+        },
     });
+    
+    // Проверяем, есть ли изображение в ответе
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart?.inlineData) {
+    if (imagePart && imagePart.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
         return { imageUrl: `data:${mimeType};base64,${data}` };
     }
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-}));
+};
+
+app.post('/api/generateVariation', createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
@@ -166,63 +125,9 @@ app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
             responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
         }
     });
+
     try {
-        const subjectDetails = JSON.parse(response.text.trim());
-        if (typeof subjectDetails !== 'object' || !subjectDetails || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
-            throw new Error('Получен некорректный формат данных от AI.');
-        }
-        return { subjectDetails };
-    } catch (e) {
-        console.error("Ошибка парсинга JSON от Gemini:", response.text, e);
-        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
-    }
-}));
-
-app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
-    const response = await ai.models.generateContent({
-        model: textModelName,
-        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] },
-    });
-    return { text: response.text.trim() };
-}));
-
-app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
-    const geminiParts = parts.map(part => part.inlineData ? fileToPart(part.inlineData.data, part.inlineData.mimeType) : part);
-    const response = await ai.models.generateContent({
-        model: imageModelName,
-        contents: { parts: geminiParts },
-        config: { responseModalities: [Modality.IMAGE] },
-    });
-    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart?.inlineData) {
-        const { mimeType, data } = imagePart.inlineData;
-        return { resultUrl: `data:${mimeType};base64,${data}`, generatedPhotoshootResult: { base64: data, mimeType: mimeType } };
-    }
-    throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-}));
-
-// --- Раздача статических файлов ---
-// ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Используем __dirname для построения надежных путей
-// __dirname -> /home/dmitry/fotoclick/dist
-// projectRoot -> /home/dmitry/fotoclick
-const projectRoot = path.join(__dirname, '..'); 
-const distPath = path.join(projectRoot, 'dist');
-const publicPath = path.join(projectRoot, 'public');
-
-app.use(express.static(distPath));
-app.use(express.static(publicPath));
-
-// "Catchall" обработчик для SPA (Single Page Application)
-app.get('*', (req, res) => {
-    const indexPath = path.join(distPath, 'index.html');
-    res.sendFile(indexPath, (err) => {
-        if (err) {
-            console.error(`[CRITICAL] Ошибка отправки файла index.html из ${indexPath}`, err);
-            res.status(500).send('Ошибка сервера: не удалось обслужить приложение.');
-        }
-    });
-});
-
-app.listen(port, () => {
-  console.log(`[Server Info] Сервер 'Фото-Клик' запущен на порту ${port}`);
-});
+        const jsonText = response.text.trim();
+        const subjectDetails = JSON.parse(jsonText);
+        if (typeof subjectDetails !== 'object' || subjectDetails === null || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
+            throw new Error('Получен некорр...

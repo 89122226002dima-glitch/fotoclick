@@ -358,6 +358,46 @@ body {
     color: var(--font-color-dark);
 }
 
+/* --- Auth Container --- */
+.user-info-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background-color: rgba(224, 201, 166, 0.2);
+    padding: 4px;
+    border-radius: 9999px;
+    border: 1px solid var(--border-color);
+    transition: all 0.3s ease;
+}
+.user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid var(--secondary-color);
+    object-fit: cover;
+}
+.user-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--font-color);
+}
+.logout-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--font-color-dark);
+    transition: all 0.2s ease;
+    margin-right: 4px;
+}
+.logout-button:hover {
+    color: #ef4444; /* red-500 */
+    transform: scale(1.1);
+}
+
 /* --- Page 1 Specific --- */
 @keyframes step-fade-in {
     from { opacity: 0; transform: translateY(20px); }
@@ -707,65 +747,4 @@ body {
 .lightbox-close-btn:hover {
   transform: scale(1.05) translateX(-47.5%); /* Adjust for scale */
   box-shadow: 0 6px 25px rgba(0,0,0,0.5), 0 0 25px -5px var(--primary-color);
-}
-
-/* --- Authentication Styles --- */
-.login-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  background-color: rgba(255, 255, 255, 0.2);
-  color: var(--font-color);
-  font-weight: 500;
-  padding: 0.5rem 1rem;
-  border-radius: 9999px;
-  border: 1px solid var(--border-color);
-  transition: all 0.3s ease;
-  cursor: pointer;
-  text-decoration: none;
-}
-.login-button:hover {
-  background-color: var(--border-color);
-  border-color: var(--secondary-color);
-  transform: scale(1.05);
-}
-.login-button span {
-  font-size: 14px;
-}
-
-.user-info-container {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background-color: rgba(224, 201, 166, 0.2);
-  border: 1px solid var(--border-color);
-  border-radius: 9999px;
-  padding: 4px 4px 4px 12px;
-}
-.user-name-display {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--font-color);
-  white-space: nowrap;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.logout-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background-color: rgba(255, 255, 255, 0.2);
-  color: var(--font-color);
-  border: 1px solid var(--border-color);
-  border-radius: 50%;
-  width: 28px;
-  height: 28px;
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-.logout-button:hover {
-  background-color: rgba(217, 181, 181, 0.4);
-  color: #fff;
-  transform: rotate(90deg);
 }

@@ -11,16 +11,17 @@ interface ImageState {
   mimeType: string;
 }
 
+interface UserInfo {
+    name: string;
+    email: string;
+    picture: string;
+}
+
 type SubjectCategory = 'man' | 'woman' | 'teenager' | 'elderly_man' | 'elderly_woman' | 'child' | 'other';
 type SmileType = 'teeth' | 'closed' | 'none';
 interface SubjectDetails {
     category: SubjectCategory;
     smile: SmileType;
-}
-
-interface User {
-    name: string;
-    email: string;
 }
 
 interface Prompts {
@@ -59,8 +60,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement, loginButton: HTMLAnchorElement, userInfo: HTMLDivElement, 
-    userName: HTMLSpanElement, logoutButton: HTMLButtonElement;
+    applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement;
 
 
 // --- State Variables ---
@@ -72,8 +72,8 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let currentUser: User | null = null;
 let generationCredits = 0; // Default value, will be overwritten from localStorage
+let userInfo: UserInfo | null = null; // User info from Google
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
@@ -90,18 +90,60 @@ let poseSequences: {
 
 const MAX_DIMENSION = 1024;
 
-/**
- * Updates the UI to show either the login button or the user's name and logout button.
- */
+// --- Google Auth Functions ---
+declare const google: any; // Allow 'google' from the script tag
+
+async function handleCredentialResponse(response: any) {
+    try {
+        const data = await callApi('/api/auth/google', { token: response.credential });
+        userInfo = data;
+        localStorage.setItem('userInfo', JSON.stringify(userInfo));
+        updateAuthUI();
+        statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userInfo.name}!</span>`;
+    } catch (e) {
+        console.error('Ошибка входа через Google:', e);
+        showStatusError('Не удалось войти через Google.');
+        signOut();
+    }
+}
+
+function signOut() {
+    userInfo = null;
+    localStorage.removeItem('userInfo');
+    google.accounts.id.disableAutoSelect();
+    updateAuthUI();
+    statusEl.innerText = 'Вы вышли из аккаунта.';
+}
+
 function updateAuthUI() {
-    if (currentUser) {
-        loginButton.classList.add('hidden');
-        userInfo.classList.remove('hidden');
-        userName.textContent = currentUser.name;
+    if (!authContainer) return;
+    authContainer.innerHTML = '';
+    
+    if (userInfo) {
+        // User is logged in
+        const userDiv = document.createElement('div');
+        userDiv.className = 'user-info-container';
+        userDiv.innerHTML = `
+            <img src="${userInfo.picture}" alt="Аватар пользователя" class="user-avatar" referrerPolicy="no-referrer">
+            <span class="user-name hidden sm:inline">${userInfo.name.split(' ')[0]}</span>
+            <button id="logout-button" class="logout-button" title="Выйти">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd" />
+                </svg>
+            </button>
+        `;
+        authContainer.appendChild(userDiv);
+        authContainer.querySelector('#logout-button')?.addEventListener('click', signOut);
     } else {
-        loginButton.classList.remove('hidden');
-        userInfo.classList.add('hidden');
-        userName.textContent = '';
+        // User is logged out
+        const signInDiv = document.createElement('div');
+        signInDiv.id = 'google-signin-button';
+        authContainer.appendChild(signInDiv);
+
+        google.accounts.id.renderButton(
+          document.getElementById('google-signin-button'),
+          { theme: 'outline', size: 'large', type: 'standard', text: 'signin_with', shape: 'pill' } 
+        );
     }
 }
 
@@ -1239,14 +1281,6 @@ function applyPromoCode() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // КОСМЕТИЧЕСКАЯ ОЧИСТКА: Если мы пришли с технического URL после логина,
-  // меняем его на красивый кириллический URL без перезагрузки.
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('clean_url')) {
-    const newUrl = 'https://фото-клик.рф/';
-    window.history.replaceState({ path: newUrl }, '', newUrl);
-  }
-
   // --- Register Service Worker for PWA functionality ---
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -1279,26 +1313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   creditCounterEl = document.querySelector('#credit-counter')!;
   promoCodeInput = document.querySelector('#promo-code-input')!;
   applyPromoButton = document.querySelector('#apply-promo-button')!;
-  loginButton = document.querySelector('#login-button')!;
-  userInfo = document.querySelector('#user-info')!;
-  userName = document.querySelector('#user-name')!;
-  logoutButton = document.querySelector('#logout-button')!;
-
-
-  // --- Auth logic ---
-  try {
-      const response = await fetch('/api/me');
-      if (response.ok) {
-          currentUser = await response.json();
-      } else {
-          currentUser = null;
-      }
-  } catch (error) {
-      console.error('Не удалось проверить сессию:', error);
-      currentUser = null;
-  }
-  updateAuthUI();
-
+  authContainer = document.querySelector('#auth-container')!;
 
   try {
     const savedCredits = localStorage.getItem('generationCredits');
@@ -1310,9 +1325,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         localStorage.setItem('generationCredits', '0');
     }
 
-    const response = await fetch('/prompts.json');
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    prompts = await response.json();
+    const savedUserInfo = localStorage.getItem('userInfo');
+    if (savedUserInfo) {
+        userInfo = JSON.parse(savedUserInfo);
+    }
+
+    const [promptsResponse, configResponse] = await Promise.all([
+        fetch('/prompts.json'),
+        fetch('/api/config')
+    ]);
+
+    if (!promptsResponse.ok) throw new Error(`HTTP error! status: ${promptsResponse.status}`);
+    if (!configResponse.ok) throw new Error(`Could not fetch config: ${configResponse.status}`);
+
+    prompts = await promptsResponse.json();
+    const config = await configResponse.json();
+
+    // --- Initialize Google Auth ---
+    google.accounts.id.initialize({
+      client_id: config.clientId,
+      callback: handleCredentialResponse
+    });
     
     // --- Initial UI Setup & Event Listeners ---
     const placeholderHtml = getUploaderPlaceholderHtml();
@@ -1343,17 +1376,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     paymentCloseButton.addEventListener('click', hidePaymentModal);
     paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
     creditCounterEl.addEventListener('click', showPaymentModal);
-    
-    logoutButton.addEventListener('click', async () => {
-        try {
-            await fetch('/auth/logout', { method: 'POST' });
-            currentUser = null;
-            updateAuthUI();
-        } catch (error) {
-            console.error('Ошибка выхода:', error);
-            showStatusError('Не удалось выйти из системы.');
-        }
-    });
     
     paymentProceedButton.addEventListener('click', () => {
         paymentSelectionView.classList.add('hidden');
@@ -1462,6 +1484,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     (window as any).navigateToPage('page1');
     updateAllGenerateButtons();
     updatePage1WizardState();
+    updateAuthUI();
 
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);

@@ -3,22 +3,15 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "clean": "rm -rf dist",
-    "build": "npm run clean && vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
-    "start": "pm2 start ecosystem.config.js",
-    "stop": "pm2 stop fotoclick",
-    "restart": "pm2 restart fotoclick",
-    "delete": "pm2 delete fotoclick"
+    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
+    "start": "node dist/server.bundle.js"
   },
   "dependencies": {
     "@google/genai": "^0.12.0",
-    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.18.0",
     "google-auth-library": "^9.11.0",
-    "pm2": "^5.4.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
