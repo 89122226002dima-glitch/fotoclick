@@ -1,7 +1,6 @@
 {
   "name": "fotoclick-from-github",
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",

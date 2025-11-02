@@ -1,18 +1,15 @@
-// server.js - Финальная исправленная версия с использованием ES Modules
+// server.js - Возвращение к стабильной версии CommonJS
 
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import session from 'express-session';
-import cookieParser from 'cookie-parser';
-import { OAuth2Client } from 'google-auth-library';
-import { GoogleGenAI, Type, Modality } from '@google/genai';
-import dotenv from 'dotenv';
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const session = require('express-session');
+const cookieParser = require('cookie-parser');
+const { OAuth2Client } = require('google-auth-library');
+const { GoogleGenAI, Type, Modality } = require('@google/genai');
+const dotenv = require('dotenv');
 
-// --- ШАГ 1: ОПРЕДЕЛЕНИЕ ПУТИ И ЗАГРУЗКА .ENV ---
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// --- ШАГ 1: ЗАГРУЗКА .ENV ---
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 
