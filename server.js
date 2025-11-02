@@ -24,10 +24,14 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
 
+// --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Жестко задаем Punycode-версию callback URL ---
+// Это гарантирует, что мы всегда отправляем Google тот URI, который он ожидает.
+const REDIRECT_URI = 'https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/auth/google/callback';
+
 const oAuth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  '/auth/google/callback' // Redirect URI
+  REDIRECT_URI
 );
 
 // --- НАСТРОЙКА ПРИЛОЖЕНИЯ EXPRESS ---
