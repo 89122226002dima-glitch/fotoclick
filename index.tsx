@@ -1239,18 +1239,6 @@ function applyPromoCode() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // --- URL Cleaning Logic ---
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.has('clean_url')) {
-    const newUrl = new URL('https://фото-клик.рф/');
-    urlParams.forEach((value, key) => {
-        if (key !== 'clean_url') {
-            newUrl.searchParams.append(key, value);
-        }
-    });
-    window.history.replaceState({}, document.title, newUrl.toString());
-  }
-  
   // --- Register Service Worker for PWA functionality ---
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {

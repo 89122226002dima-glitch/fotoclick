@@ -40,10 +40,6 @@ const port = process.env.PORT || 3001;
 
 // ---> КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ <---
 // Сообщаем Express, что он находится за прокси-сервером (Caddy).
-// Это заставляет Express доверять заголовкам X-Forwarded-*,
-// что позволяет библиотеке аутентификации Google правильно определять
-// публичный URL (https://фото-клик.рф), а не внутренний (http://localhost:3001).
-// Это решает ошибку 'redirect_uri_mismatch'.
 app.set('trust proxy', 1);
 
 // Middleware
@@ -96,6 +92,32 @@ app.get('/auth/google', (req, res) => {
     res.redirect(authorizeUrl);
 });
 
+// Helper function to render a redirect page
+const renderRedirectPage = (url, message) => `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Перенаправление...</title>
+        <meta charset="UTF-8">
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0e9e4; color: #5c4b4b; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .container { text-align: center; padding: 20px; background-color: rgba(253, 250, 248, 0.75); border-radius: 12px; }
+            a { color: #c9a799; }
+        </style>
+        <script>
+            // JS-редирект для обхода ошибки браузера с IDN-доменами в HTTP-заголовках
+            window.location.replace('${url}');
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <p>${message}</p>
+            <p><a href="${url}">Если перенаправление не произошло, нажмите сюда.</a></p>
+        </div>
+    </body>
+    </html>
+`;
+
 app.get('/auth/google/callback', async (req, res) => {
     const { code } = req.query;
     try {
@@ -111,14 +133,15 @@ app.get('/auth/google/callback', async (req, res) => {
         const user = { name: payload.name, email: payload.email };
         
         req.session.user = user;
-        // Безопасный редирект на Punycode URL с флагом для клиентского скрипта
-        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?clean_url=true');
+        // Отправляем HTML-страницу с JS-редиректом
+        res.send(renderRedirectPage('https://фото-клик.рф/', 'Вы успешно вошли в систему. Перенаправляем...'));
     } catch (error) {
         console.error('Ошибка при аутентификации Google:', error);
-        // Безопасный редирект в случае ошибки
-        res.redirect('https://xn----7sbabeda7bhcbdg9bfl6k.xn--p1ai/?auth_error=true&clean_url=true');
+        // Отправляем HTML-страницу с JS-редиректом в случае ошибки
+        res.send(renderRedirectPage('https://фото-клик.рф/?auth_error=true', 'Произошла ошибка аутентификации. Перенаправляем на главную...'));
     }
 });
+
 
 app.get('/api/me', (req, res) => {
     if (req.session.user) {
