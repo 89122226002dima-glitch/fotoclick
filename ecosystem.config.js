@@ -2,7 +2,7 @@
 module.exports = {
   apps: [{
     name: 'fotoclick',
-    script: './dist/server.bundle.js',
+    script: 'server.js',
     // Это самая важная строчка. Она принудительно задает правильную рабочую папку.
     cwd: '/home/dmitry/fotoclick',
     watch: false,
