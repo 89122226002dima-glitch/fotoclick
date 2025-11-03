@@ -126,7 +126,10 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // --- Раздача статических файлов ---
-const distPath = __dirname;
+// Эта строка - единственное и финальное исправление.
+// __dirname, когда скрипт запущен из /dist, уже указывает на правильную папку.
+const distPath = __dirname; 
+console.log(`[DIAG] Serving static files from: ${distPath}`);
 app.use(express.static(distPath));
 
 // "Catchall" обработчик для SPA.
