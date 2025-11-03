@@ -135,11 +135,10 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // Раздача статических файлов
-// ИСПРАВЛЕНИЕ: Используем __dirname, так как скрипт запускается из папки dist.
-// __dirname будет указывать на /home/dmitry/fotoclick/dist
-const distPath = __dirname;
-// Папка public находится на один уровень выше
-const publicPath = path.join(__dirname, '..', 'public');
+// ИСПРАВЛЕНИЕ: Используем process.cwd(), так как PM2 запускается из корня проекта.
+const projectRoot = process.cwd();
+const distPath = path.join(projectRoot, 'dist');
+const publicPath = path.join(projectRoot, 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
