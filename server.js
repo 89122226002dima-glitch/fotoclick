@@ -1,9 +1,8 @@
 
-// server.js - Финальная, стабильная версия.
+// server.js - Финальная, стабильная версия (только API).
 
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
@@ -125,25 +124,6 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 
-// --- Раздача статических файлов ---
-// Эта строка - единственное и финальное исправление.
-// __dirname, когда скрипт запущен из /dist, уже указывает на правильную папку.
-const distPath = __dirname; 
-console.log(`[DIAG] Serving static files from: ${distPath}`);
-app.use(express.static(distPath));
-
-// "Catchall" обработчик для SPA.
-app.get('*', (req, res) => {
-    const indexPath = path.join(distPath, 'index.html');
-    res.sendFile(indexPath, (err) => {
-        if (err) {
-            console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
-            res.status(500).send('Server error: Could not serve the application file.');
-        }
-    });
-});
-
-
 app.listen(port, () => {
-  console.log(`[INFO] Сервер 'Фото-Клик' запущен на порту ${port}`);
+  console.log(`[INFO] API-сервер 'Фото-Клик' запущен на порту ${port}`);
 });
