@@ -135,8 +135,11 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // Раздача статических файлов
-const distPath = path.join(__dirname, 'dist');
-const publicPath = path.join(__dirname, 'public');
+// ИСПРАВЛЕНИЕ: Используем __dirname, так как скрипт запускается из папки dist.
+// __dirname будет указывать на /home/dmitry/fotoclick/dist
+const distPath = __dirname;
+// Папка public находится на один уровень выше
+const publicPath = path.join(__dirname, '..', 'public');
 
 app.use(express.static(distPath));
 app.use(express.static(publicPath));
