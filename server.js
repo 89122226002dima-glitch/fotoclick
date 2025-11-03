@@ -1,4 +1,5 @@
-// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
+
+// server.js - Финальная, стабильная версия.
 
 const express = require('express');
 const cors = require('cors');
@@ -6,21 +7,12 @@ const path = require('path');
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
 
-// --- Диагностика .env для Gemini ---
-console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
-if (process.env.API_KEY) {
-  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
-} else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
-}
-// --- Конец диагностики ---
-
 const app = express();
 const port = process.env.PORT || 3001;
 
 if (!process.env.API_KEY) {
-    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_KEY не найден. Сервер не сможет работать.');
-    process.exit(1); // Останавливаем сервер, если нет ключа
+    console.error('КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена. Сервер не может запуститься.');
+    process.exit(1);
 }
 
 // --- Инициализация Gemini ---
@@ -66,7 +58,6 @@ const generateImageApiCall = async ({ prompt, image }) => {
         },
     });
     
-    // Проверяем, есть ли изображение в ответе
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
     if (imagePart && imagePart.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
@@ -113,7 +104,7 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
         if (part.inlineData) {
             return fileToPart(part.inlineData.data, part.inlineData.mimeType);
         }
-        return part; // Для текстовых частей
+        return part;
     });
 
     const response = await ai.models.generateContent({
@@ -136,18 +127,11 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 // --- Раздача статических файлов ---
 const distPath = __dirname;
-console.log(`[DIAG] Serving static files from: ${distPath}`);
-
 app.use(express.static(distPath));
 
-// "Catchall" обработчик, чтобы все запросы шли на index.html для работы SPA (Single Page Application).
+// "Catchall" обработчик для SPA.
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
-    
-    // --- НОВАЯ ДИАГНОСТИЧЕСКАЯ СТРОКА ---
-    console.log(`[DIAG-RUNTIME] Попытка отдать файл. distPath: "${distPath}", indexPath: "${indexPath}"`);
-    // --- КОНЕЦ ДИАГНОСТИКИ ---
-    
     res.sendFile(indexPath, (err) => {
         if (err) {
             console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
@@ -158,5 +142,5 @@ app.get('*', (req, res) => {
 
 
 app.listen(port, () => {
-  console.log(`[INFO] Сервер слушает порт ${port}`);
+  console.log(`[INFO] Сервер 'Фото-Клик' запущен на порту ${port}`);
 });
