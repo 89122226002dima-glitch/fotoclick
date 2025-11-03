@@ -58,7 +58,7 @@ if (process.env.VK_CLIENT_ID && process.env.VK_CLIENT_SECRET) {
     passport.use(new VKontakteStrategy({
         clientID: process.env.VK_CLIENT_ID,
         clientSecret: process.env.VK_CLIENT_SECRET,
-        callbackURL: "https://xn--e1ajhfkgb.xn--p1ai/api/auth/vk/callback"
+        callbackURL: "https://фото-клик.рф/api/auth/vk/callback"
       },
       (accessToken, refreshToken, params, profile, done) => {
         let user = users[profile.id];
