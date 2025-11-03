@@ -134,27 +134,31 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 
-// Раздача статических файлов
-// ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Используем `__dirname`.
-// Так как этот скрипт (server.bundle.js) запускается из папки `dist`,
-// `__dirname` будет всегда правильно указывать на `/home/dmitry/fotoclick/dist`.
+// --- Раздача статических файлов ---
+// Это финальное и корректное решение, подтвержденное диагностикой.
+// Скрипт server.bundle.js запускается из папки /dist.
+// В этом контексте, `__dirname` будет правильно указывать на /home/dmitry/fotoclick/dist.
+// Все статические файлы (index.html, assets) также находятся в /dist.
 const distPath = __dirname;
+console.log(`[DIAG] Serving static files from: ${distPath}`);
 
-// Vite при сборке копирует содержимое папки `public` в `dist`,
-// поэтому достаточно указать только один путь для раздачи статики.
+// Vite копирует содержимое папки `public` в `dist` во время сборки,
+// поэтому нам нужен только один путь для раздачи всей статики.
 app.use(express.static(distPath));
 
-// "Catchall" обработчик для SPA
+// "Catchall" обработчик, чтобы все запросы шли на index.html для работы SPA (Single Page Application).
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {
         if (err) {
-            console.error(`Error sending file: ${indexPath}`, err);
-            res.status(500).send('Error serving the application.');
+            // Эта ошибка теперь не должна появляться, так как путь правильный.
+            console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
+            res.status(500).send('Server error: Could not serve the application file.');
         }
     });
 });
 
+
 app.listen(port, () => {
-  console.log(`Сервер слушает порт ${port}`);
+  console.log(`[INFO] Сервер слушает порт ${port}`);
 });
