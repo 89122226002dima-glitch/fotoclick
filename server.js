@@ -135,23 +135,21 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // --- Раздача статических файлов ---
-// Это финальное и корректное решение, подтвержденное диагностикой.
-// Скрипт server.bundle.js запускается из папки /dist.
-// В этом контексте, `__dirname` будет правильно указывать на /home/dmitry/fotoclick/dist.
-// Все статические файлы (index.html, assets) также находятся в /dist.
 const distPath = __dirname;
 console.log(`[DIAG] Serving static files from: ${distPath}`);
 
-// Vite копирует содержимое папки `public` в `dist` во время сборки,
-// поэтому нам нужен только один путь для раздачи всей статики.
 app.use(express.static(distPath));
 
 // "Catchall" обработчик, чтобы все запросы шли на index.html для работы SPA (Single Page Application).
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
+    
+    // --- НОВАЯ ДИАГНОСТИЧЕСКАЯ СТРОКА ---
+    console.log(`[DIAG-RUNTIME] Попытка отдать файл. distPath: "${distPath}", indexPath: "${indexPath}"`);
+    // --- КОНЕЦ ДИАГНОСТИКИ ---
+    
     res.sendFile(indexPath, (err) => {
         if (err) {
-            // Эта ошибка теперь не должна появляться, так как путь правильный.
             console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
             res.status(500).send('Server error: Could not serve the application file.');
         }
