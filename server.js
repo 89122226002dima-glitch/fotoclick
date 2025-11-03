@@ -135,13 +135,14 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 
 
 // Раздача статических файлов
-// ИСПРАВЛЕНИЕ: Используем process.cwd(), так как PM2 запускается из корня проекта.
-const projectRoot = process.cwd();
-const distPath = path.join(projectRoot, 'dist');
-const publicPath = path.join(projectRoot, 'public');
+// ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: Используем `__dirname`.
+// Так как этот скрипт (server.bundle.js) запускается из папки `dist`,
+// `__dirname` будет всегда правильно указывать на `/home/dmitry/fotoclick/dist`.
+const distPath = __dirname;
 
+// Vite при сборке копирует содержимое папки `public` в `dist`,
+// поэтому достаточно указать только один путь для раздачи статики.
 app.use(express.static(distPath));
-app.use(express.static(publicPath));
 
 // "Catchall" обработчик для SPA
 app.get('*', (req, res) => {
