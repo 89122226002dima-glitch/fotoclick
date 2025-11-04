@@ -241,6 +241,8 @@ async function cropImage(imageState: ImageState): Promise<ImageState> {
 /**
  * A generic helper function to make API calls to our own server backend.
  * It automatically includes the authentication token if the user is logged in.
+ * FIX: This function is refactored to correctly handle response streams,
+ * preventing the "body stream already read" error.
  * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
  * @param body The JSON payload to send.
  * @returns A promise that resolves with the JSON response from the server.
@@ -249,8 +251,9 @@ async function callApi(endpoint: string, body: object) {
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
     };
-    if (idToken) {
-        headers['Authorization'] = `Bearer ${idToken}`;
+    const currentToken = localStorage.getItem('idToken');
+    if (currentToken) {
+        headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
     const response = await fetch(endpoint, {
@@ -260,19 +263,24 @@ async function callApi(endpoint: string, body: object) {
     });
 
     if (!response.ok) {
+        // Clone the response to be able to read its body twice (for JSON and text)
+        const responseClone = response.clone();
         let errorData;
         try {
+            // Try to parse the error response as JSON first
             errorData = await response.json();
         } catch (e) {
-            const errorText = await response.text();
-            console.error("Failed to parse server error JSON:", errorText);
-            // If parsing fails, use the raw text, which might be an HTML error page.
+            // If JSON parsing fails, the body might be plain text or HTML
+            const errorText = await responseClone.text();
+            console.error("Failed to parse server error JSON, raw response text:", errorText);
             throw new Error(`Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`);
         }
         console.error(`Ошибка API на ${endpoint}:`, errorData);
-        throw new Error(errorData.error || `Технические детали записаны в консоль разработчика.`);
+        // Throw an error with the message from the server, or a default one
+        throw new Error(errorData.error || `Произошла ошибка. Технические детали записаны в консоль разработчика.`);
     }
 
+    // If response is OK, parse it as JSON
     return response.json();
 }
 
@@ -475,7 +483,7 @@ function updateAllGenerateButtons() {
 async function generate() {
   const creditsNeeded = 4;
 
-  if (!isLoggedIn || !idToken) {
+  if (!isLoggedIn) {
       setWizardStep('AUTH');
       showStatusError('Пожалуйста, войдите, чтобы получить кредиты для генерации.');
       return;
@@ -893,7 +901,7 @@ function initializePage1Wizard() {
         
         const creditsNeeded = 1;
 
-        if (!isLoggedIn || !idToken) {
+        if (!isLoggedIn) {
             setWizardStep('AUTH');
             showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
             return;
@@ -1249,39 +1257,53 @@ function applyPromoCode() {
 // --- Auth Functions ---
 async function handleCredentialResponse(response: any) {
     try {
+        // Use the token to log in to our backend
         const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
         
-        idToken = response.credential; // Store the token
+        // Store the token in localStorage to persist the session
+        localStorage.setItem('idToken', response.credential);
+        idToken = response.credential; // Also keep it in memory
+        
         isLoggedIn = true;
         userProfile = serverProfile;
         generationCredits = credits;
 
+        // Update UI
         updateAuthUI();
         updateCreditCounterUI();
         updateAllGenerateButtons();
         updatePage1WizardState();
-        statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
 
     } catch (error) {
         console.error("Login failed:", error);
         const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка входа.";
         showStatusError(`Не удалось войти: ${errorMessage}`);
+        // If login fails, ensure we are fully signed out
+        signOut();
     }
 }
 
 function signOut() {
-    idToken = null; // Clear the token
+    // Clear token from memory and localStorage
+    idToken = null; 
+    localStorage.removeItem('idToken');
+
     isLoggedIn = false;
     userProfile = null;
     generationCredits = 0; // Reset credits on sign out
+    
+    // Tell Google to forget the user for auto-login
     if ((window as any).google) {
         (window as any).google.accounts.id.disableAutoSelect();
     }
+    
+    // Update UI to reflect signed-out state
     updateAuthUI();
     updateCreditCounterUI();
     updateAllGenerateButtons();
     updatePage1WizardState();
-    statusEl.innerText = "Вы вышли из системы.";
+    if(statusEl) statusEl.innerText = "Вы вышли из системы.";
 }
 
 function updateAuthUI() {
@@ -1342,7 +1364,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
 
   try {
-    // Credits are no longer stored in localStorage.
     // User starts with 0 and receives them from the server upon login.
     generationCredits = 0;
     updateCreditCounterUI(); 
@@ -1356,8 +1377,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       googleSignInContainer,
       { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" } 
     );
-     (window as any).google?.accounts.id.prompt(); // Display the One Tap prompt for returning users.
-
+     
+    // --- AUTO-LOGIN LOGIC ---
+    const storedToken = localStorage.getItem('idToken');
+    if (storedToken) {
+        statusEl.innerText = 'Восстанавливаем сессию...';
+        await handleCredentialResponse({ credential: storedToken });
+    } else {
+        // If no token, show the One Tap prompt for returning users.
+        (window as any).google?.accounts.id.prompt();
+    }
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1459,7 +1488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             detectedSmileType = smile;
             initializePoseSequences();
             if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
-            const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилой мужчина', child: 'ребенок' };
+            const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
             statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
             setWizardStep('PAGE2_PLAN');
 
