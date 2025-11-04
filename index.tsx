@@ -1305,7 +1305,26 @@ function updateAuthUI() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // --- Register Service Worker for PWA functionality ---
+  // --- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP ---
+  // This code forcefully removes any existing service worker to ensure the latest
+  // version of the app is loaded. This is a critical step to fix the "old version" issue.
+  if ('serviceWorker' in navigator) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+        console.log('Successfully unregistered old service worker.', registration.scope);
+      }
+      const keys = await caches.keys();
+      await Promise.all(keys.map(key => caches.delete(key)));
+      console.log('All caches cleared successfully.');
+    } catch (error) {
+        console.error('Error during service worker cleanup:', error);
+    }
+  }
+
+  /* --- Service Worker Registration DISABLED ---
+  // We are not registering a new service worker for now to avoid caching issues.
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js').then(registration => {
@@ -1315,6 +1334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     });
   }
+  */
 
   // --- DOM Element Selection (Safe Zone) ---
   lightboxOverlay = document.querySelector('#lightbox-overlay')!;
