@@ -1,6 +1,11 @@
 // sw.js - Service Worker
 
-const CACHE_NAME = 'fotoclick-cache-v4'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
+// ВАЖНО: Версия кэша изменена на v6.
+// Это заставит браузеры всех пользователей принудительно обновить сервис-воркер,
+// очистить старый кэш и загрузить все файлы сайта заново.
+// Это ключевое исправление проблемы со старой версией сайта.
+const CACHE_NAME = 'fotoclick-cache-v6';
+
 // Список файлов, которые нужно закэшировать для работы офлайн
 const URLS_TO_CACHE = [
   '/',
@@ -14,11 +19,12 @@ const URLS_TO_CACHE = [
 
 // Установка Сервис-воркера и кэширование статических ресурсов
 self.addEventListener('install', (event) => {
+  console.log('[SW] Установка новой версии:', CACHE_NAME);
   self.skipWaiting(); // Принудительная активация нового сервис-воркера
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
-        console.log('Opened cache');
+        console.log('[SW] Кэш открыт. Добавление основных ресурсов...');
         return cache.addAll(URLS_TO_CACHE);
       })
   );
@@ -26,13 +32,14 @@ self.addEventListener('install', (event) => {
 
 // Активация Сервис-воркера и очистка старых кэшей
 self.addEventListener('activate', (event) => {
+  console.log('[SW] Активация новой версии:', CACHE_NAME);
   const cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheWhitelist.indexOf(cacheName) === -1) {
-            console.log('Deleting old cache:', cacheName);
+            console.log('[SW] Удаление старого кэша:', cacheName);
             return caches.delete(cacheName);
           }
         })
@@ -61,6 +68,7 @@ self.addEventListener('fetch', (event) => {
       })
       .catch(() => {
         // 3. Если сеть недоступна, пытаемся отдать ресурс из кэша
+        console.log('[SW] Сеть недоступна. Поиск в кэше для:', event.request.url);
         return caches.match(event.request);
       })
   );
