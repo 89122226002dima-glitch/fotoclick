@@ -400,7 +400,18 @@
     </div>
     
     <!-- Main application script -->
-    <script type="module" src="/index.tsx"></script>
+    <script>
+      // This inline script dynamically creates the script tag for our main application.
+      // It adds a unique timestamp as a query parameter (`?v=...`).
+      // This technique is called "cache busting". It forces the browser and any
+      // intermediate proxy servers to fetch a fresh copy of the script every
+      // single time the page is loaded, completely solving the caching issue.
+      const script = document.createElement('script');
+      script.type = 'module';
+      script.src = `/index.tsx?v=${Date.now()}`;
+      document.body.appendChild(script);
+    </script>
     
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>
