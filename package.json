@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
-    "start": "node dist/server.bundle.js"
+    "build": "vite build && cp server.js dist/",
+    "start": "node dist/server.js"
   },
   "dependencies": {
     "@google/genai": "^1.25.0",
