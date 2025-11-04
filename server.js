@@ -43,6 +43,42 @@ const INITIAL_CREDITS = 12;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
+// --- Middleware "Охранник" для проверки токена и списания кредитов ---
+const authenticateAndCharge = (creditsToCharge) => async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: 'Требуется авторизация.' });
+        }
+        const token = authHeader.split(' ')[1];
+        const ticket = await authClient.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email) {
+            return res.status(401).json({ error: 'Недействительный токен.' });
+        }
+        const userEmail = payload.email;
+        if (!(userEmail in userCredits)) {
+             return res.status(403).json({ error: 'Пользователь не найден. Пожалуйста, войдите снова.' });
+        }
+        if (userCredits[userEmail] < creditsToCharge) {
+            return res.status(402).json({ error: 'Недостаточно кредитов.' });
+        }
+        
+        userCredits[userEmail] -= creditsToCharge;
+        console.log(`[CHARGE] Списано ${creditsToCharge} кредитов у ${userEmail}. Осталось: ${userCredits[userEmail]}`);
+        
+        req.userEmail = userEmail; // Передаем email дальше в обработчик
+        next();
+    } catch (error) {
+        console.error('[AUTH ERROR]', error);
+        return res.status(401).json({ error: 'Ошибка авторизации.' });
+    }
+};
+
+
 // Хелпер для преобразования base64 в формат Gemini Part
 const fileToPart = (base64, mimeType) => ({
     inlineData: {
@@ -54,7 +90,7 @@ const fileToPart = (base64, mimeType) => ({
 // Общий обработчик для всех API-запросов
 const createApiHandler = (actionLogic) => async (req, res) => {
     try {
-        const responsePayload = await actionLogic(req.body);
+        const responsePayload = await actionLogic(req.body, req.userEmail);
         return res.status(200).json(responsePayload);
     } catch (error) {
         console.error(`API Error in action:`, error);
@@ -94,7 +130,15 @@ app.post('/api/login', createApiHandler(async ({ token }) => {
     };
 }));
 
-const generateImageApiCall = async ({ prompt, image }) => {
+app.post('/api/addCredits', authenticateAndCharge(0), createApiHandler(async (body, userEmail) => {
+    const creditsToAdd = 12;
+    userCredits[userEmail] += creditsToAdd;
+    console.log(`[CREDITS] Начислено ${creditsToAdd} кредитов для ${userEmail}. Новый баланс: ${userCredits[userEmail]}`);
+    return { newCredits: userCredits[userEmail] };
+}));
+
+
+const generateImageApiCall = async ({ prompt, image }, userEmail) => {
     const response = await ai.models.generateContent({
         model: imageModelName,
         contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
@@ -107,12 +151,18 @@ const generateImageApiCall = async ({ prompt, image }) => {
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
     if (imagePart && imagePart.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
-        return { imageUrl: `data:${mimeType};base64,${data}` };
+        return { 
+            imageUrl: `data:${mimeType};base64,${data}`,
+            newCredits: userCredits[userEmail] 
+        };
     }
+    // Если генерация не удалась, возвращаем кредиты
+    userCredits[userEmail] += 4; // Стоимость одной генерации вариаций
+    console.log(`[REFUND] Возвращено 4 кредита для ${userEmail} из-за ошибки генерации. Баланс: ${userCredits[userEmail]}`);
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
 };
 
-app.post('/api/generateVariation', createApiHandler(generateImageApiCall));
+app.post('/api/generateVariation', authenticateAndCharge(4), createApiHandler(generateImageApiCall));
 
 app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
     const response = await ai.models.generateContent({
@@ -145,7 +195,7 @@ app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPr
     return { text: response.text.trim() };
 }));
 
-app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
+const generatePhotoshootApiCall = async ({ parts }, userEmail) => {
     const geminiParts = parts.map(part => {
         if (part.inlineData) {
             return fileToPart(part.inlineData.data, part.inlineData.mimeType);
@@ -165,30 +215,31 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
     if (imagePart && imagePart.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
         const resultUrl = `data:${mimeType};base64,${data}`;
-        return { resultUrl, generatedPhotoshootResult: { base64: data, mimeType: mimeType } };
+        return { 
+            resultUrl, 
+            generatedPhotoshootResult: { base64: data, mimeType: mimeType },
+            newCredits: userCredits[userEmail] 
+        };
     }
+    // Если генерация не удалась, возвращаем кредит
+    userCredits[userEmail] += 1;
+    console.log(`[REFUND] Возвращен 1 кредит для ${userEmail} из-за ошибки фотосессии. Баланс: ${userCredits[userEmail]}`);
     throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-}));
+};
+
+app.post('/api/generatePhotoshoot', authenticateAndCharge(1), createApiHandler(generatePhotoshootApiCall));
 
 
 // --- Раздача статических файлов ---
-// Это финальное и корректное решение, подтвержденное диагностикой.
-// Скрипт server.bundle.js запускается из папки /dist.
-// В этом контексте, `__dirname` будет правильно указывать на /home/dmitry/fotoclick/dist.
-// Все статические файлы (index.html, assets) также находятся в /dist.
 const distPath = __dirname;
 console.log(`[DIAG] Serving static files from: ${distPath}`);
 
-// Vite копирует содержимое папки `public` в `dist` во время сборки,
-// поэтому нам нужен только один путь для раздачи всей статики.
 app.use(express.static(distPath));
 
-// "Catchall" обработчик, чтобы все запросы шли на index.html для работы SPA (Single Page Application).
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {
         if (err) {
-            // Эта ошибка теперь не должна появляться, так как путь правильный.
             console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
             res.status(500).send('Server error: Could not serve the application file.');
         }

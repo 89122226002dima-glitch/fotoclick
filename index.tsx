@@ -75,6 +75,7 @@ let prompts: Prompts | null = null;
 let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
+let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
@@ -239,25 +240,31 @@ async function cropImage(imageState: ImageState): Promise<ImageState> {
 
 /**
  * A generic helper function to make API calls to our own server backend.
+ * It automatically includes the authentication token if the user is logged in.
  * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
  * @param body The JSON payload to send.
  * @returns A promise that resolves with the JSON response from the server.
  */
 async function callApi(endpoint: string, body: object) {
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+    if (idToken) {
+        headers['Authorization'] = `Bearer ${idToken}`;
+    }
+
     const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: headers,
         body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
         let errorData;
         try {
-            errorData = JSON.parse(errorText);
+            errorData = await response.json();
         } catch (e) {
+            const errorText = await response.text();
             console.error("Failed to parse server error JSON:", errorText);
             // If parsing fails, use the raw text, which might be an HTML error page.
             throw new Error(`Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`);
@@ -286,10 +293,10 @@ function openLightbox(imageUrl: string) {
     }
 }
 
-async function generateVariation(prompt: string, image: ImageState): Promise<string> {
+async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCredits: number }> {
    try {
         const data = await callApi('/api/generateVariation', { prompt, image });
-        return data.imageUrl;
+        return { imageUrl: data.imageUrl, newCredits: data.newCredits };
     } catch (e) {
         console.error('generateVariation failed:', e);
         throw e;
@@ -468,24 +475,23 @@ function updateAllGenerateButtons() {
 async function generate() {
   const creditsNeeded = 4;
 
+  if (!isLoggedIn || !idToken) {
+      setWizardStep('AUTH');
+      showStatusError('Пожалуйста, войдите, чтобы получить кредиты для генерации.');
+      return;
+  }
+
   if (generationCredits < creditsNeeded) {
-      if (!isLoggedIn) {
-          setWizardStep('AUTH');
-          showStatusError('Пожалуйста, войдите, чтобы получить кредиты для генерации.');
-          return;
-      } else { // logged in, no credits
-          const modalTitle = document.querySelector('#payment-modal-title');
-          const modalDescription = document.querySelector('#payment-modal-description');
-          if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-          if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
-          
-          setWizardStep('CREDITS');
-          showPaymentModal();
-          return;
-      }
+      const modalTitle = document.querySelector('#payment-modal-title');
+      const modalDescription = document.querySelector('#payment-modal-description');
+      if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
+      if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
+      
+      setWizardStep('CREDITS');
+      showPaymentModal();
+      return;
   }
   
-  // Now check for the image, only if credits are sufficient.
   if (!referenceImage || !detectedSubjectCategory || !prompts) {
     showStatusError('Пожалуйста, загрузите изображение-референс человека.');
     return;
@@ -520,11 +526,6 @@ async function generate() {
   }
 
   try {
-    generationCredits -= creditsNeeded;
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
-
-
     let poses: string[], glamourPoses: string[] = [];
     const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
     if (selectedPlan === 'close_up') {
@@ -596,11 +597,9 @@ async function generate() {
         generationPrompts.push(finalPrompt);
     }
     
-    // **NEW PARALLEL GENERATION LOGIC**
     if (progressText) progressText.innerText = 'Генерация... 10%';
     const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
     
-    // Use Promise.allSettled to handle both successful and failed generations
     const results = await Promise.allSettled(generationPromises);
     
     if (progressBar && progressText) {
@@ -608,13 +607,16 @@ async function generate() {
         progressText.innerText = `Обработка завершена!`;
     }
 
+    let lastSuccessfulCredits: number | null = null;
+
     results.forEach((result, i) => {
         const imgContainer = placeholders[i];
         imgContainer.classList.remove('placeholder-shimmer');
         imgContainer.innerHTML = '';
         
         if (result.status === 'fulfilled') {
-            const imageUrl = result.value;
+            const { imageUrl, newCredits } = result.value;
+            lastSuccessfulCredits = newCredits; // Store the latest credit count
             imgContainer.classList.add('cursor-pointer', 'gallery-item');
             const img = document.createElement('img');
             img.src = imageUrl;
@@ -652,7 +654,6 @@ async function generate() {
             imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
 
         } else {
-            // If one image fails, show an error in its placeholder
             const error = result.reason as Error;
             const errorMessage = error.message || 'Ошибка генерации';
             displayErrorInContainer(imgContainer, errorMessage, true);
@@ -660,15 +661,17 @@ async function generate() {
         }
     });
 
+    if (lastSuccessfulCredits !== null) {
+        generationCredits = lastSuccessfulCredits;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+    }
+
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
-    if (referenceImage) setWizardStep('PAGE2_PLAN'); // After generation, guide user to select a new plan
+    if (referenceImage) setWizardStep('PAGE2_PLAN');
 
   } catch (e) {
-    // This top-level catch is for setup errors before the loop starts
-    generationCredits += creditsNeeded;
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
     placeholders.forEach(p => p.remove());
     divider.remove();
     if (progressContainer) progressContainer.classList.add('hidden');
@@ -813,7 +816,7 @@ async function analyzeImageForText(image: ImageState, analysisPrompt: string): P
     }
 }
 
-async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState }> {
+async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState, newCredits: number }> {
     try {
         const data = await callApi('/api/generatePhotoshoot', { parts });
         return data;
@@ -849,13 +852,19 @@ function hidePaymentModal() {
     }
 }
 
-function handlePaymentConfirmation() {
-    generationCredits += 12;
-    updateCreditCounterUI(); // Save and update UI
-    hidePaymentModal();
-    updatePage1WizardState();
-    updateAllGenerateButtons();
-    if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
+async function handlePaymentConfirmation() {
+    try {
+        const { newCredits } = await callApi('/api/addCredits', {});
+        generationCredits = newCredits;
+        updateCreditCounterUI();
+        hidePaymentModal();
+        updatePage1WizardState();
+        updateAllGenerateButtons();
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        showStatusError(`Не удалось пополнить кредиты: ${message}`);
+    }
 }
 
 
@@ -884,18 +893,18 @@ function initializePage1Wizard() {
         
         const creditsNeeded = 1;
 
+        if (!isLoggedIn || !idToken) {
+            setWizardStep('AUTH');
+            showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
+            return;
+        }
+
         if (generationCredits < creditsNeeded) {
-            if (!isLoggedIn) {
-                setWizardStep('AUTH');
-                showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
-                return;
-            } else {
-                const modalTitle = document.querySelector('#payment-modal-title');
-                if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
-                setWizardStep('CREDITS');
-                showPaymentModal();
-                return;
-            }
+            const modalTitle = document.querySelector('#payment-modal-title');
+            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
+            setWizardStep('CREDITS');
+            showPaymentModal();
+            return;
         }
 
         const clothingText = clothingPromptInput.value.trim();
@@ -932,10 +941,6 @@ function initializePage1Wizard() {
         }, 4000);
         
         try {
-            generationCredits -= creditsNeeded;
-            updateCreditCounterUI();
-            updatePage1WizardState();
-
             const img = new Image();
             await new Promise<void>((resolve, reject) => {
                 img.onload = () => resolve();
@@ -980,8 +985,10 @@ function initializePage1Wizard() {
     
             const data = await generatePhotoshoot(parts);
             
-            // Cropping is now done on the input clothing image, not the output.
             generatedPhotoshootResult = data.generatedPhotoshootResult;
+            generationCredits = data.newCredits;
+            updateCreditCounterUI();
+
             const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
 
             photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
@@ -1010,8 +1017,6 @@ function initializePage1Wizard() {
                 (window as any).navigateToPage('page2');
             }
         } catch (e) {
-            generationCredits += creditsNeeded;
-            updateCreditCounterUI();
             const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
             displayErrorInContainer(photoshootResultContainer, errorMessage);
         } finally {
@@ -1246,6 +1251,7 @@ async function handleCredentialResponse(response: any) {
     try {
         const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
         
+        idToken = response.credential; // Store the token
         isLoggedIn = true;
         userProfile = serverProfile;
         generationCredits = credits;
@@ -1264,6 +1270,7 @@ async function handleCredentialResponse(response: any) {
 }
 
 function signOut() {
+    idToken = null; // Clear the token
     isLoggedIn = false;
     userProfile = null;
     generationCredits = 0; // Reset credits on sign out
