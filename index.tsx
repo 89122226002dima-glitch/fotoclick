@@ -11,6 +11,12 @@ interface ImageState {
   mimeType: string;
 }
 
+interface UserProfile {
+  name: string;
+  email: string;
+  picture: string;
+}
+
 type SubjectCategory = 'man' | 'woman' | 'teenager' | 'elderly_man' | 'elderly_woman' | 'child' | 'other';
 type SmileType = 'teeth' | 'closed' | 'none';
 interface SubjectDetails {
@@ -45,7 +51,7 @@ interface Prompts {
 }
 
 // --- Wizard State ---
-type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'NONE';
+type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'AUTH' | 'NONE';
 
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
 let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCloseButton: HTMLButtonElement, statusEl: HTMLDivElement,
@@ -54,8 +60,8 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
-    applyPromoButton: HTMLButtonElement;
-
+    applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
+    userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement;
 
 // --- State Variables ---
 let selectedPlan = 'close_up';
@@ -66,7 +72,10 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; // Default value, will be overwritten from localStorage
+let generationCredits = 0; // Default value, will be overwritten
+let isLoggedIn = false;
+let userProfile: UserProfile | null = null;
+const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
@@ -97,6 +106,7 @@ function setWizardStep(step: WizardStep) {
         page2Plans: document.getElementById('plan-buttons'),
         page2Generate: document.getElementById('generate-button'),
         credits: document.getElementById('credit-counter'),
+        auth: document.getElementById('auth-container'),
     };
 
     // Remove the highlight class from all targets first
@@ -111,6 +121,7 @@ function setWizardStep(step: WizardStep) {
         case 'PAGE2_PLAN': targets.page2Plans?.classList.add('highlight-step'); break;
         case 'PAGE2_GENERATE': targets.page2Generate?.classList.add('highlight-step'); break;
         case 'CREDITS': targets.credits?.classList.add('highlight-step'); break;
+        case 'AUTH': targets.auth?.classList.add('highlight-step'); break;
         case 'NONE': // Do nothing, all highlights are cleared
             break;
     }
@@ -438,19 +449,20 @@ async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
 }
 
 function updateAllGenerateButtons() {
-    // Page 2 Button
     if (generateButton) {
         const creditsNeeded = 4;
-        const buttonText = `Создать ${creditsNeeded} фотографии`;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `${buttonText} (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
-            generateButton.disabled = false;
-            generateButton.innerHTML = `${buttonText} (${generationCredits} кредитов)`;
+            generateButton.disabled = false; // Always enabled to show prompt
+            if (!isLoggedIn) {
+                generateButton.innerHTML = `Войти, чтобы продолжить`;
+            } else {
+                generateButton.innerHTML = `Пополнить кредиты (${creditsNeeded} необх.)`;
+            }
         }
     }
-    
     updateCreditCounterUI();
 }
 
@@ -458,16 +470,21 @@ function updateAllGenerateButtons() {
 async function generate() {
   const creditsNeeded = 4;
 
-  // Prioritize credit check: if not enough, show payment modal immediately.
   if (generationCredits < creditsNeeded) {
-      const modalTitle = document.querySelector('#payment-modal-title');
-      const modalDescription = document.querySelector('#payment-modal-description');
-      if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-      if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
-      
-      setWizardStep('CREDITS');
-      showPaymentModal();
-      return;
+      if (!isLoggedIn) {
+          setWizardStep('AUTH');
+          showStatusError('Бесплатная попытка использована. Пожалуйста, войдите, чтобы пополнить кредиты.');
+          return;
+      } else { // logged in, no credits
+          const modalTitle = document.querySelector('#payment-modal-title');
+          const modalDescription = document.querySelector('#payment-modal-description');
+          if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
+          if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
+          
+          setWizardStep('CREDITS');
+          showPaymentModal();
+          return;
+      }
   }
   
   // Now check for the image, only if credits are sufficient.
@@ -870,11 +887,17 @@ function initializePage1Wizard() {
         const creditsNeeded = 1;
 
         if (generationCredits < creditsNeeded) {
-            const modalTitle = document.querySelector('#payment-modal-title');
-            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
-            setWizardStep('CREDITS');
-            showPaymentModal();
-            return;
+            if (!isLoggedIn) {
+                setWizardStep('AUTH');
+                showStatusError('Бесплатная фотосессия использована. Пожалуйста, войдите, чтобы пополнить кредиты.');
+                return;
+            } else {
+                const modalTitle = document.querySelector('#payment-modal-title');
+                if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
+                setWizardStep('CREDITS');
+                showPaymentModal();
+                return;
+            }
         }
 
         const clothingText = clothingPromptInput.value.trim();
@@ -1012,8 +1035,12 @@ function initializePage1Wizard() {
             generatePhotoshootButton.disabled = !isReady;
             generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
         } else {
-            generatePhotoshootButton.disabled = false; // Always enable to trigger modal
-            generatePhotoshootButton.innerHTML = `Начать фотосессию (${generationCredits} кредитов)`;
+            generatePhotoshootButton.disabled = false; // Always enable to trigger modal/auth
+            if (!isLoggedIn) {
+                generatePhotoshootButton.innerHTML = `Войти, чтобы продолжить`;
+            } else {
+                generatePhotoshootButton.innerHTML = `Пополнить кредиты`;
+            }
         }
 
         // Wizard Logic
@@ -1023,8 +1050,10 @@ function initializePage1Wizard() {
             setWizardStep('PAGE1_CLOTHING');
         } else if (!locationPromptInput.value.trim()) {
             setWizardStep('PAGE1_LOCATION');
-        } else {
+        } else if (isReady) {
             setWizardStep('PAGE1_GENERATE');
+        } else {
+            setWizardStep('NONE');
         }
     };
 
@@ -1214,6 +1243,66 @@ function applyPromoCode() {
     }
 }
 
+// --- Auth Functions ---
+function jwt_decode(token: string): any {
+    try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+    } catch (e) {
+        console.error("Error decoding JWT", e);
+        return null;
+    }
+}
+
+function handleCredentialResponse(response: any) {
+    const decodedToken = jwt_decode(response.credential);
+    if (decodedToken) {
+        isLoggedIn = true;
+        userProfile = {
+            name: decodedToken.name,
+            email: decodedToken.email,
+            picture: decodedToken.picture,
+        };
+        updateAuthUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
+    } else {
+        showStatusError("Не удалось войти. Попробуйте снова.");
+    }
+}
+
+function signOut() {
+    isLoggedIn = false;
+    userProfile = null;
+    if ((window as any).google) {
+        (window as any).google.accounts.id.disableAutoSelect();
+    }
+    updateAuthUI();
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    statusEl.innerText = "Вы вышли из системы.";
+}
+
+function updateAuthUI() {
+    if (isLoggedIn && userProfile) {
+        googleSignInContainer.classList.add('hidden');
+        userProfileContainer.classList.remove('hidden');
+        userProfileImage.src = userProfile.picture;
+        userProfileName.textContent = userProfile.name.split(' ')[0]; // Show first name
+    } else {
+        googleSignInContainer.classList.remove('hidden');
+        userProfileContainer.classList.add('hidden');
+        userProfileImage.src = '';
+        userProfileName.textContent = '';
+    }
+}
+
+
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
   // --- Register Service Worker for PWA functionality ---
@@ -1248,16 +1337,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   creditCounterEl = document.querySelector('#credit-counter')!;
   promoCodeInput = document.querySelector('#promo-code-input')!;
   applyPromoButton = document.querySelector('#apply-promo-button')!;
+  authContainer = document.getElementById('auth-container') as HTMLDivElement;
+  googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
+  userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
+  userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
+  userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
 
   try {
     const savedCredits = localStorage.getItem('generationCredits');
-    if (savedCredits !== null && !isNaN(parseInt(savedCredits, 10))) {
-        generationCredits = parseInt(savedCredits, 10);
+    if (savedCredits === null) {
+        generationCredits = 1; // First-time user gets 1 free credit
     } else {
-        // This handles both first-time users and corrupted data
-        generationCredits = 0; // Start with 0 credits
-        localStorage.setItem('generationCredits', '0');
+        generationCredits = parseInt(savedCredits, 10) || 0;
     }
+    updateCreditCounterUI(); // This will also save to localStorage
+
+    // Initialize Google Auth
+    (window as any).google?.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredentialResponse
+    });
+    (window as any).google?.accounts.id.renderButton(
+      googleSignInContainer,
+      { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" } 
+    );
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1292,6 +1395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     paymentCloseButton.addEventListener('click', hidePaymentModal);
     paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
     creditCounterEl.addEventListener('click', showPaymentModal);
+    userProfileContainer.addEventListener('click', signOut);
     
     paymentProceedButton.addEventListener('click', () => {
         paymentSelectionView.classList.add('hidden');
@@ -1400,6 +1504,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     (window as any).navigateToPage('page1');
     updateAllGenerateButtons();
     updatePage1WizardState();
+    updateAuthUI();
 
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);

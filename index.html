@@ -20,6 +20,7 @@
     />
     <link rel="stylesheet" href="/index.css" />
     <link rel="manifest" href="/manifest.json" />
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script type="importmap">
 {
   "imports": {
@@ -70,9 +71,20 @@
               </button>
             </nav>
 
-            <!-- Right: Credits -->
-            <div id="credit-counter" class="credit-counter-glow order-2 sm:order-3 bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-full text-base font-semibold flex items-center gap-1.5 cursor-pointer" title="Пополнить кредиты">
-                <!-- SVG and spans will be inserted here by JS -->
+            <!-- Right side: Credits & Auth -->
+            <div class="order-2 sm:order-3 flex items-center gap-4">
+                <div id="credit-counter" class="credit-counter-glow bg-black/30 backdrop-blur-sm px-3 py-1.5 rounded-full text-base font-semibold flex items-center gap-1.5 cursor-pointer" title="Пополнить кредиты">
+                    <!-- SVG and spans will be inserted here by JS -->
+                </div>
+                <div id="auth-container">
+                     <div id="google-signin-container">
+                         <!-- Google Button will be rendered here by JS -->
+                     </div>
+                     <div id="user-profile-container" class="hidden items-center gap-2 cursor-pointer p-1 pr-3 rounded-full hover:bg-white/10 transition-colors border border-[var(--border-color)]" title="Выйти">
+                         <img id="user-profile-image" class="h-9 w-9 rounded-full object-cover" src="" alt="Аватар пользователя" />
+                         <span id="user-profile-name" class="hidden lg:block text-sm font-semibold"></span>
+                     </div>
+                 </div>
             </div>
         </div>
         

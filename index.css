@@ -358,6 +358,29 @@ body {
     color: var(--font-color-dark);
 }
 
+/* --- Auth Controls --- */
+#google-signin-container iframe {
+  width: 200px !important; /* Make button larger */
+}
+
+#google-signin-container > div {
+    transition: all 0.3s ease !important;
+}
+
+#google-signin-container:hover > div {
+    transform: scale(1.05);
+    box-shadow: 0 0 15px -5px var(--secondary-color);
+}
+
+#user-profile-name {
+    color: var(--font-color);
+}
+
+#user-profile-container:hover img {
+    border-color: var(--secondary-color);
+}
+
+
 /* --- Page 1 Specific --- */
 @keyframes step-fade-in {
     from { opacity: 0; transform: translateY(20px); }
@@ -653,8 +676,9 @@ body {
 /* Specific adjustments for rounded corners */
 #page1-upload-container.highlight-step,
 .step-container.highlight-step,
-#plan-buttons.highlight-step {
-  border-radius: 0.75rem; /* 12px */
+#plan-buttons.highlight-step,
+#auth-container.highlight-step {
+  border-radius: 0.75rem;
 }
 
 #generate-button.highlight-step,
