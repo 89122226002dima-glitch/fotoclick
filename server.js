@@ -1,23 +1,43 @@
-
-// server.js - Финальная, стабильная версия (только API).
+// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
 
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 const { GoogleGenAI, Type, Modality } = require('@google/genai');
+const { OAuth2Client } = require('google-auth-library');
+
+// --- Диагностика .env для Gemini ---
+console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
+if (process.env.API_KEY) {
+  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
+} else {
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
+}
+if (process.env.GOOGLE_CLIENT_ID) {
+  console.log('DIAGNOSTICS: GOOGLE_CLIENT_ID успешно загружен.');
+} else {
+  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_CLIENT_ID не найдена.');
+}
+// --- Конец диагностики ---
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-if (!process.env.API_KEY) {
-    console.error('КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена. Сервер не может запуститься.');
-    process.exit(1);
+if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID) {
+    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_KEY или GOOGLE_CLIENT_ID не найден. Сервер не сможет работать.');
+    process.exit(1); // Останавливаем сервер, если нет ключа
 }
 
-// --- Инициализация Gemini ---
+// --- Инициализация Gemini и Google Auth ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const authClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const imageModelName = 'gemini-2.5-flash-image';
 const textModelName = 'gemini-2.5-flash';
+
+// --- In-memory "база данных" для кредитов ---
+const userCredits = {};
+const INITIAL_CREDITS = 12;
 
 // Middleware
 app.use(cors());
@@ -48,6 +68,32 @@ const createApiHandler = (actionLogic) => async (req, res) => {
 
 // --- API маршруты ---
 
+// Маршрут для авторизации и получения данных пользователя
+app.post('/api/login', createApiHandler(async ({ token }) => {
+    const ticket = await authClient.verifyIdToken({
+        idToken: token,
+        audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+        throw new Error('Не удалось верифицировать пользователя.');
+    }
+    const { email, name, picture } = payload;
+
+    // Проверяем, есть ли пользователь в нашей "базе"
+    if (!(email in userCredits)) {
+        console.log(`[AUTH] Новый пользователь: ${email}. Начислено ${INITIAL_CREDITS} кредитов.`);
+        userCredits[email] = INITIAL_CREDITS;
+    } else {
+        console.log(`[AUTH] Существующий пользователь: ${email}. Кредитов: ${userCredits[email]}`);
+    }
+
+    return {
+        userProfile: { name, email, picture },
+        credits: userCredits[email],
+    };
+}));
+
 const generateImageApiCall = async ({ prompt, image }) => {
     const response = await ai.models.generateContent({
         model: imageModelName,
@@ -57,6 +103,7 @@ const generateImageApiCall = async ({ prompt, image }) => {
         },
     });
     
+    // Проверяем, есть ли изображение в ответе
     const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
     if (imagePart && imagePart.inlineData) {
         const { mimeType, data } = imagePart.inlineData;
@@ -103,7 +150,7 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
         if (part.inlineData) {
             return fileToPart(part.inlineData.data, part.inlineData.mimeType);
         }
-        return part;
+        return part; // Для текстовых частей
     });
 
     const response = await ai.models.generateContent({
@@ -124,6 +171,31 @@ app.post('/api/generatePhotoshoot', createApiHandler(async ({ parts }) => {
 }));
 
 
+// --- Раздача статических файлов ---
+// Это финальное и корректное решение, подтвержденное диагностикой.
+// Скрипт server.bundle.js запускается из папки /dist.
+// В этом контексте, `__dirname` будет правильно указывать на /home/dmitry/fotoclick/dist.
+// Все статические файлы (index.html, assets) также находятся в /dist.
+const distPath = __dirname;
+console.log(`[DIAG] Serving static files from: ${distPath}`);
+
+// Vite копирует содержимое папки `public` в `dist` во время сборки,
+// поэтому нам нужен только один путь для раздачи всей статики.
+app.use(express.static(distPath));
+
+// "Catchall" обработчик, чтобы все запросы шли на index.html для работы SPA (Single Page Application).
+app.get('*', (req, res) => {
+    const indexPath = path.join(distPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+        if (err) {
+            // Эта ошибка теперь не должна появляться, так как путь правильный.
+            console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
+            res.status(500).send('Server error: Could not serve the application file.');
+        }
+    });
+});
+
+
 app.listen(port, () => {
-  console.log(`[INFO] API-сервер 'Фото-Клик' запущен на порту ${port}`);
+  console.log(`[INFO] Сервер слушает порт ${port}`);
 });

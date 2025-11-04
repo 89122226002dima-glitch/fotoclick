@@ -72,7 +72,7 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; // Default value, will be overwritten
+let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
@@ -329,8 +329,6 @@ function updateCreditCounterUI() {
             <span class="hidden sm:inline credit-label">кредитов</span>
         `;
     }
-    // Save credits to localStorage whenever the UI is updated
-    localStorage.setItem('generationCredits', String(generationCredits));
 }
 
 function selectPlan(plan: string) {
@@ -473,7 +471,7 @@ async function generate() {
   if (generationCredits < creditsNeeded) {
       if (!isLoggedIn) {
           setWizardStep('AUTH');
-          showStatusError('Бесплатная попытка использована. Пожалуйста, войдите, чтобы пополнить кредиты.');
+          showStatusError('Пожалуйста, войдите, чтобы получить кредиты для генерации.');
           return;
       } else { // logged in, no credits
           const modalTitle = document.querySelector('#payment-modal-title');
@@ -889,7 +887,7 @@ function initializePage1Wizard() {
         if (generationCredits < creditsNeeded) {
             if (!isLoggedIn) {
                 setWizardStep('AUTH');
-                showStatusError('Бесплатная фотосессия использована. Пожалуйста, войдите, чтобы пополнить кредиты.');
+                showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
                 return;
             } else {
                 const modalTitle = document.querySelector('#payment-modal-title');
@@ -1244,45 +1242,36 @@ function applyPromoCode() {
 }
 
 // --- Auth Functions ---
-function jwt_decode(token: string): any {
+async function handleCredentialResponse(response: any) {
     try {
-        const base64Url = token.split('.')[1];
-        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-        }).join(''));
-        return JSON.parse(jsonPayload);
-    } catch (e) {
-        console.error("Error decoding JWT", e);
-        return null;
-    }
-}
-
-function handleCredentialResponse(response: any) {
-    const decodedToken = jwt_decode(response.credential);
-    if (decodedToken) {
+        const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
+        
         isLoggedIn = true;
-        userProfile = {
-            name: decodedToken.name,
-            email: decodedToken.email,
-            picture: decodedToken.picture,
-        };
+        userProfile = serverProfile;
+        generationCredits = credits;
+
         updateAuthUI();
+        updateCreditCounterUI();
         updateAllGenerateButtons();
         updatePage1WizardState();
         statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
-    } else {
-        showStatusError("Не удалось войти. Попробуйте снова.");
+
+    } catch (error) {
+        console.error("Login failed:", error);
+        const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка входа.";
+        showStatusError(`Не удалось войти: ${errorMessage}`);
     }
 }
 
 function signOut() {
     isLoggedIn = false;
     userProfile = null;
+    generationCredits = 0; // Reset credits on sign out
     if ((window as any).google) {
         (window as any).google.accounts.id.disableAutoSelect();
     }
     updateAuthUI();
+    updateCreditCounterUI();
     updateAllGenerateButtons();
     updatePage1WizardState();
     statusEl.innerText = "Вы вышли из системы.";
@@ -1305,24 +1294,6 @@ function updateAuthUI() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // --- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP ---
-  // This code forcefully removes any existing service worker to ensure the latest
-  // version of the app is loaded. This is a critical step to fix the "old version" issue.
-  if ('serviceWorker' in navigator) {
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        await registration.unregister();
-        console.log('Successfully unregistered old service worker.', registration.scope);
-      }
-      const keys = await caches.keys();
-      await Promise.all(keys.map(key => caches.delete(key)));
-      console.log('All caches cleared successfully.');
-    } catch (error) {
-        console.error('Error during service worker cleanup:', error);
-    }
-  }
-
   /* --- Service Worker Registration DISABLED ---
   // We are not registering a new service worker for now to avoid caching issues.
   if ('serviceWorker' in navigator) {
@@ -1364,13 +1335,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
 
   try {
-    const savedCredits = localStorage.getItem('generationCredits');
-    if (savedCredits === null) {
-        generationCredits = 1; // First-time user gets 1 free credit
-    } else {
-        generationCredits = parseInt(savedCredits, 10) || 0;
-    }
-    updateCreditCounterUI(); // This will also save to localStorage
+    // Credits are no longer stored in localStorage.
+    // User starts with 0 and receives them from the server upon login.
+    generationCredits = 0;
+    updateCreditCounterUI(); 
 
     // Initialize Google Auth
     (window as any).google?.accounts.id.initialize({
@@ -1381,6 +1349,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       googleSignInContainer,
       { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" } 
     );
+     (window as any).google?.accounts.id.prompt(); // Display the One Tap prompt for returning users.
+
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1529,5 +1499,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);
     document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
+  }
+});
+
+window.addEventListener('load', async () => {
+  // --- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP ---
+  // This code forcefully removes any existing service worker to ensure the latest
+  // version of the app is loaded. This is a critical step to fix the "old version" issue.
+  // We run it on the 'load' event for maximum safety, as the document is guaranteed to be stable.
+  if ('serviceWorker' in navigator) {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+        console.log('Successfully unregistered old service worker.', registration.scope);
+      }
+      const keys = await caches.keys();
+      await Promise.all(keys.map(key => caches.delete(key)));
+      console.log('All caches cleared successfully.');
+    } catch (error) {
+        console.error('Error during service worker cleanup:', error);
+    }
   }
 });
