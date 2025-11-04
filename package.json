@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && esbuild server.js --bundle --packages=external --platform=node --outfile=dist/server.bundle.js",
+    "build": "vite build && esbuild server.js --bundle --platform=node --outfile=dist/server.bundle.js",
     "start": "node dist/server.bundle.js"
   },
   "dependencies": {
@@ -11,9 +11,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-session": "^1.18.0",
-    "passport": "^0.7.0",
-    "passport-vkontakte": "^0.3.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

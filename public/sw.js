@@ -1,6 +1,6 @@
 // sw.js - Service Worker
 
-const CACHE_NAME = 'fotoclick-cache-v5'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
+const CACHE_NAME = 'fotoclick-cache-v4'; // <--- ВЕРСИЯ ИЗМЕНЕНА!
 // Список файлов, которые нужно закэшировать для работы офлайн
 const URLS_TO_CACHE = [
   '/',
