@@ -15,247 +15,271 @@ console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
 if (process.env.API_KEY) {
   console.log('DIAGNOSTICS: API_KEY успешно загружен.');
 } else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная API_KEY не найдена.');
+  console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная API_KEY не найдена.');
 }
 if (process.env.GOOGLE_CLIENT_ID) {
   console.log('DIAGNOSTICS: GOOGLE_CLIENT_ID успешно загружен.');
 } else {
-  console.error('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_CLIENT_ID не найдена.');
-}
-// --- Конец диагностики ---
-
-const app = express();
-const port = process.env.PORT || 3001;
-
-if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID) {
-    console.error('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_KEY или GOOGLE_CLIENT_ID не найден. Сервер не сможет работать.');
-    process.exit(1); // Останавливаем сервер, если нет ключа
+  console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_CLIENT_ID не найдена.');
+  console.log('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_key или GOOGLE_CLIENT_ID не найден. Сервер не сможет работать.');
+  process.exit(1); // Exit if critical env vars are missing
 }
 
-// --- Инициализация Gemini и Google Auth ---
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const authClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-const imageModelName = 'gemini-2.5-flash-image';
-const textModelName = 'gemini-2.5-flash';
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const app = express();
+const port = 3000;
 
-// --- In-memory "база данных" для кредитов ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// In-memory "database" for user credits
 const userCredits = {};
 const INITIAL_CREDITS = 1;
 
-// Middleware
+// --- Middleware ---
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '10mb' }));
 
-// --- Определение путей для ES-модулей ---
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const distPath = path.join(__dirname, 'dist');
-
-// --- Раздача статических файлов (ВАЖНО: ПЕРЕД API МАРШРУТАМИ) ---
-console.log(`[DIAG] Serving static files from: ${distPath}`);
-app.use(express.static(distPath));
-
-
-// --- Middleware "Охранник" для проверки токена и списания кредитов ---
-const authenticateAndCharge = (creditsToCharge) => async (req, res, next) => {
+// Middleware to verify Google token from Authorization header
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Токен аутентификации отсутствует.' });
+    }
+    const token = authHeader.split(' ')[1];
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            return res.status(401).json({ error: 'Требуется авторизация.' });
-        }
-        const token = authHeader.split(' ')[1];
-        const ticket = await authClient.verifyIdToken({
+        const ticket = await googleClient.verifyIdToken({
             idToken: token,
             audience: process.env.GOOGLE_CLIENT_ID,
         });
         const payload = ticket.getPayload();
         if (!payload || !payload.email) {
-            return res.status(401).json({ error: 'Недействительный токен.' });
+             return res.status(401).json({ error: 'Неверный токен.' });
         }
-        const userEmail = payload.email;
-        if (!(userEmail in userCredits)) {
-             return res.status(403).json({ error: 'Пользователь не найден. Пожалуйста, войдите снова.' });
+        req.userEmail = payload.email;
+        next();
+    } catch (error) {
+        console.error('Ошибка проверки токена:', error);
+        return res.status(401).json({ error: 'Недействительный токен.' });
+    }
+};
+
+
+// Middleware to authenticate and charge credits
+const authenticateAndCharge = (cost) => async (req, res, next) => {
+    // First, verify the token to get the user's email
+    await verifyToken(req, res, async () => {
+        const userEmail = req.userEmail;
+        if (!userEmail) {
+            // This case should be handled by verifyToken, but as a safeguard
+            return res.status(401).json({ error: 'Не удалось определить пользователя.' });
         }
-        if (userCredits[userEmail] < creditsToCharge) {
+
+        if (userCredits[userEmail] === undefined) {
+             return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
+        }
+
+        if (userCredits[userEmail] < cost) {
             return res.status(402).json({ error: 'Недостаточно кредитов.' });
         }
         
-        userCredits[userEmail] -= creditsToCharge;
-        console.log(`[CHARGE] Списано ${creditsToCharge} кредитов у ${userEmail}. Осталось: ${userCredits[userEmail]}`);
-        
-        req.userEmail = userEmail; // Передаем email дальше в обработчик
+        userCredits[userEmail] -= cost;
+        // The user's email is already on req from verifyToken, so we just proceed
         next();
-    } catch (error) {
-        console.error('[AUTH ERROR]', error);
-        return res.status(401).json({ error: 'Ошибка авторизации.' });
-    }
+    });
 };
 
+// --- API Routes ---
 
-// Хелпер для преобразования base64 в формат Gemini Part
-const fileToPart = (base64, mimeType) => ({
-    inlineData: {
-        data: base64,
-        mimeType,
-    },
+// Login endpoint
+app.post('/api/login', async (req, res) => {
+    const { token } = req.body;
+    if (!token) {
+        return res.status(400).json({ error: 'Токен не предоставлен.' });
+    }
+    try {
+        const ticket = await googleClient.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        if (!payload || !payload.email || !payload.name || !payload.picture) {
+            return res.status(401).json({ error: 'Неверные данные токена.' });
+        }
+        const { email, name, picture } = payload;
+        
+        // If user is new, grant them initial credits
+        if (userCredits[email] === undefined) {
+            userCredits[email] = INITIAL_CREDITS;
+        }
+
+        res.json({
+            userProfile: { name, email, picture },
+            credits: userCredits[email],
+        });
+    } catch (error) {
+        console.error('Ошибка входа:', error);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера при входе.' });
+    }
 });
 
-// Общий обработчик для всех API-запросов
-const createApiHandler = (actionLogic) => async (req, res) => {
+// Endpoint to add credits (simulated payment)
+app.post('/api/addCredits', verifyToken, (req, res) => {
+    const userEmail = req.userEmail;
+    if (userCredits[userEmail] === undefined) {
+        // This shouldn't happen for a logged-in user, but handle it
+        userCredits[userEmail] = 0;
+    }
+    userCredits[userEmail] += 12; // Add 12 credits on "payment"
+    res.json({ newCredits: userCredits[userEmail] });
+});
+
+// Check image subject endpoint
+app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) => { // 0 cost for analysis
+    const { image } = req.body;
+    if (!image || !image.base64 || !image.mimeType) {
+        return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
+    }
+    
     try {
-        const responsePayload = await actionLogic(req.body, req.userEmail);
-        return res.status(200).json(responsePayload);
+        const prompt = `Проанализируй это изображение и определи, кто на нем изображен, а также его/ее улыбку. 
+        Ответь в формате JSON {"category": "...", "smile": "..."}.
+        Возможные значения для "category": "мужчина", "женщина", "подросток", "пожилой мужчина", "пожилая женщина", "ребенок", "другое" (если не человек или неясно).
+        Возможные значения для "smile": "зубы" (если видна улыбка с зубами), "закрытая" (если улыбка без зубов), "нет улыбки".
+        Если на фото несколько людей, анализируй главного, кто в фокусе.`;
+
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [imagePart, textPart] },
+        });
+        
+        const jsonString = response.text.match(/\{.*\}/s)[0];
+        const subjectDetails = JSON.parse(jsonString);
+
+        res.json({ subjectDetails });
+
     } catch (error) {
-        console.error(`API Error in action:`, error);
-        if (error.type === 'entity.too.large') {
-             return res.status(413).json({ error: 'Загруженное изображение слишком большое.' });
-        }
-        const errorMessage = error.message || 'Произошла неизвестная ошибка сервера.';
-        return res.status(500).json({ error: errorMessage });
+        console.error('Ошибка анализа изображения в Gemini:', error);
+        res.status(500).json({ error: 'Не удалось проанализировать изображение.' });
     }
-};
+});
 
-// --- API маршруты ---
+// Endpoint for generating a single variation
+app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => { // ИСПРАВЛЕНО: Стоимость 1 кредит
+    const { prompt, image } = req.body;
+    const userEmail = req.userEmail;
 
-// Маршрут для авторизации и получения данных пользователя
-app.post('/api/login', createApiHandler(async ({ token }) => {
-    const ticket = await authClient.verifyIdToken({
-        idToken: token,
-        audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    if (!payload || !payload.email) {
-        throw new Error('Не удалось верифицировать пользователя.');
+    if (!prompt || !image || !image.base64 || !image.mimeType) {
+        // Refund if request is bad
+        userCredits[userEmail] += 1; // ИСПРАВЛЕНО: Возврат 1 кредита
+        return res.status(400).json({ error: 'Отсутствует промпт или изображение.' });
     }
-    const { email, name, picture } = payload;
-
-    // Проверяем, есть ли пользователь в нашей "базе"
-    if (!(email in userCredits)) {
-        console.log(`[AUTH] Новый пользователь: ${email}. Начислено ${INITIAL_CREDITS} кредитов.`);
-        userCredits[email] = INITIAL_CREDITS;
-    } else {
-        console.log(`[AUTH] Существующий пользователь: ${email}. Кредитов: ${userCredits[email]}`);
-    }
-
-    return {
-        userProfile: { name, email, picture },
-        credits: userCredits[email],
-    };
-}));
-
-app.post('/api/addCredits', authenticateAndCharge(0), createApiHandler(async (body, userEmail) => {
-    const creditsToAdd = 12;
-    userCredits[userEmail] += creditsToAdd;
-    console.log(`[CREDITS] Начислено ${creditsToAdd} кредитов для ${userEmail}. Новый баланс: ${userCredits[userEmail]}`);
-    return { newCredits: userCredits[userEmail] };
-}));
-
-
-const generateImageApiCall = async ({ prompt, image }, userEmail) => {
-    const response = await ai.models.generateContent({
-        model: imageModelName,
-        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: prompt }] },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
-    
-    // Проверяем, есть ли изображение в ответе
-    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart && imagePart.inlineData) {
-        const { mimeType, data } = imagePart.inlineData;
-        return { 
-            imageUrl: `data:${mimeType};base64,${data}`,
-            newCredits: userCredits[userEmail] 
-        };
-    }
-    // Если генерация не удалась, возвращаем кредиты
-    userCredits[userEmail] += 4; // Стоимость одной генерации вариаций
-    console.log(`[REFUND] Возвращено 4 кредита для ${userEmail} из-за ошибки генерации. Баланс: ${userCredits[userEmail]}`);
-    throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-};
-
-app.post('/api/generateVariation', authenticateAndCharge(4), createApiHandler(generateImageApiCall));
-
-app.post('/api/checkImageSubject', createApiHandler(async ({ image }) => {
-    const response = await ai.models.generateContent({
-        model: textModelName,
-        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: 'Определи категорию человека (мужчина, женщина, подросток, пожилой мужчина, пожилая женщина, ребенок, другое) и тип улыбки (зубы, закрытая, нет улыбки).' }] },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: { type: Type.OBJECT, properties: { category: { type: Type.STRING }, smile: { type: Type.STRING } } }
-        }
-    });
 
     try {
-        const jsonText = response.text.trim();
-        const subjectDetails = JSON.parse(jsonText);
-        if (typeof subjectDetails !== 'object' || subjectDetails === null || !('category' in subjectDetails) || !('smile' in subjectDetails)) {
-            throw new Error('Получен некорректный формат данных от AI.');
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image', // nano banana
+            contents: { parts: [imagePart, textPart] },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+        
+        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+
+        if (!generatedImagePart || !generatedImagePart.inlineData) {
+            throw new Error('Gemini не вернул изображение.');
         }
-        return { subjectDetails };
-    } catch (e) {
-        console.error("Ошибка парсинга JSON от Gemini:", response.text, e);
-        throw new Error("Не удалось разобрать ответ от AI. Попробуйте еще раз.");
+
+        const imageUrl = `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
+        res.json({ imageUrl, newCredits: userCredits[userEmail] });
+
+    } catch (error) {
+        console.error('Ошибка генерации вариации:', error);
+        // Refund credits on failure
+        userCredits[userEmail] += 1; // ИСПРАВЛЕНО: Возврат 1 кредита
+        res.status(500).json({ error: 'Не удалось сгенерировать вариацию.' });
     }
-}));
+});
 
-app.post('/api/analyzeImageForText', createApiHandler(async ({ image, analysisPrompt }) => {
-    const response = await ai.models.generateContent({
-        model: textModelName,
-        contents: { parts: [fileToPart(image.base64, image.mimeType), { text: analysisPrompt }] },
-    });
-    return { text: response.text.trim() };
-}));
+// Endpoint for generating the main photoshoot
+app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) => {
+    const { parts } = req.body;
+    const userEmail = req.userEmail;
 
-const generatePhotoshootApiCall = async ({ parts }, userEmail) => {
-    const geminiParts = parts.map(part => {
-        if (part.inlineData) {
-            return fileToPart(part.inlineData.data, part.inlineData.mimeType);
+    if (!parts || !Array.isArray(parts) || parts.length < 2) {
+         userCredits[userEmail] += 1; // Refund
+         return res.status(400).json({ error: 'Некорректные данные для фотосессии.' });
+    }
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: parts },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+
+        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+
+        if (!generatedImagePart || !generatedImagePart.inlineData) {
+            throw new Error('Gemini не вернул изображение фотосессии.');
         }
-        return part; // Для текстовых частей
-    });
-
-    const response = await ai.models.generateContent({
-        model: imageModelName,
-        contents: { parts: geminiParts },
-        config: {
-            responseModalities: [Modality.IMAGE],
-        },
-    });
-    
-    const imagePart = response.candidates?.[0]?.content?.parts?.find(part => part.inlineData);
-    if (imagePart && imagePart.inlineData) {
-        const { mimeType, data } = imagePart.inlineData;
-        const resultUrl = `data:${mimeType};base64,${data}`;
-        return { 
-            resultUrl, 
-            generatedPhotoshootResult: { base64: data, mimeType: mimeType },
-            newCredits: userCredits[userEmail] 
+        
+        const generatedPhotoshootResult = {
+            base64: generatedImagePart.inlineData.data,
+            mimeType: generatedImagePart.inlineData.mimeType
         };
+        const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
+
+        res.json({ resultUrl, generatedPhotoshootResult, newCredits: userCredits[userEmail] });
+
+    } catch (error) {
+        console.error('Ошибка генерации фотосессии:', error);
+        userCredits[userEmail] += 1; // Refund
+        res.status(500).json({ error: 'Не удалось сгенерировать фотосессию.' });
     }
-    // Если генерация не удалась, возвращаем кредит
-    userCredits[userEmail] += 1;
-    console.log(`[REFUND] Возвращен 1 кредит для ${userEmail} из-за ошибки фотосессии. Баланс: ${userCredits[userEmail]}`);
-    throw new Error(`Изображение не сгенерировано. Причина: ${response.candidates?.[0]?.finishReason || 'Неизвестная ошибка модели'}`);
-};
+});
 
-app.post('/api/generatePhotoshoot', authenticateAndCharge(1), createApiHandler(generatePhotoshootApiCall));
+// Endpoint for analyzing image for text description
+app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) => {
+    const { image, analysisPrompt } = req.body;
+    if (!image || !analysisPrompt) {
+        return res.status(400).json({ error: 'Отсутствует изображение или промпт для анализа.' });
+    }
+    
+    try {
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: analysisPrompt };
+        
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [imagePart, textPart] },
+        });
 
+        res.json({ text: response.text });
+    } catch (error) {
+        console.error('Ошибка анализа изображения для текста:', error);
+        res.status(500).json({ error: 'Не удалось проанализировать изображение.' });
+    }
+});
 
-// --- Обработчик для SPA (Single Page Application) ---
-// Этот обработчик должен быть ПОСЛЕДНИМ, чтобы не перехватывать запросы к API или статическим файлам
+// --- Static Files and Catch-all ---
+// Serve static files from the 'dist' directory, which is the output of 'npm run build'
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// The "catchall" handler: for any request that doesn't match one above, send back React's index.html file.
 app.get('*', (req, res) => {
-    const indexPath = path.join(distPath, 'index.html');
-    res.sendFile(indexPath, (err) => {
-        if (err) {
-            console.error(`[CRITICAL] Error sending file: ${indexPath}`, err);
-            res.status(500).send('Server error: Could not serve the application file.');
-        }
-    });
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
-
 
 app.listen(port, () => {
-  console.log(`[INFO] Сервер слушает порт ${port}`);
+  console.log(`Сервер запущен на http://localhost:${port}`);
 });
