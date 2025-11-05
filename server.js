@@ -1,11 +1,14 @@
-// server.js - Финальная, стабильная версия. Возвращена на `@google/genai`.
+// server.js - Финальная, стабильная версия с корректной архитектурой.
 
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-require('dotenv').config();
-const { GoogleGenAI, Type, Modality } = require('@google/genai');
-const { OAuth2Client } = require('google-auth-library');
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import { GoogleGenAI, Type, Modality } from '@google/genai';
+import { OAuth2Client } from 'google-auth-library';
+
+dotenv.config();
 
 // --- Диагностика .env для Gemini ---
 console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
@@ -42,6 +45,16 @@ const INITIAL_CREDITS = 12;
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// --- Определение путей для ES-модулей ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.join(__dirname, 'dist');
+
+// --- Раздача статических файлов (ВАЖНО: ПЕРЕД API МАРШРУТАМИ) ---
+console.log(`[DIAG] Serving static files from: ${distPath}`);
+app.use(express.static(distPath));
+
 
 // --- Middleware "Охранник" для проверки токена и списания кредитов ---
 const authenticateAndCharge = (creditsToCharge) => async (req, res, next) => {
@@ -230,12 +243,8 @@ const generatePhotoshootApiCall = async ({ parts }, userEmail) => {
 app.post('/api/generatePhotoshoot', authenticateAndCharge(1), createApiHandler(generatePhotoshootApiCall));
 
 
-// --- Раздача статических файлов ---
-const distPath = __dirname;
-console.log(`[DIAG] Serving static files from: ${distPath}`);
-
-app.use(express.static(distPath));
-
+// --- Обработчик для SPA (Single Page Application) ---
+// Этот обработчик должен быть ПОСЛЕДНИМ, чтобы не перехватывать запросы к API или статическим файлам
 app.get('*', (req, res) => {
     const indexPath = path.join(distPath, 'index.html');
     res.sendFile(indexPath, (err) => {

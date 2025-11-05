@@ -1,10 +1,11 @@
 {
   "name": "fotoclick-from-github",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && cp server.js dist/",
-    "start": "node dist/server.js"
+    "build": "vite build",
+    "start": "node server.js"
   },
   "dependencies": {
     "@google/genai": "^1.25.0",
