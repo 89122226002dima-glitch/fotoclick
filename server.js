@@ -90,6 +90,12 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
     });
 };
 
+// --- Static Files and Catch-all ---
+// Serve static files from the 'dist' directory, which is the output of 'npm run build'
+// **ВАЖНО**: Этот блок должен быть ПЕРЕД API-маршрутами, чтобы правильно отдавать фронтенд.
+app.use(express.static(path.join(__dirname, 'dist')));
+
+
 // --- API Routes ---
 
 // Login endpoint
@@ -271,9 +277,6 @@ app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) 
     }
 });
 
-// --- Static Files and Catch-all ---
-// Serve static files from the 'dist' directory, which is the output of 'npm run build'
-app.use(express.static(path.join(__dirname, 'dist')));
 
 // The "catchall" handler: for any request that doesn't match one above, send back React's index.html file.
 app.get('*', (req, res) => {
