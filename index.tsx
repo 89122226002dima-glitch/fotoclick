@@ -241,8 +241,8 @@ async function cropImage(imageState: ImageState): Promise<ImageState> {
 /**
  * A generic helper function to make API calls to our own server backend.
  * It automatically includes the authentication token if the user is logged in.
- * FIX: This function is refactored to correctly handle response streams,
- * preventing the "body stream already read" error.
+ * This version is robust against "body stream already read" errors by reading
+ * the response body only once.
  * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
  * @param body The JSON payload to send.
  * @returns A promise that resolves with the JSON response from the server.
@@ -251,6 +251,7 @@ async function callApi(endpoint: string, body: object) {
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
     };
+    // Always check localStorage for the most current token
     const currentToken = localStorage.getItem('idToken');
     if (currentToken) {
         headers['Authorization'] = `Bearer ${currentToken}`;
@@ -262,26 +263,33 @@ async function callApi(endpoint: string, body: object) {
         body: JSON.stringify(body),
     });
 
-    if (!response.ok) {
-        // Clone the response to be able to read its body twice (for JSON and text)
-        const responseClone = response.clone();
-        let errorData;
-        try {
-            // Try to parse the error response as JSON first
-            errorData = await response.json();
-        } catch (e) {
-            // If JSON parsing fails, the body might be plain text or HTML
-            const errorText = await responseClone.text();
-            console.error("Failed to parse server error JSON, raw response text:", errorText);
-            throw new Error(`Сервер вернул неожиданный ответ (${response.status}). Технические детали записаны в консоль разработчика.`);
+    // Read the response body as text ONCE to avoid stream errors
+    const responseText = await response.text();
+    let responseData;
+    
+    try {
+        // Try to parse the text as JSON
+        responseData = JSON.parse(responseText);
+    } catch (e) {
+        // If parsing fails, it's a non-JSON response (e.g., HTML error page)
+        if (!response.ok) {
+            console.error("Non-JSON error response from server:", responseText);
+            throw new Error(`Сервер вернул неожиданный ответ (${response.status}).`);
         }
-        console.error(`Ошибка API на ${endpoint}:`, errorData);
-        // Throw an error with the message from the server, or a default one
-        throw new Error(errorData.error || `Произошла ошибка. Технические детали записаны в консоль разработчика.`);
+        // If it's a 2xx response but not JSON, this is unexpected.
+        console.warn("An OK response was not in JSON format:", responseText);
+        // We return an object that won't crash the app, but indicates a problem.
+        return { error: 'Некорректный ответ от сервера.' };
     }
 
-    // If response is OK, parse it as JSON
-    return response.json();
+    // If the response was not OK (e.g., 401, 402, 500), throw an error with the server's message
+    if (!response.ok) {
+        console.error(`Ошибка API на ${endpoint}:`, responseData);
+        throw new Error(responseData.error || `Произошла ошибка (${response.status}).`);
+    }
+
+    // If we reach here, the response was OK and is valid JSON
+    return responseData;
 }
 
 
@@ -996,6 +1004,7 @@ function initializePage1Wizard() {
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             generationCredits = data.newCredits;
             updateCreditCounterUI();
+            updateAllGenerateButtons();
 
             const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
 

@@ -40,7 +40,7 @@ const textModelName = 'gemini-2.5-flash';
 
 // --- In-memory "база данных" для кредитов ---
 const userCredits = {};
-const INITIAL_CREDITS = 12;
+const INITIAL_CREDITS = 1;
 
 // Middleware
 app.use(cors());
