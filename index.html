@@ -5,11 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <!-- Cache Control Meta Tags -->
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
-    <meta http-equiv="Pragma" content="no-cache" />
-    <meta http-equiv="Expires" content="0" />
-
     <!-- PWA and Mobile specific meta tags -->
     <meta name="theme-color" content="#ff85c2"/>
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -400,18 +395,7 @@
     </div>
     
     <!-- Main application script -->
-    <script>
-      // This inline script dynamically creates the script tag for our main application.
-      // It adds a unique timestamp as a query parameter (`?v=...`).
-      // This technique is called "cache busting". It forces the browser and any
-      // intermediate proxy servers to fetch a fresh copy of the script every
-      // single time the page is loaded, completely solving the caching issue.
-      const script = document.createElement('script');
-      script.type = 'module';
-      script.src = `/index.tsx?v=${Date.now()}`;
-      document.body.appendChild(script);
-    </script>
+    <script type="module" src="/index.tsx"></script>
     
-  <script type="module" src="/index.tsx"></script>
-</body>
+  </body>
 </html>
