@@ -28,7 +28,7 @@ if (process.env.GOOGLE_CLIENT_ID) {
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const app = express();
-const port = 3000;
+const port = 3001; // Используем порт 3001, как указано в паспорте проекта для Caddy
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,12 +89,6 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
         next();
     });
 };
-
-// --- Static Files and Catch-all ---
-// Serve static files from the 'dist' directory, which is the output of 'npm run build'
-// **ВАЖНО**: Этот блок должен быть ПЕРЕД API-маршрутами, чтобы правильно отдавать фронтенд.
-app.use(express.static(path.join(__dirname, 'dist')));
-
 
 // --- API Routes ---
 
@@ -175,13 +169,13 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
 });
 
 // Endpoint for generating a single variation
-app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => { // ИСПРАВЛЕНО: Стоимость 1 кредит
+app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => {
     const { prompt, image } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompt || !image || !image.base64 || !image.mimeType) {
         // Refund if request is bad
-        userCredits[userEmail] += 1; // ИСПРАВЛЕНО: Возврат 1 кредита
+        userCredits[userEmail] += 1;
         return res.status(400).json({ error: 'Отсутствует промпт или изображение.' });
     }
 
@@ -209,7 +203,7 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
     } catch (error) {
         console.error('Ошибка генерации вариации:', error);
         // Refund credits on failure
-        userCredits[userEmail] += 1; // ИСПРАВЛЕНО: Возврат 1 кредита
+        userCredits[userEmail] += 1;
         res.status(500).json({ error: 'Не удалось сгенерировать вариацию.' });
     }
 });
@@ -275,12 +269,6 @@ app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) 
         console.error('Ошибка анализа изображения для текста:', error);
         res.status(500).json({ error: 'Не удалось проанализировать изображение.' });
     }
-});
-
-
-// The "catchall" handler: for any request that doesn't match one above, send back React's index.html file.
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 app.listen(port, () => {
