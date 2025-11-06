@@ -41,8 +41,10 @@ const INITIAL_CREDITS = 1;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Middleware to verify Google token from Authorization header
-const verifyToken = async (req, res, next) => {
+// --- NEW, REFACTORED MIDDLEWARE ---
+
+// Middleware to verify Google token and attach user to req
+const verifyTokenMiddleware = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Токен аутентификации отсутствует.' });
@@ -57,38 +59,36 @@ const verifyToken = async (req, res, next) => {
         if (!payload || !payload.email) {
              return res.status(401).json({ error: 'Неверный токен.' });
         }
-        req.userEmail = payload.email;
-        next();
+        req.userEmail = payload.email; // Attach user email to the request object
+        next(); // Proceed to the next middleware
     } catch (error) {
         console.error('Ошибка проверки токена:', error);
         return res.status(401).json({ error: 'Недействительный токен.' });
     }
 };
 
+// Middleware factory to charge credits. Should run AFTER verifyTokenMiddleware.
+const chargeMiddleware = (cost) => (req, res, next) => {
+    const userEmail = req.userEmail;
+    if (!userEmail) {
+        console.error('chargeMiddleware вызван без email пользователя. Проверьте порядок middleware.');
+        return res.status(500).json({ error: 'Внутренняя ошибка сервера: аутентификация не удалась.' });
+    }
 
-// Middleware to authenticate and charge credits
-const authenticateAndCharge = (cost) => async (req, res, next) => {
-    // First, verify the token to get the user's email
-    await verifyToken(req, res, async () => {
-        const userEmail = req.userEmail;
-        if (!userEmail) {
-            // This case should be handled by verifyToken, but as a safeguard
-            return res.status(401).json({ error: 'Не удалось определить пользователя.' });
-        }
+    if (userCredits[userEmail] === undefined) {
+         return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
+    }
 
-        if (userCredits[userEmail] === undefined) {
-             return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
-        }
-
+    if (cost > 0) {
         if (userCredits[userEmail] < cost) {
             return res.status(402).json({ error: 'Недостаточно кредитов.' });
         }
-        
         userCredits[userEmail] -= cost;
-        // The user's email is already on req from verifyToken, so we just proceed
-        next();
-    });
+    }
+    
+    next();
 };
+
 
 // --- API Routes ---
 
@@ -125,7 +125,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Endpoint to add credits (simulated payment)
-app.post('/api/addCredits', verifyToken, (req, res) => {
+app.post('/api/addCredits', verifyTokenMiddleware, (req, res) => {
     const userEmail = req.userEmail;
     if (userCredits[userEmail] === undefined) {
         // This shouldn't happen for a logged-in user, but handle it
@@ -136,7 +136,7 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
 });
 
 // Check image subject endpoint
-app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) => { // 0 cost for analysis
+app.post('/api/checkImageSubject', verifyTokenMiddleware, chargeMiddleware(0), async (req, res) => { 
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
@@ -169,7 +169,7 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
 });
 
 // Endpoint for generating a single variation
-app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => {
+app.post('/api/generateVariation', verifyTokenMiddleware, chargeMiddleware(1), async (req, res) => {
     const { prompt, image } = req.body;
     const userEmail = req.userEmail;
 
@@ -209,7 +209,7 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
 });
 
 // Endpoint to get the bounding box of a person
-app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, res) => {
+app.post('/api/detectPersonBoundingBox', verifyTokenMiddleware, chargeMiddleware(0), async (req, res) => {
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
@@ -246,7 +246,7 @@ app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, r
 });
 
 // Endpoint for generating the main photoshoot
-app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) => {
+app.post('/api/generatePhotoshoot', verifyTokenMiddleware, chargeMiddleware(1), async (req, res) => {
     const { parts } = req.body;
     const userEmail = req.userEmail;
 
@@ -286,7 +286,7 @@ app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) =
 });
 
 // Endpoint for analyzing image for text description
-app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) => {
+app.post('/api/analyzeImageForText', verifyTokenMiddleware, chargeMiddleware(0), async (req, res) => {
     const { image, analysisPrompt } = req.body;
     if (!image || !analysisPrompt) {
         return res.status(400).json({ error: 'Отсутствует изображение или промпт для анализа.' });
