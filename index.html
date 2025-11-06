@@ -5,16 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
-    <!-- Cache Control Meta Tags -->
+    <!-- Cache Control Meta Tags: Instruct the browser not to cache this HTML file -->
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-
-    <!-- PWA and Mobile specific meta tags -->
-    <meta name="theme-color" content="#ff85c2"/>
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="apple-touch-icon" href="icon-192.png">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -24,27 +18,20 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/index.css" />
-    <link rel="manifest" href="/manifest.json" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-    <!-- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP SCRIPT -->
+    <!-- SAFE CACHE CLEANER SCRIPT -->
     <script>
       (async () => {
         if ('serviceWorker' in navigator) {
           try {
             const registrations = await navigator.serviceWorker.getRegistrations();
             if (registrations.length > 0) {
-              console.log(`[Cache Cleaner] Found ${registrations.length} old service workers. Forcing cleanup...`);
-              
+              console.log(`[Cache Cleaner] Found ${registrations.length} old service workers. Cleaning up...`);
               await Promise.all(registrations.map(reg => reg.unregister()));
-              console.log('[Cache Cleaner] All service workers unregistered.');
-              
               const keys = await caches.keys();
               await Promise.all(keys.map(key => caches.delete(key)));
-              console.log('[Cache Cleaner] All associated caches have been cleared.');
-              
-              console.log('[Cache Cleaner] Cleanup complete. Reloading the page to ensure the latest version is active.');
-              window.location.reload();
+              console.log('[Cache Cleaner] Old service workers and their caches have been successfully removed.');
             }
           } catch (error) {
             console.error('[Cache Cleaner] Error during service worker cleanup:', error);
