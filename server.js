@@ -208,6 +208,43 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
     }
 });
 
+// Endpoint to get the bounding box of a person
+app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, res) => {
+    const { image } = req.body;
+    if (!image || !image.base64 || !image.mimeType) {
+        return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
+    }
+
+    try {
+        const prompt = `Найди главного человека на этом изображении и верни координаты его ограничивающей рамки (bounding box). Ответ должен быть СТРОГО в формате JSON: {"x_min": float, "y_min": float, "x_max": float, "y_max": float}, где координаты нормализованы от 0.0 до 1.0. Не добавляй никакого другого текста или форматирования, только JSON.`;
+
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [imagePart, textPart] },
+        });
+
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) {
+            throw new Error('Gemini did not return valid JSON for bounding box.');
+        }
+        const boundingBox = JSON.parse(jsonStringMatch[0]);
+        
+        if (typeof boundingBox.x_min !== 'number' || typeof boundingBox.y_min !== 'number' ||
+            typeof boundingBox.x_max !== 'number' || typeof boundingBox.y_max !== 'number') {
+            throw new Error('Полученные данные ограничивающей рамки недействительны.');
+        }
+
+        res.json({ boundingBox });
+
+    } catch (error) {
+        console.error('Ошибка определения ограничивающей рамки в Gemini:', error);
+        res.status(500).json({ error: 'Не удалось определить положение человека на фото.' });
+    }
+});
+
 // Endpoint for generating the main photoshoot
 app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) => {
     const { parts } = req.body;
