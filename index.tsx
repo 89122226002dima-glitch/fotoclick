@@ -1125,8 +1125,66 @@ function initializePage1Wizard() {
 
     setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state) => {
         page1ReferenceImage = state;
-        if (state) await showCombinedSteps(state);
-        else resetWizard();
+        if (state) {
+            subtitle.textContent = 'Оптимизация изображения...';
+            let imageState = state;
+    
+            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES (PAGE 1) ---
+            const processedImageState = await new Promise<ImageState>((resolve) => {
+                const img = new Image();
+                img.onload = async () => {
+                    if (img.width > img.height) { // Only process horizontal images
+                        subtitle.textContent = 'Анализ композиции...';
+                        try {
+                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                            if (boundingBox) {
+                                const originalWidth = img.width;
+                                const originalHeight = img.height;
+                                const targetAspectRatio = 4 / 5;
+                                const newWidth = originalHeight * targetAspectRatio;
+                                
+                                if (newWidth < originalWidth) { // Check if it's wider than target
+                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                    let cropX = personCenterX - (newWidth / 2);
+                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+    
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = newWidth;
+                                    canvas.height = originalHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                        const [, croppedBase64] = croppedDataUrl.split(',');
+                                        
+                                        const imagePreview = document.getElementById('page1-image-preview') as HTMLImageElement;
+                                        if (imagePreview) imagePreview.src = croppedDataUrl;
+    
+                                        console.log("Фото для фотосессии успешно обрезано.");
+                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (cropError) {
+                            console.warn("Не удалось автоматически обрезать фото для фотосессии, используется оригинал:", cropError);
+                        }
+                    }
+                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
+                };
+                img.onerror = () => {
+                    console.error("Не удалось загрузить изображение для проверки размеров (Page 1).");
+                    resolve(imageState);
+                };
+                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+            });
+            // --- END OF AUTO-CROP LOGIC ---
+            
+            page1ReferenceImage = processedImageState;
+            await showCombinedSteps(processedImageState);
+        } else {
+            resetWizard();
+        }
     });
     
     setupUploader('clothing-upload-container', 'clothing-image-upload', 'clothing-image-preview', 'clothing-upload-placeholder', 'clothing-clear-button', async (state) => {
@@ -1468,24 +1526,73 @@ document.addEventListener('DOMContentLoaded', async () => {
           overlay.className = 'analysis-overlay';
           overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
           uploadContainer.appendChild(overlay);
+          const overlayText = overlay.querySelector('p');
           setControlsDisabled(true);
           setWizardStep('NONE');
 
           try {
-            const imageState = await resizeImage(originalImageState);
-            const resizedDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+            let imageState = await resizeImage(originalImageState);
+
+            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
+            const processedImageState = await new Promise<ImageState>((resolve) => {
+                const img = new Image();
+                img.onload = async () => {
+                    if (img.width > img.height) { // Only process horizontal images
+                        if (overlayText) overlayText.textContent = 'Анализ композиции...';
+                        try {
+                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                            if (boundingBox) {
+                                const originalWidth = img.width;
+                                const originalHeight = img.height;
+                                const targetAspectRatio = 4 / 5;
+                                const newWidth = originalHeight * targetAspectRatio;
+                                
+                                if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
+                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                    let cropX = personCenterX - (newWidth / 2);
+                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = newWidth;
+                                    canvas.height = originalHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                        const [, croppedBase64] = croppedDataUrl.split(',');
+                                        console.log("Изображение успешно обрезано до вертикального формата.");
+                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (cropError) {
+                            console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
+                        }
+                    }
+                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
+                };
+                img.onerror = () => {
+                    console.error("Не удалось загрузить изображение для проверки размеров.");
+                    resolve(imageState);
+                };
+                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+            });
+            // --- END OF AUTO-CROP LOGIC ---
+            
+            imageState = processedImageState;
+            const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
 
             referenceImage = imageState;
-            referenceImagePreview.src = resizedDataUrl;
+            referenceImagePreview.src = finalDataUrl;
             referenceImagePreview.classList.remove('hidden');
-            referenceDownloadButton.href = resizedDataUrl;
+            referenceDownloadButton.href = finalDataUrl;
             referenceDownloadButton.download = `reference-${Date.now()}.png`;
             referenceDownloadButton.classList.remove('hidden');
             uploadPlaceholder.classList.add('hidden');
             uploadContainer.classList.remove('aspect-square');
             outputGallery.innerHTML = '';
             
-            const overlayText = overlay.querySelector('p');
             if (overlayText) overlayText.textContent = 'Анализ фото...';
 
             statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
