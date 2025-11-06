@@ -1546,24 +1546,3 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
   }
 });
-
-window.addEventListener('load', async () => {
-  // --- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP ---
-  // This code forcefully removes any existing service worker to ensure the latest
-  // version of the app is loaded. This is a critical step to fix the "old version" issue.
-  // We run it on the 'load' event for maximum safety, as the document is guaranteed to be stable.
-  if ('serviceWorker' in navigator) {
-    try {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      for (const registration of registrations) {
-        await registration.unregister();
-        console.log('Successfully unregistered old service worker.', registration.scope);
-      }
-      const keys = await caches.keys();
-      await Promise.all(keys.map(key => caches.delete(key)));
-      console.log('All caches cleared successfully.');
-    } catch (error) {
-        console.error('Error during service worker cleanup:', error);
-    }
-  }
-});
