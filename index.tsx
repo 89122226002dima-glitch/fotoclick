@@ -66,6 +66,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
+let faceReferenceImage: ImageState | null = null;
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let malePoseIndex = 0;
@@ -239,6 +240,56 @@ async function cropImage(imageState: ImageState): Promise<ImageState> {
 }
 
 /**
+ * Detects a face in an image, crops it with padding, and resizes to a 1024x1024 square.
+ * @param imageState The source image.
+ * @param boundingBox The normalized bounding box of the face.
+ * @returns A promise resolving to the cropped and resized face image state.
+ */
+async function cropFace(imageState: ImageState, boundingBox: { x_min: number, y_min: number, x_max: number, y_max: number }): Promise<ImageState> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const { width: originalWidth, height: originalHeight } = img;
+
+            // Calculate crop dimensions in pixels
+            const cropX = boundingBox.x_min * originalWidth;
+            const cropY = boundingBox.y_min * originalHeight;
+            const cropWidth = (boundingBox.x_max - boundingBox.x_min) * originalWidth;
+            const cropHeight = (boundingBox.y_max - boundingBox.y_min) * originalHeight;
+            
+            // Add some padding to the crop to get more context
+            const padding = Math.min(cropWidth, cropHeight) * 0.2; // 20% padding
+            const paddedX = Math.max(0, cropX - padding);
+            const paddedY = Math.max(0, cropY - padding);
+            const paddedWidth = Math.min(originalWidth - paddedX, cropWidth + padding * 2);
+            const paddedHeight = Math.min(originalHeight - paddedY, cropHeight + padding * 2);
+
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024;
+            canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Не удалось получить 2D контекст для обрезки лица.'));
+            }
+
+            // Draw the cropped part of the image onto the 1024x1024 canvas, scaling it
+            ctx.drawImage(
+                img,
+                paddedX, paddedY, paddedWidth, paddedHeight, // Source rectangle
+                0, 0, 1024, 1024                            // Destination rectangle
+            );
+            
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.95); // High quality for face
+            const [, base64] = dataUrl.split(',');
+            resolve({ base64, mimeType: 'image/jpeg' });
+        };
+        img.onerror = (err) => reject(new Error('Не удалось загрузить изображение для обрезки лица.'));
+        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+    });
+}
+
+/**
  * A generic helper function to make API calls to our own server backend.
  * It automatically includes the authentication token if the user is logged in.
  * This version is robust against "body stream already read" errors by reading
@@ -309,9 +360,9 @@ function openLightbox(imageUrl: string) {
     }
 }
 
-async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCredits: number }> {
+async function generateVariation(prompt: string, mainImage: ImageState, faceImage: ImageState | null): Promise<{ imageUrl: string, newCredits: number }> {
    try {
-        const data = await callApi('/api/generateVariation', { prompt, image });
+        const data = await callApi('/api/generateVariation', { prompt, mainImage, faceImage });
         return { imageUrl: data.imageUrl, newCredits: data.newCredits };
     } catch (e) {
         console.error('generateVariation failed:', e);
@@ -365,6 +416,7 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
+  faceReferenceImage = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
@@ -609,12 +661,17 @@ async function generate() {
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+        let finalPrompt: string;
+        if (faceReferenceImage) {
+            finalPrompt = `Это два референсных фото. Первое — это крупный план лица. Второе — это общий вид (одежда, фон, прическа). Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ ЛИЦА:** Возьми уникальные черты лица (форма носа, глаз, губ), цвет кожи и выражение лица АБСОЛЮТНО ТОЧНО с ПЕРВОГО фото (лицевой референс). Это самое важное правило. Не изменяй человека.\n2.  **СТИЛЬ И КОНТЕКСТ:** Возьми одежду, прическу, стиль и атмосферу фона со ВТОРОГО фото (основной референс).\n3.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+        } else {
+            finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+        }
         generationPrompts.push(finalPrompt);
     }
     
     if (progressText) progressText.innerText = 'Генерация... 10%';
-    const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
+    const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!, faceReferenceImage));
     
     const results = await Promise.allSettled(generationPromises);
     
@@ -1015,6 +1072,7 @@ function initializePage1Wizard() {
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
+                // The face reference is already set from the initial upload, so we keep it.
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1091,17 +1149,17 @@ function initializePage1Wizard() {
         updatePage1WizardState();
     };
     
-    const showCombinedSteps = async (imageState: ImageState) => {
-        if (!prompts) return;
+    const showCombinedSteps = async (imageState: ImageState): Promise<string> => {
+        if (!prompts) return '';
+        let subjectText = '';
         try {
             subtitle.textContent = 'Анализ фото...';
             const subjectDetails = await checkImageSubject(imageState);
             page1DetectedSubject = subjectDetails;
             if (subjectDetails.category === 'other') {
                 subtitle.innerHTML = `<span class="text-red-400">На фото не удалось распознать человека. Пожалуйста, загрузите другое изображение.</span>`;
-                return;
+                return '';
             }
-            let subjectText = '';
             switch(subjectDetails.category) {
                 case 'woman': currentClothingSuggestions = prompts.femaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'женщины'; break;
                 case 'man': currentClothingSuggestions = prompts.maleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'мужчины'; break;
@@ -1116,10 +1174,12 @@ function initializePage1Wizard() {
             displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
             clothingLocationContainer.classList.remove('hidden');
             updatePage1WizardState();
+            return subjectText; // Return for later use
         } catch (e) {
             const message = e instanceof Error ? e.message : 'Неизвестная ошибка анализа.';
             subtitle.innerHTML = `<span class="text-red-400">${message}</span>`;
             page1DetectedSubject = null;
+            throw e; // re-throw to stop face analysis
         }
     };
 
@@ -1181,8 +1241,32 @@ function initializePage1Wizard() {
             // --- END OF AUTO-CROP LOGIC ---
             
             page1ReferenceImage = processedImageState;
-            await showCombinedSteps(processedImageState);
+            let subjectText = '';
+            try {
+                 subjectText = (await showCombinedSteps(processedImageState)) || '';
+            } catch (error) {
+                // Stop if subject analysis failed
+                return;
+            }
+
+            // --- FACE REFERENCE LOGIC ---
+            try {
+                subtitle.textContent = 'Анализ лица для повышения узнаваемости...';
+                const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: processedImageState });
+                if (boundingBox) {
+                    faceReferenceImage = await cropFace(processedImageState, boundingBox);
+                    console.log("Лицевой референс успешно создан.");
+                }
+            } catch (faceError) {
+                console.warn("Не удалось создать лицевой референс:", faceError);
+                faceReferenceImage = null; // Ensure it's null on failure
+            } finally {
+                 // Restore the previous status message regardless of success or failure
+                 if(subjectText) subtitle.textContent = `Обнаружено фото ${subjectText}. Шаг 2: Опишите одежду и локацию.`;
+            }
+
         } else {
+            faceReferenceImage = null;
             resetWizard();
         }
     });
@@ -1602,6 +1686,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             detectedSmileType = smile;
             initializePoseSequences();
             if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
+
+            // --- FACE REFERENCE LOGIC (PAGE 2) ---
+            try {
+                if (overlayText) overlayText.textContent = 'Анализ лица...';
+                const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                 if (boundingBox) {
+                    faceReferenceImage = await cropFace(imageState, boundingBox);
+                    console.log("Лицевой референс (со страницы 2) успешно создан.");
+                }
+            } catch (faceError) {
+                console.warn("Не удалось создать лицевой референс (со страницы 2):", faceError);
+                faceReferenceImage = null; // Ensure it's null on failure
+            }
+            // --- END OF FACE REFERENCE LOGIC ---
+
             const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
             statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
             setWizardStep('PAGE2_PLAN');

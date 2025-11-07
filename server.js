@@ -170,22 +170,29 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
 
 // Endpoint for generating a single variation
 app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => {
-    const { prompt, image } = req.body;
+    const { prompt, mainImage, faceImage } = req.body;
     const userEmail = req.userEmail;
 
-    if (!prompt || !image || !image.base64 || !image.mimeType) {
+    if (!prompt || !mainImage || !mainImage.base64 || !mainImage.mimeType) {
         // Refund if request is bad
         userCredits[userEmail] += 1;
-        return res.status(400).json({ error: 'Отсутствует промпт или изображение.' });
+        return res.status(400).json({ error: 'Отсутствует промпт или основное изображение.' });
     }
 
     try {
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: prompt };
+        const parts = [];
+        // Add face image first if it exists, as per the prompt's instruction
+        if (faceImage && faceImage.base64 && faceImage.mimeType) {
+            parts.push({ inlineData: { data: faceImage.base64, mimeType: faceImage.mimeType } });
+        }
+        // Add the main image
+        parts.push({ inlineData: { data: mainImage.base64, mimeType: mainImage.mimeType } });
+        // Add the text prompt last
+        parts.push({ text: prompt });
 
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image', // nano banana
-            contents: { parts: [imagePart, textPart] },
+            contents: { parts: parts },
             config: {
                 responseModalities: [Modality.IMAGE],
             },
