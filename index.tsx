@@ -66,7 +66,6 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
-let faceReferenceImage: ImageState | null = null;
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let malePoseIndex = 0;
@@ -220,66 +219,16 @@ async function cropImage(imageState: ImageState): Promise<ImageState> {
             // Draw the middle part of the source image onto the new, smaller canvas
             ctx.drawImage(img,
                 0, topCrop,                 // Source x, y (start cropping from 20% down)
-                originalWidth, newHeight,   // Source width, height
-                0, 0,                       // Destination x, y
-                originalWidth, newHeight);  // Destination width, height
+                originalWidth, newHeight,  // Source width, height (the middle 60% of the image)
+                0, 0,                      // Destination x, y (draw at the top-left of the canvas)
+                originalWidth, newHeight   // Destination width, height (fill the new canvas)
+            );
 
             const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
             const [, base64] = dataUrl.split(',');
-            resolve({ base64, mimeType: 'image/jpeg' });
-        };
-        img.onerror = () => reject(new Error('Не удалось загрузить изображение для обрезки.'));
-        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
-    });
-}
+            const mimeType = 'image/jpeg';
 
-/**
- * Crops an image based on a normalized bounding box and resizes it to a target square dimension.
- * Used for creating a high-detail face reference.
- * @param imageState The original image.
- * @param box The normalized bounding box coordinates.
- * @returns A promise that resolves with the cropped and resized image state.
- */
-async function cropImageWithBoundingBox(imageState: ImageState, box: { x_min: number, y_min: number, x_max: number, y_max: number }): Promise<ImageState> {
-    const FACE_TARGET_DIMENSION = 1024;
-    const PADDING_PERCENT = 0.35; // 35% padding around the narrowest dimension
-
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const { width: originalWidth, height: originalHeight } = img;
-
-            // Denormalize coordinates
-            const boxWidth = (box.x_max - box.x_min) * originalWidth;
-            const boxHeight = (box.y_max - box.y_min) * originalHeight;
-            const x = box.x_min * originalWidth;
-            const y = box.y_min * originalHeight;
-
-            // Add padding based on the smaller dimension to ensure we get a good crop
-            const padding = Math.min(boxWidth, boxHeight) * PADDING_PERCENT;
-            const sx = Math.max(0, x - padding);
-            const sy = Math.max(0, y - padding);
-            const sWidth = Math.min(originalWidth - sx, boxWidth + padding * 2);
-            const sHeight = Math.min(originalHeight - sy, boxHeight + padding * 2);
-
-
-            const canvas = document.createElement('canvas');
-            canvas.width = FACE_TARGET_DIMENSION;
-            canvas.height = FACE_TARGET_DIMENSION;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                return reject(new Error('Не удалось получить 2D контекст холста для обрезки лица.'));
-            }
-            
-            ctx.fillStyle = '#cccccc'; // A neutral gray background
-            ctx.fillRect(0, 0, FACE_TARGET_DIMENSION, FACE_TARGET_DIMENSION);
-
-            // Draw the cropped part of the image onto the square canvas, this will stretch it to fit.
-            ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, FACE_TARGET_DIMENSION, FACE_TARGET_DIMENSION);
-            
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.95); // High quality for face reference
-            const [, base64] = dataUrl.split(',');
-            resolve({ base64, mimeType: 'image/jpeg' });
+            resolve({ base64, mimeType });
         };
         img.onerror = (err) => {
             console.error("Ошибка при загрузке изображения для обрезки:", err);
@@ -290,447 +239,87 @@ async function cropImageWithBoundingBox(imageState: ImageState, box: { x_min: nu
 }
 
 /**
- * Analyzes an image to find a person, crops their face, and stores it as a face reference.
- * @param sourceImage The image to analyze.
- * @param previewElement The image element where the overlay should be shown.
+ * A generic helper function to make API calls to our own server backend.
+ * It automatically includes the authentication token if the user is logged in.
+ * This version is robust against "body stream already read" errors by reading
+ * the response body only once.
+ * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
+ * @param body The JSON payload to send.
+ * @returns A promise that resolves with the JSON response from the server.
  */
-async function createFaceReference(sourceImage: ImageState, previewElement: HTMLImageElement) {
-    const parent = previewElement.parentElement;
-    if (!parent || !isLoggedIn) return; // Don't run analysis if not logged in
-
-    const overlay = document.createElement('div');
-    overlay.className = 'analysis-overlay';
-    overlay.innerHTML = `
-        <div class="flex flex-col items-center gap-2">
-            <div class="loading-spinner"></div>
-            <p class="text-sm font-semibold">Анализ лица...</p>
-        </div>`;
-    parent.appendChild(overlay);
-
-    try {
-        const response = await fetch('/api/detectPersonBoundingBox', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-            body: JSON.stringify({ image: sourceImage })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Ошибка при определении лица.');
-        }
-
-        const { boundingBox } = await response.json();
-        if (boundingBox) {
-            const croppedFace = await cropImageWithBoundingBox(sourceImage, boundingBox);
-            faceReferenceImage = croppedFace;
-            console.log("Создан референс лица.");
-        } else {
-            throw new Error("API не вернул координаты рамки.");
-        }
-    } catch (error) {
-        console.error("Не удалось создать референс лица:", error);
-        faceReferenceImage = null; // Ensure it's cleared on error
-    } finally {
-        if (parent.contains(overlay)) {
-            parent.removeChild(overlay);
-        }
-    }
-}
-
-
-/**
- * Sets the status message and handles different message types.
- * @param text The message to display.
- * @param type The type of message ('error', 'success', 'loading', 'info').
- * @param duration The duration in ms to show the message. 0 for indefinite.
- */
-function setStatus(text: string, type: 'error' | 'success' | 'loading' | 'info' = 'info', duration: number = 0) {
-    if (!statusEl) return;
-    statusEl.textContent = text;
-    statusEl.className = 'text-center min-h-[24px] mt-2'; // Reset classes
-
-    switch (type) {
-        case 'error':
-            statusEl.classList.add('text-red-400');
-            break;
-        case 'success':
-            statusEl.classList.add('text-green-400');
-            break;
-        case 'loading':
-            statusEl.classList.add('text-blue-400');
-            break;
-        case 'info':
-        default:
-             statusEl.classList.add('text-gray-400');
-            break;
-    }
-
-    if (duration > 0) {
-        setTimeout(() => {
-            if (statusEl.textContent === text) {
-                statusEl.textContent = '';
-                statusEl.className = 'text-center min-h-[24px] mt-2';
-            }
-        }, duration);
-    }
-}
-
-/**
- * Handles the generation of 4 image variations.
- */
-async function generateVariations() {
-    if (!referenceImage) {
-        setStatus('Пожалуйста, загрузите референсное изображение.', 'error', 3000);
-        setWizardStep('PAGE2_PLAN'); // Guide user back to upload
-        return;
-    }
-    if (!isLoggedIn) {
-        setStatus('Пожалуйста, войдите, чтобы начать генерацию.', 'error', 4000);
-        setWizardStep('AUTH');
-        return;
-    }
-    if (generationCredits < 4) {
-        setStatus(`Недостаточно кредитов. Требуется 4, у вас ${generationCredits}.`, 'error', 4000);
-        showPaymentModal();
-        return;
-    }
-
-    generateButton.disabled = true;
-    resetButton.disabled = true;
-    outputGallery.innerHTML = ''; // Clear previous results
-    
-    // Create placeholder shimmer elements
-    for (let i = 0; i < 4; i++) {
-        const placeholder = document.createElement('div');
-        placeholder.className = 'aspect-square bg-gray-700/50 rounded-lg placeholder-shimmer';
-        outputGallery.appendChild(placeholder);
-    }
-    
-    const progressContainer = document.getElementById('progress-container')!;
-    const progressBar = document.getElementById('progress-bar')!;
-    const progressText = document.getElementById('progress-text')!;
-
-    progressContainer.classList.remove('hidden');
-    progressBar.style.width = '0%';
-    progressText.textContent = 'Подготовка... 0%';
-
-    let completedCount = 0;
-    const totalCount = 4;
-    const updateProgress = () => {
-        completedCount++;
-        const percentage = Math.round((completedCount / totalCount) * 100);
-        progressBar.style.width = `${percentage}%`;
-        progressText.textContent = `Генерация... ${percentage}%`;
-        if (completedCount === totalCount) {
-             setTimeout(() => progressContainer.classList.add('hidden'), 1000);
-        }
+async function callApi(endpoint: string, body: object) {
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
     };
-    
-    setStatus('');
-
-    const basePrompt = customPromptInput.value.trim();
-    const planText = planButtonsContainer.querySelector('.selected')?.textContent || 'Крупный план';
-    const promptsToGenerate: string[] = [];
-
-    // Generate 4 unique prompts
-    for (let i = 0; i < 4; i++) {
-        let posePrompts: string[] = [];
-        let anglePrompts: string[] = [];
-
-        switch (detectedSubjectCategory) {
-            case 'man':
-            case 'teenager': // Assuming teenager males use male prompts
-                 posePrompts = selectedPlan === 'close_up' ? (poseSequences.maleCloseUp.length > 0 ? poseSequences.maleCloseUp : prompts!.maleCloseUpPosePrompts) : (poseSequences.male.length > 0 ? poseSequences.male : prompts!.malePosePrompts);
-                 anglePrompts = prompts!.maleCameraAnglePrompts;
-                 break;
-            case 'elderly_man':
-                 posePrompts = selectedPlan === 'close_up' ? (poseSequences.elderlyMaleCloseUp.length > 0 ? poseSequences.elderlyMaleCloseUp : prompts!.elderlyMaleCloseUpPosePrompts) : (poseSequences.elderlyMale.length > 0 ? poseSequences.elderlyMale : prompts!.elderlyMalePosePrompts);
-                 anglePrompts = prompts!.maleCameraAnglePrompts; // Can reuse
-                 break;
-            case 'elderly_woman':
-                 posePrompts = selectedPlan === 'close_up' ? (poseSequences.elderlyFemaleCloseUp.length > 0 ? poseSequences.elderlyFemaleCloseUp : prompts!.elderlyFemaleCloseUpPosePrompts) : (poseSequences.elderlyFemale.length > 0 ? poseSequences.elderlyFemale : prompts!.elderlyFemalePosePrompts);
-                 anglePrompts = prompts!.femaleCameraAnglePrompts; // Can reuse
-                 break;
-            case 'woman':
-            default: // Default to female prompts
-                if (detectedSmileType === 'teeth' || detectedSmileType === 'closed') { // Glamour for smiling subjects
-                     posePrompts = selectedPlan === 'close_up' ? (poseSequences.femaleCloseUp.length > 0 ? poseSequences.femaleCloseUp : prompts!.femaleCloseUpPosePrompts) : (poseSequences.femaleGlamour.length > 0 ? poseSequences.femaleGlamour : prompts!.femaleGlamourPosePrompts);
-                } else {
-                     posePrompts = selectedPlan === 'close_up' ? (poseSequences.femaleCloseUp.length > 0 ? poseSequences.femaleCloseUp : prompts!.femaleCloseUpPosePrompts) : (poseSequences.female.length > 0 ? poseSequences.female : prompts!.femalePosePrompts);
-                }
-                anglePrompts = prompts!.femaleCameraAnglePrompts;
-                break;
-        }
-
-        const posePrompt = posePrompts[i % posePrompts.length];
-        const anglePrompt = anglePrompts[Math.floor(Math.random() * anglePrompts.length)];
-
-        let variationPrompt: string;
-
-        if (faceReferenceImage) {
-            variationPrompt = `Критически важно: возьми уникальные черты лица (форма носа, глаз, губ), цвет кожи и выражение лица АБСОЛЮТНО ТОЧНО с ПЕРВОГО фото (лицевой референс). Сгенерированный человек должен быть на 100% узнаваем и похож на оригинал, а не быть другим человеком. Со ВТОРОГО фото (основной референс) возьми одежду, прическу, стиль и атмосферу фона. план: ${planText}. ${posePrompt}. ${anglePrompt}. ${basePrompt}. Стиль: кинематографичная фотография, гиперреализм, высочайшая детализация, профессиональное освещение. Не добавляй текст, логотипы или водяные знаки.`;
-        } else {
-            variationPrompt = `сохрани черты лица, одежду, прическу и фон с референсного фото. план: ${planText}. ${posePrompt}. ${anglePrompt}. ${basePrompt}. Стиль: кинематографичная фотография, гиперреализм, высочайшая детализация, профессиональное освещение. Не добавляй текст, логотипы или водяные знаки.`;
-        }
-
-        promptsToGenerate.push(variationPrompt.trim().replace(/\s+/g, ' '));
-    }
-    
-    // Deduct credits before starting the generation
-    updateCreditCounter(-4);
-
-    const generationPromises = promptsToGenerate.map(async (finalPrompt, index) => {
-        try {
-            const body = {
-                prompt: finalPrompt,
-                mainImage: referenceImage,
-                faceImage: faceReferenceImage // This will be null if it doesn't exist, which is fine
-            };
-            const response = await fetch('/api/generateVariation', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                },
-                body: JSON.stringify(body)
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                // Refund the credit for this specific failed generation
-                updateCreditCounter(1); 
-                throw new Error(errorData.error || 'Ошибка сети');
-            }
-            const data = await response.json();
-            return { imageUrl: data.imageUrl, index };
-        } catch (error) {
-            console.error(`Ошибка генерации для промпта ${index}:`, error);
-            return { error: (error as Error).message, index };
-        } finally {
-            updateProgress();
-        }
-    });
-
-    const results = await Promise.all(generationPromises);
-
-    // Replace placeholders with actual results or error messages
-    outputGallery.innerHTML = ''; // Clear placeholders before adding results
-    const sortedResults = results.sort((a, b) => a.index - b.index);
-
-    sortedResults.forEach(result => {
-        const resultContainer = document.createElement('div');
-        resultContainer.className = 'gallery-item aspect-square rounded-lg overflow-hidden relative cursor-pointer group transition-transform duration-300 hover:scale-105';
-        
-        if (result.imageUrl) {
-            const img = document.createElement('img');
-            img.src = result.imageUrl;
-            img.alt = `Сгенерированная вариация ${result.index + 1}`;
-            img.className = 'w-full h-full object-cover';
-            img.loading = 'lazy';
-            resultContainer.appendChild(img);
-
-            const overlay = document.createElement('div');
-            overlay.className = 'absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300';
-            overlay.innerHTML = `<p class="text-white text-sm font-semibold text-center p-2">Сделать референсом</p>`;
-            resultContainer.appendChild(overlay);
-
-            resultContainer.addEventListener('click', () => handleNewReference(result.imageUrl));
-            
-        } else {
-            resultContainer.classList.add('bg-red-900/50', 'flex', 'items-center', 'justify-center', 'p-4', 'text-center');
-            const errorText = document.createElement('p');
-            errorText.className = 'text-white text-sm';
-            errorText.textContent = `Ошибка: ${result.error || 'Неизвестная ошибка'}`;
-            resultContainer.appendChild(errorText);
-        }
-        outputGallery.appendChild(resultContainer);
-    });
-
-    generateButton.disabled = false;
-    resetButton.disabled = false;
-}
-
-/**
- * Handles setting a newly generated image as the reference.
- * @param imageUrl The data URL of the new reference image.
- */
-async function handleNewReference(imageUrl: string) {
-    if (!imageUrl.startsWith('data:image')) return;
-
-    // Remove existing reference indicator
-    document.querySelectorAll('.gallery-item.is-reference').forEach(el => el.classList.remove('is-reference'));
-
-    // Find the clicked image and mark it as the new reference
-    const allImages = Array.from(outputGallery.querySelectorAll('img'));
-    const clickedImgElement = allImages.find(img => img.src === imageUrl);
-    if (clickedImgElement && clickedImgElement.parentElement) {
-        clickedImgElement.parentElement.classList.add('is-reference');
+    // Always check localStorage for the most current token
+    const currentToken = localStorage.getItem('idToken');
+    if (currentToken) {
+        headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
-    const [header, base64] = imageUrl.split(',');
-    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg';
-    
-    const newReference: ImageState = { base64, mimeType };
-    
-    // Resize the new reference and update the main preview
-    const resizedImage = await resizeImage(newReference);
-    referenceImage = resizedImage;
-    referenceImagePreview.src = `data:${resizedImage.mimeType};base64,${resizedImage.base64}`;
-    referenceDownloadButton.href = `data:${resizedImage.mimeType};base64,${resizedImage.base64}`;
-    referenceDownloadButton.download = `reference_${Date.now()}.jpg`;
-
-    // CRITICAL: Create a NEW face reference from this new image
-    // This allows for iterative improvements if the user likes a face from a generation.
-    createFaceReference(resizedImage, referenceImagePreview).catch(err => {
-        console.error("Фоновая задача создания референса лица провалена:", err);
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(body),
     });
 
-    setStatus('Новый референс установлен. Готовы к следующей генерации!', 'success', 4000);
-}
-
-
-/**
- * Handles the file upload process for the main variation generator.
- * @param file The file to be uploaded.
- */
-async function handleImageUpload(file: File) {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const base64 = (e.target?.result as string).split(',')[1];
-        if (!base64) {
-            setStatus('Не удалось прочитать файл изображения.', 'error', 3000);
-            return;
-        }
-
-        const initialImageState: ImageState = { base64, mimeType: file.type };
-        setStatus('Изображение загружается и обрабатывается...', 'loading');
-        uploadPlaceholder.classList.add('hidden');
-        referenceImagePreview.classList.add('hidden');
-
-        try {
-            // Resize first to work with a smaller image
-            const resizedImage = await resizeImage(initialImageState);
-            referenceImage = resizedImage;
-
-            referenceImagePreview.src = `data:${resizedImage.mimeType};base64,${resizedImage.base64}`;
-            referenceImagePreview.classList.remove('hidden');
-            uploadContainer.classList.remove('uploader-box');
-            referenceDownloadButton.href = `data:${resizedImage.mimeType};base64,${resizedImage.base64}`;
-            referenceDownloadButton.download = `reference_${Date.now()}.jpg`;
-            referenceDownloadButton.classList.remove('hidden');
-
-            // Then check the subject to tailor prompts
-            await checkImageSubject(resizedImage);
-            
-            // AND create the face reference in the background
-            createFaceReference(resizedImage, referenceImagePreview).catch(err => {
-                console.error("Фоновая задача создания референса лица провалена:", err);
-            });
-
-            setStatus('Изображение готово. Выберите план и начинайте!', 'success', 3000);
-            if(isLoggedIn && generationCredits > 0) {
-                 setWizardStep('PAGE2_PLAN');
-            } else if (!isLoggedIn) {
-                 setWizardStep('AUTH');
-            } else {
-                 setWizardStep('CREDITS');
-            }
-           
-
-        } catch (error) {
-            setStatus(`Ошибка обработки изображения: ${(error as Error).message}`, 'error', 5000);
-            resetState(false); // Reset without clearing gallery
-        }
-    };
-    reader.readAsDataURL(file);
-}
-
-/**
- * Sends an image to the backend to determine the subject's category and smile type.
- * @param imageState The image to analyze.
- */
-async function checkImageSubject(imageState: ImageState) {
-    if (!isLoggedIn) {
-        detectedSubjectCategory = 'woman'; // Default for non-logged-in users
-        detectedSmileType = 'none';
-        return;
-    }
+    // Read the response body as text ONCE to avoid stream errors
+    const responseText = await response.text();
+    let responseData;
+    
     try {
-        const response = await fetch('/api/checkImageSubject', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
-            },
-            body: JSON.stringify({ image: imageState }),
-        });
-
+        // Try to parse the text as JSON
+        responseData = JSON.parse(responseText);
+    } catch (e) {
+        // If parsing fails, it's a non-JSON response (e.g., HTML error page)
         if (!response.ok) {
-            console.error('Ошибка ответа сервера при проверке объекта.');
-            detectedSubjectCategory = 'woman'; // Fallback
-            detectedSmileType = 'none';
-            return;
+            console.error("Non-JSON error response from server:", responseText);
+            throw new Error(`Сервер вернул неожиданный ответ (${response.status}).`);
         }
-
-        const data = await response.json();
-        const { category, smile } = data.subjectDetails as SubjectDetails;
-        
-        detectedSubjectCategory = category;
-        detectedSmileType = smile;
-        
-        console.log(`Обнаружен объект: ${category}, Улыбка: ${smile}`);
-        shufflePoseSequences(); // Shuffle poses based on the new category
-
-    } catch (error) {
-        console.error('Ошибка при отправке изображения для анализа:', error);
-        detectedSubjectCategory = 'woman'; // Fallback on error
-        detectedSmileType = 'none';
+        // If it's a 2xx response but not JSON, this is unexpected.
+        console.warn("An OK response was not in JSON format:", responseText);
+        // We return an object that won't crash the app, but indicates a problem.
+        return { error: 'Некорректный ответ от сервера.' };
     }
+
+    // If the response was not OK (e.g., 401, 402, 500), throw an error with the server's message
+    if (!response.ok) {
+        console.error(`Ошибка API на ${endpoint}:`, responseData);
+        throw new Error(responseData.error || `Произошла ошибка (${response.status}).`);
+    }
+
+    // If we reach here, the response was OK and is valid JSON
+    return responseData;
 }
 
 
-/**
- * Resets the entire application state.
- * @param fullReset If true, clears the output gallery as well.
- */
-function resetState(fullReset: boolean) {
-    selectedPlan = 'close_up';
-    referenceImage = null;
-    faceReferenceImage = null;
-    detectedSubjectCategory = null;
-    detectedSmileType = null;
-    customPromptInput.value = '';
-    
-    // Reset plan buttons
-    document.querySelectorAll('.plan-button').forEach(btn => {
-        btn.classList.remove('selected');
-        if (btn.getAttribute('data-plan') === 'close_up') {
-            btn.classList.add('selected');
-        }
-    });
-
-    // Reset uploader
-    imageUpload.value = '';
-    uploadPlaceholder.classList.remove('hidden');
-    referenceImagePreview.classList.add('hidden');
-    referenceImagePreview.src = '';
-    uploadContainer.classList.add('uploader-box');
-    referenceDownloadButton.classList.add('hidden');
-    referenceDownloadButton.href = '#';
-
-
-    if (fullReset) {
-        outputGallery.innerHTML = '';
-        setStatus('Все сброшено. Загрузите новое изображение для начала.', 'info', 3000);
-        setWizardStep('PAGE2_PLAN'); // Guide back to the start
+// --- Core Functions (defined globally, but depend on state) ---
+function hideLightbox() {
+    if (lightboxOverlay) {
+      lightboxOverlay.classList.add('opacity-0', 'pointer-events-none');
+      // Delay clearing the src to allow the fade-out animation to complete
+      setTimeout(() => { if (lightboxImage) lightboxImage.src = ''; }, 300);
     }
 }
 
-/**
- * Shuffles an array in place.
- * @param array The array to shuffle.
- */
-function shuffleArray<T>(array: T[]): T[] {
+function openLightbox(imageUrl: string) {
+    if (lightboxImage && lightboxOverlay) {
+        lightboxImage.src = imageUrl;
+        lightboxOverlay.classList.remove('opacity-0', 'pointer-events-none');
+    }
+}
+
+async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCredits: number }> {
+   try {
+        const data = await callApi('/api/generateVariation', { prompt, image });
+        return { imageUrl: data.imageUrl, newCredits: data.newCredits };
+    } catch (e) {
+        console.error('generateVariation failed:', e);
+        throw e;
+    }
+}
+
+function shuffle<T>(array: T[]): T[] {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -739,925 +328,1326 @@ function shuffleArray<T>(array: T[]): T[] {
   return newArray;
 }
 
-/**
- * Shuffles all pose sequences to ensure variety in each generation.
- */
-function shufflePoseSequences() {
+function initializePoseSequences() {
     if (!prompts) return;
-    poseSequences = {
-        female: shuffleArray(prompts.femalePosePrompts),
-        femaleGlamour: shuffleArray(prompts.femaleGlamourPosePrompts),
-        male: shuffleArray(prompts.malePosePrompts),
-        femaleCloseUp: shuffleArray(prompts.femaleCloseUpPosePrompts),
-        maleCloseUp: shuffleArray(prompts.maleCloseUpPosePrompts),
-        elderlyFemale: shuffleArray(prompts.elderlyFemalePosePrompts),
-        elderlyFemaleCloseUp: shuffleArray(prompts.elderlyFemaleCloseUpPosePrompts),
-        elderlyMale: shuffleArray(prompts.elderlyMalePosePrompts),
-        elderlyMaleCloseUp: shuffleArray(prompts.elderlyMaleCloseUpPosePrompts),
+    poseSequences.female = shuffle(prompts.femalePosePrompts);
+    poseSequences.femaleGlamour = shuffle(prompts.femaleGlamourPosePrompts);
+    poseSequences.male = shuffle(prompts.malePosePrompts);
+    poseSequences.femaleCloseUp = shuffle(prompts.femaleCloseUpPosePrompts);
+    poseSequences.maleCloseUp = shuffle(prompts.maleCloseUpPosePrompts);
+    poseSequences.elderlyFemale = shuffle(prompts.elderlyFemalePosePrompts);
+    poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
+    poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
+    poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
+    malePoseIndex = 0;
+    femalePoseIndex = 0;
+    femaleGlamourPoseIndex = 0;
+}
+
+function updateCreditCounterUI() {
+    if (creditCounterEl) {
+        creditCounterEl.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8.433 7.418c.158-.103.346-.196.567-.267v1.698a2.5 2.5 0 00-.567-.267C8.07 8.488 8 8.731 8 9c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-.22.071-.409.164-.567-.267C8.07 11.512 8 11.731 8 12c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-1.135-.285-2-1.201-2-2.423 0-1.22.865-2.138 2-2.423v-1.698c.221.07.41.164.567.267C11.93 8.488 12 8.731 12 9c0 .269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V7.862c1.135.285 2 1.201 2 2.423 0 1.22-.865-2.138-2 2.423v1.698a2.5 2.5 0 00.567-.267c.364-.24.433-.482.433-.582 0-.269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V12.14c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423V5.577c1.135.285 2 1.201 2 2.423 0 .269.07.512.433.582.221.07.409.164.567.267V7.862a2.5 2.5 0 00-.567-.267C11.93 7.512 12 7.269 12 7c0-1.22-.865-2.138-2-2.423V3a1 1 0 00-2 0v1.577C6.865 4.862 6 5.78 6 7c0 .269.07.512.433.582.221.07.41.164.567.267V6.14a2.5 2.5 0 00-.567-.267C5.07 5.512 5 5.269 5 5c0-1.22.865-2.138 2-2.423V1a1 1 0 10-2 0v1.577c-1.135-.285-2 1.201-2 2.423s.865 2.138 2 2.423v1.698c-.221-.07-.41-.164-.567-.267C4.07 8.488 4 8.731 4 9s.07.512.433.582c.221.07.41.164.567.267v1.698a2.5 2.5 0 00.567.267C4.07 11.512 4 11.731 4 12s.07.512.433.582c.221.07.41.164.567.267v1.698c-.221-.07-.409-.164-.567-.267C4.07 13.512 4 13.731 4 14c0 1.22.865 2.138 2 2.423v1.577a1 1 0 102 0v-1.577c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423v-1.698c.221.07.41.164.567.267.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267v1.698a2.5 2.5 0 00.567.267c.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267V13.86c-1.135-.285-2-1.201-2-2.423s.865-2.138 2-2.423V7.862c-.221-.07-.41-.164-.567-.267C8.07 7.512 8 7.269 8 7c0-.269.07.512.433-.582z" /></svg>
+            <span class="credit-value">${generationCredits}</span>
+            <span class="hidden sm:inline credit-label">кредитов</span>
+        `;
+    }
+}
+
+function selectPlan(plan: string) {
+  selectedPlan = plan;
+  const buttons = planButtonsContainer.querySelectorAll<HTMLButtonElement>('.plan-button');
+  buttons.forEach((btn) => btn.classList.remove('selected'));
+  const buttonToSelect = planButtonsContainer.querySelector(`button[data-plan="${plan}"]`) as HTMLButtonElement;
+  if (buttonToSelect) buttonToSelect.classList.add('selected');
+  setWizardStep('PAGE2_GENERATE');
+}
+
+function resetApp() {
+  referenceImage = null;
+  detectedSubjectCategory = null;
+  detectedSmileType = null;
+  initializePoseSequences();
+  referenceImagePreview.src = '';
+  referenceImagePreview.classList.add('hidden');
+  referenceDownloadButton.href = '#';
+  referenceDownloadButton.removeAttribute('download');
+  referenceDownloadButton.classList.add('hidden');
+  uploadPlaceholder.classList.remove('hidden');
+  uploadContainer.classList.add('aspect-square');
+  imageUpload.value = '';
+  outputGallery.innerHTML = '';
+  selectPlan('close_up');
+  customPromptInput.value = '';
+  statusEl.innerText = 'Приложение сброшено. Загрузите новое изображение.';
+  const progressContainer = document.querySelector('#progress-container');
+  progressContainer?.classList.add('hidden');
+  setControlsDisabled(false);
+  updateAllGenerateButtons();
+  setWizardStep('NONE');
+}
+
+function showStatusError(message: string) {
+  statusEl.innerHTML = `<span class="text-red-400">${message}</span>`;
+}
+
+function setControlsDisabled(disabled: boolean) {
+  resetButton.disabled = disabled;
+  imageUpload.disabled = disabled;
+  customPromptInput.disabled = disabled;
+  const buttons = planButtonsContainer.querySelectorAll<HTMLButtonElement>('button');
+  buttons.forEach((btn) => (btn.disabled = disabled));
+  if (disabled) {
+    generateButton.disabled = true;
+  } else {
+    updateAllGenerateButtons();
+  }
+}
+
+function displayErrorInContainer(container: HTMLElement, message: string, clearContainer = true) {
+  if (clearContainer) container.innerHTML = '';
+  const errorContainer = document.createElement('div');
+  errorContainer.className = 'bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center flex flex-col items-center justify-center w-full';
+  if (container.id === 'output-gallery') errorContainer.classList.add('col-span-1', 'md:col-span-2');
+  errorContainer.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-red-400 mb-4" viewBox="0 0 20 20" fill="currentColor">
+      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+    </svg>
+    <p class="text-red-300 text-lg">${message}</p>
+    <p class="text-gray-600 text-sm mt-4">Попробуйте выполнить действие еще раз. Если ошибка повторяется, попробуйте изменить запрос или обновить страницу.</p>
+  `;
+  if (clearContainer) {
+    container.appendChild(errorContainer);
+  } else {
+    container.prepend(errorContainer);
+  }
+}
+
+function showGalleryError(message: string, clearContainer = true) {
+  displayErrorInContainer(outputGallery, message, clearContainer);
+}
+
+function getPlanInstruction(plan: string): string {
+  switch (plan) {
+    case 'close_up': return 'композиция кадра: ПОРТРЕТНОЕ ФОТО ОТ ГРУДИ, крупный план';
+    case 'medium_shot': return 'композиция кадра: портрет по пояс';
+    case 'full_shot': return 'композиция кадра: человек виден в полный рост';
+    default: return '';
+  }
+}
+
+function getPlanDisplayName(plan: string): string {
+  switch (plan) {
+    case 'close_up': return 'Крупный план';
+    case 'medium_shot': return 'Средний план';
+    case 'full_shot': return 'Общий план';
+    default: return 'Пользовательский план';
+  }
+}
+
+async function checkImageSubject(image: ImageState): Promise<SubjectDetails> {
+  try {
+    const data = await callApi('/api/checkImageSubject', { image });
+    const result = data.subjectDetails;
+
+    const categoryMapping: { [key: string]: SubjectCategory } = {
+        'мужчина': 'man', 'женщина': 'woman', 'подросток': 'teenager',
+        'пожилой мужчина': 'elderly_man', 'пожилая женщина': 'elderly_woman',
+        'ребенок': 'child', 'другое': 'other',
     };
-     console.log('Последовательности поз перемешаны.');
+    const smileMapping: { [key: string]: SmileType } = {
+        'зубы': 'teeth', 'закрытая': 'closed', 'нет улыбки': 'none',
+    };
+
+    const category = categoryMapping[result.category] || 'other';
+    const smile = smileMapping[result.smile] || 'none';
+    return { category, smile };
+
+  } catch (e) {
+    console.error('Subject check failed:', e);
+    throw new Error(e instanceof Error ? e.message : 'Не удалось проанализировать изображение.');
+  }
 }
 
-
-// --- Authentication and Credit Management ---
-
-/**
- * Updates the credit counter display and state.
- * @param change The amount to change the credits by (can be negative).
- */
-function updateCreditCounter(change: number) {
-    generationCredits += change;
-    if (generationCredits < 0) generationCredits = 0; // Prevent negative credits
-
-    creditCounterEl.innerHTML = `
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-[var(--primary-color)]" viewBox="0 0 20 20" fill="currentColor">
-          <path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.414-1.414L11 10.586V6z" />
-        </svg>
-        <span class="credit-value">${generationCredits}</span>
-        <span class="credit-label">кредитов</span>
-    `;
-    
-    // Add a glow effect on credit change
-    creditCounterEl.classList.add('credit-counter-glow');
-    setTimeout(() => creditCounterEl.classList.remove('credit-counter-glow'), 500);
-}
-
-/**
- * Handles the Google Sign-In response.
- * @param response The response object from Google.
- */
-async function handleCredentialResponse(response: any) {
-    idToken = response.credential;
-    try {
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: idToken })
-        });
-        if (!res.ok) {
-            throw new Error('Не удалось войти.');
-        }
-        const data = await res.json();
-        userProfile = data.userProfile;
-        isLoggedIn = true;
-        updateCreditCounter(data.credits); // Set initial credits from server
-        updateUIForLogin();
-        
-        setStatus(`Добро пожаловать, ${userProfile!.name.split(' ')[0]}!`, 'success', 4000);
-        // If an image is already uploaded, re-check it with auth
-        if (referenceImage) {
-            checkImageSubject(referenceImage);
-        }
-        
-        // Guide user to next logical step
-        if (referenceImage) {
-            setWizardStep('PAGE2_PLAN');
-        } else if (page1State.person.base64) {
-            setWizardStep('PAGE1_CLOTHING');
+function updateAllGenerateButtons() {
+    if (generateButton) {
+        const creditsNeeded = 4;
+        if (generationCredits >= creditsNeeded) {
+            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
+            generateButton.disabled = !referenceImage;
         } else {
-            // No image yet, prompt for either page
-        }
-
-
-    } catch (error) {
-        console.error('Ошибка входа:', error);
-        setStatus('Ошибка входа. Попробуйте снова.', 'error', 4000);
-        handleLogout(); // Clear any partial login state
-    }
-}
-
-/**
- * Updates the UI to reflect the logged-in state.
- */
-function updateUIForLogin() {
-    googleSignInContainer.classList.add('hidden');
-    userProfileContainer.classList.remove('hidden');
-    userProfileImage.src = userProfile!.picture;
-    userProfileName.textContent = userProfile!.name;
-    // Fix: Cast to HTMLInputElement as TypeScript linter incorrectly infers a base HTMLElement type.
-    (promoCodeInput as HTMLInputElement).disabled = true;
-    // Fix: Cast to HTMLButtonElement to resolve TypeScript "Property 'disabled' does not exist on type 'HTMLElement'" error.
-    (applyPromoButton as HTMLButtonElement).disabled = true;
-    applyPromoButton.textContent = "✓";
-    (document.getElementById('promo-code-container') as HTMLDivElement).style.opacity = '0.6';
-}
-
-/**
- * Handles user logout.
- */
-function handleLogout() {
-    idToken = null;
-    userProfile = null;
-    isLoggedIn = false;
-    generationCredits = 0; // Reset credits on logout
-    updateCreditCounter(0);
-
-    googleSignInContainer.classList.remove('hidden');
-    userProfileContainer.classList.add('hidden');
-    userProfileImage.src = '';
-    userProfileName.textContent = '';
-    
-    // Re-enable promo code section
-    // Fix: Cast to HTMLInputElement as TypeScript linter incorrectly infers a base HTMLElement type.
-    (promoCodeInput as HTMLInputElement).disabled = false;
-    promoCodeInput.value = '';
-    // Fix: Cast to HTMLButtonElement to resolve TypeScript "Property 'disabled' does not exist on type 'HTMLElement'" error.
-    (applyPromoButton as HTMLButtonElement).disabled = false;
-    applyPromoButton.textContent = "Применить";
-    (document.getElementById('promo-code-container') as HTMLDivElement).style.opacity = '1';
-    
-    setStatus('Вы вышли из системы.', 'info', 3000);
-    setWizardStep('AUTH');
-}
-
-
-/**
- * Initializes the Google Sign-In button.
- */
-// Fix: Declare the 'google' object from the Google Identity Services library to resolve TypeScript "Cannot find name" errors.
-declare const google: any;
-function initializeGoogleSignIn() {
-    if (typeof google === 'undefined') {
-        console.error("Google's GSI library not loaded.");
-        return;
-    }
-    google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: handleCredentialResponse
-    });
-    google.accounts.id.renderButton(
-        googleSignInContainer,
-        { theme: "outline", size: "large", text: "signin_with", shape: "pill", width: "200px" }
-    );
-    google.accounts.id.prompt();
-}
-
-/**
- * Shows the payment modal.
- */
-function showPaymentModal() {
-    paymentModalOverlay.classList.remove('hidden');
-    document.getElementById('payment-selection-view')?.classList.remove('hidden');
-    document.getElementById('payment-processing-view')?.classList.add('hidden');
-    document.getElementById('payment-final-view')?.classList.add('hidden');
-}
-
-/**
- * Hides the payment modal.
- */
-function hidePaymentModal() {
-    paymentModalOverlay.classList.add('hidden');
-}
-
-/**
- * Simulates the payment process and adds credits.
- */
-async function handleConfirmPayment() {
-    const finalView = document.getElementById('payment-final-view')!;
-    const confirmButton = document.getElementById('payment-confirm-button')!;
-    
-    confirmButton.disabled = true;
-    confirmButton.innerHTML = `<div class="loading-spinner mx-auto" style="width: 1.5rem; height: 1.5rem; border-width: 2px;"></div>`;
-
-    try {
-        const response = await fetch('/api/addCredits', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
+            generateButton.disabled = false; // Always enabled to show prompt
+            if (!isLoggedIn) {
+                generateButton.innerHTML = `Войти, чтобы продолжить`;
+            } else {
+                generateButton.innerHTML = `Пополнить кредиты (${creditsNeeded} необх.)`;
             }
-        });
-        if (!response.ok) {
-            throw new Error('Не удалось пополнить кредиты.');
         }
-        const data = await response.json();
-        // Update credits with the new value from the server
-        generationCredits = 0; // Reset local to server value
-        updateCreditCounter(data.newCredits);
+    }
+    updateCreditCounterUI();
+}
+
+
+async function generate() {
+  const creditsNeeded = 4;
+
+  if (!isLoggedIn) {
+      setWizardStep('AUTH');
+      showStatusError('Пожалуйста, войдите, чтобы получить кредиты для генерации.');
+      return;
+  }
+
+  if (generationCredits < creditsNeeded) {
+      const modalTitle = document.querySelector('#payment-modal-title');
+      const modalDescription = document.querySelector('#payment-modal-description');
+      if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
+      if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
+      
+      setWizardStep('CREDITS');
+      showPaymentModal();
+      return;
+  }
+  
+  if (!referenceImage || !detectedSubjectCategory || !prompts) {
+    showStatusError('Пожалуйста, загрузите изображение-референс человека.');
+    return;
+  }
+
+  const progressContainer = document.querySelector('#progress-container') as HTMLDivElement;
+  const progressBar = document.querySelector('#progress-bar') as HTMLDivElement;
+  const progressText = document.querySelector('#progress-text') as HTMLDivElement;
+
+  statusEl.innerText = 'Генерация вариаций...';
+  setControlsDisabled(true);
+  setWizardStep('NONE');
+
+  const divider = document.createElement('div');
+  const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  divider.className = 'col-span-2 w-full mt-6 pt-4 border-t border-[var(--border-color)] flex justify-between items-center text-sm';
+  divider.innerHTML = `<span class="font-semibold text-gray-300">${getPlanDisplayName(selectedPlan)}</span><span class="text-gray-500">${timestamp}</span>`;
+  outputGallery.prepend(divider);
+
+  const placeholders: HTMLDivElement[] = [];
+  for (let i = 0; i < 4; i++) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'bg-[#353739] rounded-lg relative overflow-hidden aspect-square placeholder-shimmer';
+    placeholders.push(placeholder);
+  }
+  placeholders.slice().reverse().forEach((p) => outputGallery.prepend(p));
+
+  if (progressContainer && progressBar && progressText) {
+      progressContainer.classList.remove('hidden');
+      progressBar.style.width = '10%'; // Start with a small progress
+      progressText.innerText = 'Отправка запросов...';
+  }
+
+  try {
+    let poses: string[], glamourPoses: string[] = [];
+    const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
+    if (selectedPlan === 'close_up') {
+        switch (detectedSubjectCategory) {
+            case 'man': poses = poseSequences.maleCloseUp; break;
+            case 'woman': poses = poseSequences.femaleCloseUp; glamourPoses = poseSequences.femaleGlamour; break;
+            case 'elderly_man': poses = poseSequences.elderlyMaleCloseUp; break;
+            case 'elderly_woman': poses = poseSequences.elderlyFemaleCloseUp; break;
+            default: poses = poseSequences.femaleCloseUp; break;
+        }
+    } else {
+        switch (detectedSubjectCategory) {
+            case 'man': poses = poseSequences.male; break;
+            case 'woman': poses = poseSequences.female; glamourPoses = poseSequences.femaleGlamour; break;
+            case 'elderly_man': poses = poseSequences.elderlyMale; break;
+            case 'elderly_woman': poses = poseSequences.elderlyFemale; break;
+            default: poses = poseSequences.female; break;
+        }
+    }
+
+    if (detectedSmileType === 'closed' || detectedSmileType === 'none') {
+        const smileKeywords = ['улыбка', 'улыбкой', 'смех', 'смеется', 'ухмылка', 'веселая'];
+        poses = poses.filter(prompt => !smileKeywords.some(keyword => prompt.toLowerCase().includes(keyword)));
+        if (glamourPoses.length > 0) glamourPoses = glamourPoses.filter(prompt => !smileKeywords.some(keyword => prompt.toLowerCase().includes(keyword)));
+    }
+
+    const availableStandardAngles = shuffle(angles);
+    const availableDrasticShifts = shuffle(prompts.drasticCameraShiftPrompts);
+
+    const generationPrompts: string[] = [];
+    for (let i = 0; i < 4; i++) {
+        const allChanges: string[] = [];
+        const planInstruction = getPlanInstruction(selectedPlan);
+        if (planInstruction) allChanges.push(planInstruction);
+
+        const useDrasticShift =
+            (selectedPlan === 'full_shot' && i >= 2) || // Для общего плана, используем креатив на 3-м и 4-м
+            ((selectedPlan === 'medium_shot' || selectedPlan === 'close_up') && i === 3); // Для остальных, используем креатив на 4-м
+
+        let cameraAnglePrompt = '';
+        if (useDrasticShift) {
+            // Пытаемся взять креативный ракурс, если нет - стандартный
+            cameraAnglePrompt = availableDrasticShifts.pop() || availableStandardAngles.pop() || '';
+        } else {
+            // Пытаемся взять стандартный ракурс, если нет - креативный
+            cameraAnglePrompt = availableStandardAngles.pop() || availableDrasticShifts.pop() || '';
+        }
+        allChanges.push(cameraAnglePrompt);
+
+        const customText = customPromptInput.value.trim();
+        if (customText) {
+            allChanges.push(`дополнительная деталь: ${customText}`);
+        } else {
+            // Если нет своего текста, добавляем позу для разнообразия
+            let currentPose: string;
+            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Используем гламурные позы для первых 2 фото женщины
+                currentPose = glamourPoses.pop() || poses.pop() || ''; // Берем гламурную, если кончились - обычную
+            } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
+                currentPose = poses.pop() || '';
+            } else { // Для всех остальных
+                currentPose = poses.pop() || '';
+            }
+             if (currentPose) allChanges.push(currentPose);
+        }
         
-        setStatus('Оплата прошла успешно! 12 кредитов добавлено.', 'success', 5000);
-        hidePaymentModal();
+        const changesDescription = allChanges.filter(Boolean).join(', ');
 
-    } catch (error) {
-        setStatus(`Ошибка оплаты: ${(error as Error).message}`, 'error', 5000);
-    } finally {
-        confirmButton.disabled = false;
-        confirmButton.innerHTML = 'Оплатить 199 ₽';
-    }
-}
-
-/**
- * Applies a promo code.
- */
-function applyPromoCode() {
-    const code = promoCodeInput.value.trim().toUpperCase();
-    const promo = PROMO_CODES[code];
-
-    if (!promo) {
-        setStatus('Неверный промокод.', 'error', 3000);
-        return;
+        const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
+        generationPrompts.push(finalPrompt);
     }
     
-    if (promo.type === 'credits') {
-        updateCreditCounter(promo.value);
-        setStatus(promo.message, 'success', 4000);
-        promoCodeInput.value = '';
-        promoCodeInput.disabled = true;
-        applyPromoButton.disabled = true;
-        applyPromoButton.textContent = "✓";
-         (document.getElementById('promo-code-container') as HTMLDivElement).style.opacity = '0.6';
-
+    if (progressText) progressText.innerText = 'Генерация... 10%';
+    const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
+    
+    const results = await Promise.allSettled(generationPromises);
+    
+    if (progressBar && progressText) {
+        progressBar.style.width = `100%`;
+        progressText.innerText = `Обработка завершена!`;
     }
-}
 
+    let lastSuccessfulCredits: number | null = null;
 
-// --- PAGE 1 ("Photoshoot") State and Logic ---
+    results.forEach((result, i) => {
+        const imgContainer = placeholders[i];
+        imgContainer.classList.remove('placeholder-shimmer');
+        imgContainer.innerHTML = '';
+        
+        if (result.status === 'fulfilled') {
+            const { imageUrl, newCredits } = result.value;
+            lastSuccessfulCredits = newCredits; // Store the latest credit count
+            imgContainer.classList.add('cursor-pointer', 'gallery-item');
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = 'Сгенерированная вариация';
+            img.className = 'w-full h-full object-cover block rounded-lg';
+            imgContainer.appendChild(img);
+            imgContainer.innerHTML += `
+              <div class="ref-indicator absolute top-2 left-2 bg-blue-500 text-white p-1.5 rounded-full z-20" title="Текущий референс">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" /></svg>
+              </div>
+              <a href="${imageUrl}" download="variatsiya-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+              </a>
+              <button class="set-ref-button absolute bottom-2 left-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Сделать референсом">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>
+              </button>`;
+            
+            const setAsReference = () => {
+              const [header, base64] = img.src.split(',');
+              const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+              referenceImage = { base64, mimeType };
+              referenceImagePreview.src = img.src;
+              referenceDownloadButton.href = img.src;
+              referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
+              referenceDownloadButton.classList.remove('hidden');
+              initializePoseSequences();
+              uploadContainer.classList.remove('aspect-square');
+              outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
+              imgContainer.classList.add('is-reference');
+              statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
+            };
 
-let page1State = {
-    person: { base64: '', mimeType: '' },
-    clothingText: '',
-    clothingImage: { base64: '', mimeType: '' },
-    locationText: '',
-    locationImage: { base64: '', mimeType: '' },
-    isGenerating: false,
-    generatedResult: { base64: '', mimeType: '' },
-};
+            imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+            imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAsReference(); });
+            imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
 
-// DOM Elements for Page 1
-let page1: HTMLDivElement, page2: HTMLDivElement;
-let page1ImageUpload: HTMLInputElement, page1ImagePreview: HTMLImageElement, page1UploadPlaceholder: HTMLDivElement, page1ClearButton: HTMLButtonElement;
-let clothingLocationContainer: HTMLDivElement;
-let clothingPrompt: HTMLInputElement, clothingSuggestionsContainer: HTMLDivElement, clothingUploadContainer: HTMLDivElement, clothingImagePreview: HTMLImageElement, clothingImageUpload: HTMLInputElement, clothingClearButton: HTMLButtonElement, refreshClothingSuggestions: HTMLButtonElement;
-let locationPrompt: HTMLInputElement, locationSuggestionsContainer: HTMLDivElement, locationUploadContainer: HTMLDivElement, locationImagePreview: HTMLImageElement, locationImageUpload: HTMLInputElement, locationClearButton: HTMLButtonElement, refreshLocationSuggestions: HTMLButtonElement;
-let generatePhotoshootButton: HTMLButtonElement, photoshootResultContainer: HTMLDivElement, page1Subtitle: HTMLParagraphElement;
-
-function setupPage1DOM() {
-    page1 = document.getElementById('page1') as HTMLDivElement;
-    page2 = document.getElementById('page2') as HTMLDivElement;
-    page1ImageUpload = document.getElementById('page1-image-upload') as HTMLInputElement;
-    page1ImagePreview = document.getElementById('page1-image-preview') as HTMLImageElement;
-    page1UploadPlaceholder = document.getElementById('page1-upload-placeholder') as HTMLDivElement;
-    page1ClearButton = document.getElementById('page1-clear-button') as HTMLButtonElement;
-    clothingLocationContainer = document.getElementById('clothing-location-container') as HTMLDivElement;
-    clothingPrompt = document.getElementById('clothing-prompt') as HTMLInputElement;
-    clothingSuggestionsContainer = document.getElementById('clothing-suggestions-container') as HTMLDivElement;
-    clothingUploadContainer = document.getElementById('clothing-upload-container') as HTMLDivElement;
-    clothingImagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
-    clothingImageUpload = document.getElementById('clothing-image-upload') as HTMLInputElement;
-    clothingClearButton = document.getElementById('clothing-clear-button') as HTMLButtonElement;
-    refreshClothingSuggestions = document.getElementById('refresh-clothing-suggestions') as HTMLButtonElement;
-    locationPrompt = document.getElementById('location-prompt') as HTMLInputElement;
-    locationSuggestionsContainer = document.getElementById('location-suggestions-container') as HTMLDivElement;
-    locationUploadContainer = document.getElementById('location-upload-container') as HTMLDivElement;
-    locationImagePreview = document.getElementById('location-image-preview') as HTMLImageElement;
-    locationImageUpload = document.getElementById('location-image-upload') as HTMLInputElement;
-    locationClearButton = document.getElementById('location-clear-button') as HTMLButtonElement;
-    refreshLocationSuggestions = document.getElementById('refresh-location-suggestions') as HTMLButtonElement;
-    generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
-    photoshootResultContainer = document.getElementById('photoshoot-result-container') as HTMLDivElement;
-    page1Subtitle = document.getElementById('page1-subtitle') as HTMLParagraphElement;
-
-    // Setup Event Listeners
-    (document.getElementById('page1-upload-container') as HTMLDivElement).addEventListener('click', () => page1ImageUpload.click());
-    page1ImageUpload.addEventListener('change', (e) => handlePage1ImageUpload((e.target as HTMLInputElement).files?.[0]));
-    page1ClearButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        resetPage1();
-    });
-    
-    // Drag and Drop for Main Photo
-    setupDragAndDrop(document.getElementById('page1-upload-container')!, handlePage1ImageUpload);
-
-    // Clothing listeners
-    clothingUploadContainer.addEventListener('click', () => clothingImageUpload.click());
-    clothingImageUpload.addEventListener('change', (e) => handlePage1SubImageUpload((e.target as HTMLInputElement).files?.[0], 'clothing'));
-    clothingClearButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        clearPage1SubImage('clothing');
-    });
-    refreshClothingSuggestions.addEventListener('click', () => populateSuggestions('clothing'));
-    clothingPrompt.addEventListener('input', () => { page1State.clothingText = clothingPrompt.value; updatePage1UI(); });
-    setupDragAndDrop(clothingUploadContainer, (file) => handlePage1SubImageUpload(file, 'clothing'));
-
-    // Location listeners
-    locationUploadContainer.addEventListener('click', () => locationImageUpload.click());
-    locationImageUpload.addEventListener('change', (e) => handlePage1SubImageUpload((e.target as HTMLInputElement).files?.[0], 'location'));
-    locationClearButton.addEventListener('click', (e) => {
-        e.stopPropagation();
-        clearPage1SubImage('location');
-    });
-    refreshLocationSuggestions.addEventListener('click', () => populateSuggestions('location'));
-    locationPrompt.addEventListener('input', () => { page1State.locationText = locationPrompt.value; updatePage1UI(); });
-    setupDragAndDrop(locationUploadContainer, (file) => handlePage1SubImageUpload(file, 'location'));
-    
-    locationPrompt.addEventListener('paste', handleLocationPaste);
-
-
-    generatePhotoshootButton.addEventListener('click', handleGeneratePhotoshoot);
-    
-    setupNavigation();
-    updatePage1UI();
-}
-
-async function handleLocationPaste(event: ClipboardEvent) {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-            const file = items[i].getAsFile();
-            if (file) {
-                 event.preventDefault(); // Prevent pasting text representation
-                 setStatus("Анализирую фото из буфера...", "loading");
-                 await handlePage1SubImageUpload(file, 'location', true);
-                 setStatus("Локация описана по фото из буфера!", "success", 4000);
-                 break;
-            }
+        } else {
+            const error = result.reason as Error;
+            const errorMessage = error.message || 'Ошибка генерации';
+            displayErrorInContainer(imgContainer, errorMessage, true);
+            console.error(`Error generating variation ${i + 1}:`, error);
         }
-    }
-}
+    });
 
+    if (lastSuccessfulCredits !== null) {
+        generationCredits = lastSuccessfulCredits;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+    }
+
+    if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
+    statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
+    if (referenceImage) setWizardStep('PAGE2_PLAN');
+
+  } catch (e) {
+    placeholders.forEach(p => p.remove());
+    divider.remove();
+    if (progressContainer) progressContainer.classList.add('hidden');
+    const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
+    showGalleryError(errorMessage, false);
+    showStatusError('Произошла ошибка. См. подробности выше.');
+  } finally {
+    setControlsDisabled(false);
+  }
+}
 
 function setupNavigation() {
-    const navButtons = document.querySelectorAll('.nav-button');
-    navButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            const page = button.getAttribute('data-page');
-            
-            navButtons.forEach(btn => btn.classList.remove('active'));
-            button.classList.add('active');
-
-            if (page === 'page1') {
-                page1.classList.remove('hidden');
-                page2.classList.add('hidden');
-            } else {
-                page1.classList.add('hidden');
-                page2.classList.remove('hidden');
-            }
+    const navContainer = document.querySelector('#app-nav');
+    const pages = document.querySelectorAll<HTMLElement>('.page-content');
+    const navButtons = document.querySelectorAll<HTMLButtonElement>('.nav-button');
+    if (!navContainer || pages.length === 0) return;
+    const navigateToPage = (pageId: string) => {
+        pages.forEach(page => page.classList.add('hidden'));
+        const pageToShow = document.querySelector<HTMLElement>(`#${pageId}`);
+        pageToShow?.classList.remove('hidden');
+        navButtons.forEach(btn => {
+            btn.classList.remove('active');
+            if (btn.dataset.page === pageId) btn.classList.add('active');
         });
+
+        // Update wizard step on page change
+        if (pageId === 'page1') {
+            updatePage1WizardState();
+        } else if (pageId === 'page2') {
+            if (referenceImage) {
+                setWizardStep('PAGE2_PLAN');
+            } else {
+                setWizardStep('NONE');
+            }
+        }
+    };
+    navContainer.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-page]');
+        if (button?.dataset.page) navigateToPage(button.dataset.page);
+    });
+    (window as any).navigateToPage = navigateToPage;
+}
+
+let page1ReferenceImage: ImageState | null = null;
+let page1ClothingImage: ImageState | null = null;
+let generatedPhotoshootResult: ImageState | null = null;
+let page1DetectedSubject: SubjectDetails | null = null;
+
+function displaySuggestions(container: HTMLElement, allSuggestions: string[], shownSuggestions: Set<string>, input: HTMLInputElement) {
+    container.innerHTML = '';
+    let availableSuggestions = allSuggestions.filter(s => !shownSuggestions.has(s));
+    if (availableSuggestions.length < 10) {
+        shownSuggestions.clear();
+        availableSuggestions = allSuggestions;
+    }
+    const selected = [...availableSuggestions].sort(() => 0.5 - Math.random()).slice(0, 10);
+    selected.forEach(s => shownSuggestions.add(s));
+    selected.forEach(suggestionText => {
+        const item = document.createElement('button');
+        item.className = 'suggestion-item';
+        item.textContent = suggestionText;
+        item.type = 'button';
+        item.addEventListener('click', () => {
+            input.value = suggestionText;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        container.appendChild(item);
     });
 }
 
-function updatePage1UI() {
-    // Main Photo
-    if (page1State.person.base64) {
-        page1ImagePreview.src = `data:${page1State.person.mimeType};base64,${page1State.person.base64}`;
-        page1ImagePreview.classList.remove('hidden');
-        page1UploadPlaceholder.classList.add('hidden');
-        page1ClearButton.classList.remove('hidden');
-        clothingLocationContainer.classList.remove('hidden');
-        page1Subtitle.textContent = 'Шаг 2: Опишите одежду и локацию';
-    } else {
-        page1ImagePreview.classList.add('hidden');
-        page1UploadPlaceholder.classList.remove('hidden');
-        page1ClearButton.classList.add('hidden');
-        clothingLocationContainer.classList.add('hidden');
-        photoshootResultContainer.classList.add('hidden');
-        page1Subtitle.textContent = 'Шаг 1: Загрузите ваше фото для начала';
-    }
+function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null) => Promise<void>) {
+    const uploadContainer = document.getElementById(containerId) as HTMLDivElement;
+    const imageUpload = document.getElementById(inputId) as HTMLInputElement;
+    const imagePreview = document.getElementById(previewId) as HTMLImageElement;
+    const uploadPlaceholder = document.getElementById(placeholderId) as HTMLDivElement;
+    const clearButton = document.getElementById(clearButtonId) as HTMLButtonElement;
 
-    // Clothing
-    if (page1State.clothingImage.base64) {
-        clothingImagePreview.src = `data:${page1State.clothingImage.mimeType};base64,${page1State.clothingImage.base64}`;
-        clothingImagePreview.classList.remove('hidden');
-        (clothingUploadContainer.querySelector('#clothing-upload-placeholder') as HTMLDivElement).classList.add('hidden');
-        clothingClearButton.classList.remove('hidden');
-    } else {
-        clothingImagePreview.classList.add('hidden');
-        (clothingUploadContainer.querySelector('#clothing-upload-placeholder') as HTMLDivElement).classList.remove('hidden');
-        clothingClearButton.classList.add('hidden');
-    }
+    const handleFile = (file: File) => {
+        if (!file || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const dataUrl = e.target?.result as string;
+            if (dataUrl) {
+                imagePreview.src = dataUrl;
+                imagePreview.classList.remove('hidden');
+                uploadPlaceholder.classList.add('hidden');
+                clearButton.classList.remove('hidden');
+                
+                const [header, base64] = dataUrl.split(',');
+                const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+                const originalState: ImageState = { base64, mimeType };
 
-    // Location
-    if (page1State.locationImage.base64) {
-        locationImagePreview.src = `data:${page1State.locationImage.mimeType};base64,${page1State.locationImage.base64}`;
-        locationImagePreview.classList.remove('hidden');
-        (locationUploadContainer.querySelector('#location-upload-placeholder') as HTMLDivElement).classList.add('hidden');
-        locationClearButton.classList.remove('hidden');
-    } else {
-        locationImagePreview.classList.add('hidden');
-        (locationUploadContainer.querySelector('#location-upload-placeholder') as HTMLDivElement).classList.remove('hidden');
-        locationClearButton.classList.add('hidden');
-    }
-    
-    // Generate Button State
-    const canGenerate = page1State.person.base64 && (page1State.clothingText || page1State.clothingImage.base64) && (page1State.locationText || page1State.locationImage.base64);
-    generatePhotoshootButton.disabled = !canGenerate || page1State.isGenerating;
+                try {
+                    const statusText = `Оптимизация изображения...`;
+                    if(statusEl) statusEl.innerText = statusText;
 
-    if (page1State.person.base64 && !canGenerate) {
-        if (!page1State.clothingText && !page1State.clothingImage.base64) {
-             setWizardStep('PAGE1_CLOTHING');
-        } else if (!page1State.locationText && !page1State.locationImage.base64) {
-             setWizardStep('PAGE1_LOCATION');
-        }
-    } else if (canGenerate) {
-        setWizardStep('PAGE1_GENERATE');
-    }
-}
+                    const resizedState = await resizeImage(originalState);
+                    
+                    imagePreview.src = `data:${resizedState.mimeType};base64,${resizedState.base64}`;
+                    await onStateChange(resizedState);
+                    if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
 
-function resetPage1() {
-    page1State = {
-        person: { base64: '', mimeType: '' },
-        clothingText: '',
-        clothingImage: { base64: '', mimeType: '' },
-        locationText: '',
-        locationImage: { base64: '', mimeType: '' },
-        isGenerating: false,
-        generatedResult: { base64: '', mimeType: '' },
+                } catch (err) {
+                    console.error("Ошибка изменения размера изображения:", err);
+                    showStatusError("Не удалось оптимизировать изображение. Используется оригинал.");
+                    await onStateChange(originalState); // Fallback to original
+                }
+            }
+        };
+        reader.readAsDataURL(file);
     };
-    page1ImageUpload.value = '';
-    clothingImageUpload.value = '';
-    locationImageUpload.value = '';
-    clothingPrompt.value = '';
-    locationPrompt.value = '';
-    photoshootResultContainer.innerHTML = '';
-    photoshootResultContainer.classList.add('hidden');
-    setWizardStep('PAGE1_PHOTO');
-    updatePage1UI();
+
+    uploadContainer.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest(`#${clearButtonId}`)) imageUpload.click(); });
+    ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
+        if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
+        if (eventName === 'drop') {
+            const file = (e as DragEvent).dataTransfer?.files?.[0];
+            if (file) handleFile(file);
+        }
+    }));
+    imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handleFile((event.target as HTMLInputElement).files[0]); });
+    clearButton.addEventListener('click', async () => {
+        await onStateChange(null);
+        imageUpload.value = '';
+        imagePreview.src = '';
+        imagePreview.classList.add('hidden');
+        uploadPlaceholder.classList.remove('hidden');
+        clearButton.classList.add('hidden');
+    });
 }
 
-function clearPage1SubImage(type: 'clothing' | 'location') {
-    if (type === 'clothing') {
-        page1State.clothingImage = { base64: '', mimeType: '' };
-        clothingImageUpload.value = '';
-    } else {
-        page1State.locationImage = { base64: '', mimeType: '' };
-        locationImageUpload.value = '';
+async function analyzeImageForText(image: ImageState, analysisPrompt: string): Promise<string> {
+    try {
+        const data = await callApi('/api/analyzeImageForText', { image, analysisPrompt });
+        return data.text;
+    } catch (e) {
+        console.error('Image analysis failed:', e);
+        throw new Error(`Ошибка анализа изображения: ${e instanceof Error ? e.message : 'Неизвестная ошибка'}`);
     }
-    updatePage1UI();
 }
 
-async function handlePage1ImageUpload(file: File | undefined | null) {
-    if (!file) return;
+async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; generatedPhotoshootResult: ImageState, newCredits: number }> {
+    try {
+        const data = await callApi('/api/generatePhotoshoot', { parts });
+        return data;
+    } catch (e) {
+        console.error('generatePhotoshoot failed:', e);
+        throw e;
+    }
+}
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const base64 = (e.target?.result as string)?.split(',')[1];
-        if (!base64) return;
 
-        const initialState: ImageState = { base64, mimeType: file.type };
-        setStatus('Обработка вашего фото...', 'loading');
+const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
+const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
+const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
+const paymentProceedButton = document.querySelector('#payment-proceed-button') as HTMLButtonElement;
+const paymentMethodsContainer = document.querySelector('#payment-methods') as HTMLDivElement;
+
+function showPaymentModal() {
+    if (paymentModalOverlay) {
+        paymentSelectionView.classList.remove('hidden');
+        paymentProcessingView.classList.add('hidden');
+        paymentFinalView.classList.add('hidden');
+        paymentModalOverlay.classList.remove('hidden');
+    }
+}
+
+function hidePaymentModal() {
+    paymentModalOverlay?.classList.add('hidden');
+    const page1 = document.getElementById('page1');
+    if (page1 && !page1.classList.contains('hidden')) {
+        updatePage1WizardState();
+    } else {
+        if(referenceImage) setWizardStep('PAGE2_GENERATE');
+    }
+}
+
+async function handlePaymentConfirmation() {
+    try {
+        const { newCredits } = await callApi('/api/addCredits', {});
+        generationCredits = newCredits;
+        updateCreditCounterUI();
+        hidePaymentModal();
+        updatePage1WizardState();
+        updateAllGenerateButtons();
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        showStatusError(`Не удалось пополнить кредиты: ${message}`);
+    }
+}
+
+
+let updatePage1WizardState: () => void = () => {};
+
+function initializePage1Wizard() {
+    const subtitle = document.getElementById('page1-subtitle') as HTMLParagraphElement;
+    const clothingLocationContainer = document.getElementById('clothing-location-container') as HTMLDivElement;
+    const clothingPromptInput = document.getElementById('clothing-prompt') as HTMLInputElement;
+    const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
+    const clothingSuggestionsContainer = document.getElementById('clothing-suggestions-container') as HTMLDivElement;
+    const locationSuggestionsContainer = document.getElementById('location-suggestions-container') as HTMLDivElement;
+    const refreshClothingBtn = document.getElementById('refresh-clothing-suggestions') as HTMLButtonElement;
+    const refreshLocationBtn = document.getElementById('refresh-location-suggestions') as HTMLButtonElement;
+    const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
+    const photoshootResultContainer = document.getElementById('photoshoot-result-container') as HTMLDivElement;
+
+    let currentClothingSuggestions: string[] = prompts?.femaleClothingSuggestions || [];
+    let currentLocationSuggestions: string[] = prompts?.locationSuggestions || [];
+    let shownClothingSuggestions: Set<string> = new Set();
+    let shownLocationSuggestions: Set<string> = new Set();
+    let page1LocationImage: ImageState | null = null;
+    
+    const doGeneratePhotoshoot = async () => {
+        if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
+        
+        const creditsNeeded = 1;
+
+        if (!isLoggedIn) {
+            setWizardStep('AUTH');
+            showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
+            return;
+        }
+
+        if (generationCredits < creditsNeeded) {
+            const modalTitle = document.querySelector('#payment-modal-title');
+            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
+            setWizardStep('CREDITS');
+            showPaymentModal();
+            return;
+        }
+
+        const clothingText = clothingPromptInput.value.trim();
+        let locationText = locationPromptInput.value.trim();
+        if (!page1ClothingImage && !clothingText) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, опишите одежду текстом или загрузите ее фото.'); return; }
+        if (!locationText) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, опишите локацию текстом.'); return; }
+
+        if (prompts?.locationSets?.[locationText]) {
+            const options = prompts.locationSets[locationText];
+            locationText = options[Math.floor(Math.random() * options.length)];
+        }
+    
+        generatePhotoshootButton.disabled = true;
+        setWizardStep('NONE');
+        photoshootResultContainer.innerHTML = `<div class="loading-spinner flex flex-col items-center justify-center" role="status">
+            <p id="photoshoot-loading-text" class="text-lg mt-4">Подготовка фотосессии...</p>
+            <p class="text-gray-500 text-sm mt-2">Это может занять до 1 минуты. Пожалуйста, подождите.</p>
+        </div>`;
+        const loadingTextEl = document.getElementById('photoshoot-loading-text');
+
+        const loadingMessages = [
+            'Подбираем одежду...',
+            'Выбираем идеальную локацию...',
+            'Настраиваем виртуальную камеру...',
+            'Рендеринг финального кадра...',
+            'Почти готово, последние штрихи...'
+        ];
+        let messageIndex = 0;
+        const messageInterval = setInterval(() => {
+            if (loadingTextEl) {
+                messageIndex = (messageIndex + 1) % loadingMessages.length;
+                loadingTextEl.textContent = loadingMessages[messageIndex];
+            }
+        }, 4000);
+        
         try {
-            const resized = await resizeImage(initialState);
-            page1State.person = resized;
-            
-            // This is a critical step: check the subject to tailor suggestions
-            await checkImageSubject(resized);
-
-            // Also create a face reference for later use in variations
-            createFaceReference(resized, page1ImagePreview).catch(err => {
-                 console.error("Фоновая задача создания референса лица провалена:", err);
+            const img = new Image();
+            await new Promise<void>((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = (err) => reject(new Error("Не удалось загрузить изображение для определения пропорций."));
+                img.src = `data:${page1ReferenceImage.mimeType};base64,${page1ReferenceImage.base64}`;
             });
 
-            populateSuggestions('clothing');
-            populateSuggestions('location');
-            setStatus('Фото загружено! Теперь добавьте детали.', 'success', 3000);
-            updatePage1UI();
+            const isPortrait = img.height > img.width;
+            const aspectRatioInstruction = isPortrait ? '4:5 (портретный)' : '3:2 (альбомный)';
 
-        } catch (error) {
-            setStatus(`Ошибка: ${(error as Error).message}`, 'error', 4000);
-        }
-    };
-    reader.readAsDataURL(file);
-}
-
-async function handlePage1SubImageUpload(file: File | undefined | null, type: 'clothing' | 'location', shouldAnalyzeForText = false) {
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const base64 = (e.target?.result as string)?.split(',')[1];
-        if (!base64) return;
-
-        let imageState: ImageState = { base64, mimeType: file.type };
-        setStatus(`Обработка фото ${type === 'clothing' ? 'одежды' : 'локации'}...`, 'loading');
-
-        try {
-            // Screenshots of clothing can be very tall, so crop them.
-            if (type === 'clothing') {
-                imageState = await cropImage(imageState);
-            }
-            const resized = await resizeImage(imageState);
+            const parts: any[] = [{ inlineData: { data: page1ReferenceImage.base64, mimeType: page1ReferenceImage.mimeType } }];
+            let promptText: string;
             
-            if (type === 'clothing') {
-                page1State.clothingImage = resized;
+            if (page1ClothingImage) {
+                parts.push({ inlineData: { data: page1ClothingImage.base64, mimeType: page1ClothingImage.mimeType } });
+                const additionalClothingDetails = clothingText ? ` Дополнительные пожелания к одежде (например, изменение цвета или детали): "${clothingText}".` : '';
+                promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото человека (первое изображение) и референсное фото одежды (второе изображение).
+Твоя главная цель — идеально сохранить человека с первого фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека. Поза и лицо ОБЯЗАТЕЛЬНО должны остаться без изменения.
+2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
+3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "**одежду которую нужно взять в точности со 2 референсной фотографии,нужно взять только одежду и игнорировать лицо на 2 референсном кадре**". Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
+4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
+Результат — только одно изображение без текста.`;
             } else {
-                page1State.locationImage = resized;
-                 if (shouldAnalyzeForText) {
-                    await analyzeImageForText(resized);
-                }
+                promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
+Твоя главная цель — идеально сохранить человека с фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека. Поза и лицо ОБЯЗАТЕЛЬНО должны остаться без изменения.
+2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
+3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в новом кадре.
+4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
+Результат — только одно изображение без текста.`;
             }
-            setStatus(`Фото ${type === 'clothing' ? 'одежды' : 'локации'} загружено.`, 'success', 3000);
-            updatePage1UI();
+            parts.push({ text: promptText.trim() });
+    
+            const data = await generatePhotoshoot(parts);
+            
+            generatedPhotoshootResult = data.generatedPhotoshootResult;
+            generationCredits = data.newCredits;
+            updateCreditCounterUI();
+            updateAllGenerateButtons();
 
-        } catch (error) {
-             setStatus(`Ошибка: ${(error as Error).message}`, 'error', 4000);
+            const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
+
+            photoshootResultContainer.innerHTML = `<div class="generated-photoshoot-wrapper cursor-pointer">
+                    <img src="${resultUrl}" alt="Сгенерированная фотосессия" class="w-full h-auto object-contain rounded-lg max-h-[60vh]"/>
+                    <div class="result-actions">
+                         <a href="${resultUrl}" download="fotosessiya-${Date.now()}.png" class="result-action-button" title="Скачать"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></a>
+                    </div></div>`;
+            photoshootResultContainer.querySelector('.generated-photoshoot-wrapper')?.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(resultUrl); });
+
+            if (generatedPhotoshootResult && page1DetectedSubject) {
+                referenceImage = generatedPhotoshootResult;
+                detectedSubjectCategory = page1DetectedSubject.category;
+                detectedSmileType = page1DetectedSubject.smile;
+                initializePoseSequences();
+                const dataUrlForPage2 = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
+                referenceImagePreview.src = dataUrlForPage2;
+                referenceImagePreview.classList.remove('hidden');
+                referenceDownloadButton.href = dataUrlForPage2;
+                referenceDownloadButton.download = `photoshoot-result-${Date.now()}.png`;
+                referenceDownloadButton.classList.remove('hidden');
+                uploadPlaceholder.classList.add('hidden');
+                uploadContainer.classList.remove('aspect-square');
+                outputGallery.innerHTML = '';
+                statusEl.innerText = 'Изображение из фотосессии загружено. Выберите план и создайте вариации.';
+                generatedPhotoshootResult = null;
+                (window as any).navigateToPage('page2');
+            }
+        } catch (e) {
+            const errorMessage = e instanceof Error ? e.message : 'Произошла неизвестная ошибка.';
+            displayErrorInContainer(photoshootResultContainer, errorMessage);
+        } finally {
+            clearInterval(messageInterval);
+            updatePage1WizardState();
+        }
+    }
+
+    updatePage1WizardState = () => {
+        const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
+        const clothingPromptInput = document.getElementById('clothing-prompt') as HTMLInputElement;
+        const locationPromptInput = document.getElementById('location-prompt') as HTMLInputElement;
+
+        if (!generatePhotoshootButton || !clothingPromptInput || !locationPromptInput) return;
+        const isReady = !!(page1ReferenceImage && (page1ClothingImage || clothingPromptInput.value.trim()) && locationPromptInput.value.trim());
+        const creditsNeeded = 1;
+    
+        if (generationCredits >= creditsNeeded) {
+            generatePhotoshootButton.disabled = !isReady;
+            generatePhotoshootButton.innerHTML = `Начать фотосессию (Осталось: ${generationCredits})`;
+        } else {
+            generatePhotoshootButton.disabled = false; // Always enable to trigger modal/auth
+            if (!isLoggedIn) {
+                generatePhotoshootButton.innerHTML = `Войти, чтобы продолжить`;
+            } else {
+                generatePhotoshootButton.innerHTML = `Пополнить кредиты`;
+            }
+        }
+
+        // Wizard Logic
+        if (!page1ReferenceImage) {
+            setWizardStep('PAGE1_PHOTO');
+        } else if (!page1ClothingImage && !clothingPromptInput.value.trim()) {
+            setWizardStep('PAGE1_CLOTHING');
+        } else if (!locationPromptInput.value.trim()) {
+            setWizardStep('PAGE1_LOCATION');
+        } else if (isReady) {
+            setWizardStep('PAGE1_GENERATE');
+        } else {
+            setWizardStep('NONE');
         }
     };
-    reader.readAsDataURL(file);
-}
 
-/**
- * Analyzes location image and fills the text prompt with the description.
- * @param imageState The location image to analyze.
- */
-async function analyzeImageForText(imageState: ImageState) {
-    if (!isLoggedIn) {
-        setStatus("Войдите, чтобы использовать анализ фото локации.", "info", 4000);
-        return;
-    }
+    const resetWizard = () => {
+        subtitle.textContent = 'Шаг 1: Загрузите ваше фото для начала';
+        subtitle.classList.remove('text-red-400');
+        clothingLocationContainer.classList.add('hidden');
+        clothingPromptInput.value = ''; locationPromptInput.value = '';
+        generatedPhotoshootResult = null; page1DetectedSubject = null;
+        page1ClothingImage = null; page1LocationImage = null;
+        shownClothingSuggestions.clear(); shownLocationSuggestions.clear();
+        (document.getElementById('clothing-image-upload') as HTMLInputElement).value = '';
+        (document.getElementById('clothing-image-preview') as HTMLImageElement).src = '';
+        document.getElementById('clothing-image-preview')?.classList.add('hidden');
+        document.getElementById('clothing-upload-placeholder')?.classList.remove('hidden');
+        document.getElementById('clothing-clear-button')?.classList.add('hidden');
+        updatePage1WizardState();
+    };
     
-    setStatus("Анализирую фото локации...", 'loading');
-    
-    const analysisPrompt = "Опиши это место одним коротким, но емким и вдохновляющим предложением для фотосессии. Например: 'в роскошном гостиничном номере с панорамными окнами' или 'на крыше с видом на европейский город'. Говори так, будто это часть итогового промпта. Не используй кавычки.";
-
-    try {
-        const response = await fetch('/api/analyzeImageForText', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-            body: JSON.stringify({ image: imageState, analysisPrompt })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || 'Ошибка анализа изображения.');
-        }
-
-        const data = await response.json();
-        locationPrompt.value = data.text;
-        page1State.locationText = data.text;
-        setStatus("Локация успешно описана!", 'success', 3000);
-        updatePage1UI();
-
-    } catch (error) {
-        setStatus(`Ошибка анализа: ${(error as Error).message}`, 'error', 5000);
-    }
-}
-
-
-function getSuggestionPrompts(type: 'clothing' | 'location'): string[] {
-    if (!prompts) return [];
-    if (type === 'clothing') {
-        switch (detectedSubjectCategory) {
-            case 'man': return prompts.maleClothingSuggestions;
-            case 'woman': return prompts.femaleClothingSuggestions;
-            case 'teenager': return prompts.teenClothingSuggestions;
-            case 'elderly_man': return prompts.elderlyMaleClothingSuggestions;
-            case 'elderly_woman': return prompts.elderlyFemaleClothingSuggestions;
-            case 'child': return prompts.childClothingSuggestions;
-            default: return prompts.femaleClothingSuggestions;
-        }
-    } else { // location
-        switch (detectedSubjectCategory) {
-            case 'child': return prompts.childLocationSuggestions;
-            case 'teenager': return prompts.teenLocationSuggestions;
-            default: return prompts.locationSuggestions;
-        }
-    }
-}
-
-function populateSuggestions(type: 'clothing' | 'location') {
-    const container = type === 'clothing' ? clothingSuggestionsContainer : locationSuggestionsContainer;
-    const promptInput = type === 'clothing' ? clothingPrompt : locationPrompt;
-    
-    const suggestionPrompts = getSuggestionPrompts(type);
-    const shuffled = shuffleArray(suggestionPrompts);
-    const suggestionsToShow = shuffled.slice(0, 5);
-    
-    container.innerHTML = '';
-    container.classList.remove('visible');
-
-    setTimeout(() => {
-        suggestionsToShow.forEach(suggestion => {
-            const item = document.createElement('button');
-            item.className = 'suggestion-item';
-            item.textContent = suggestion;
-            item.onclick = () => {
-                promptInput.value = suggestion;
-                if (type === 'clothing') page1State.clothingText = suggestion;
-                else page1State.locationText = suggestion;
-                updatePage1UI();
-            };
-            container.appendChild(item);
-        });
-        container.classList.add('visible');
-    }, 50);
-}
-
-
-async function handleGeneratePhotoshoot() {
-    if (!isLoggedIn) {
-        setStatus('Пожалуйста, войдите, чтобы начать фотосессию.', 'error', 4000);
-        setWizardStep('AUTH');
-        return;
-    }
-    if (generationCredits < 1) {
-        setStatus('Недостаточно кредитов для фотосессии.', 'error', 4000);
-        showPaymentModal();
-        return;
-    }
-
-    page1State.isGenerating = true;
-    updatePage1UI();
-
-    photoshootResultContainer.classList.remove('hidden');
-    photoshootResultContainer.innerHTML = `
-        <div class="flex flex-col items-center gap-4 text-center">
-          <div class="loading-spinner large"></div>
-          <p id="photoshoot-loading-text" class="font-semibold">Создаем ваш уникальный образ...</p>
-          <p class="text-xs text-gray-400">Это может занять до минуты. Пожалуйста, не закрывайте вкладку.</p>
-        </div>
-    `;
-
-    try {
-        updateCreditCounter(-1);
-
-        const parts = [];
-        // 1. Person Image
-        parts.push({ inlineData: { data: page1State.person.base64, mimeType: page1State.person.mimeType } });
-
-        // 2. Clothing (Image or Text)
-        if (page1State.clothingImage.base64) {
-            parts.push({ inlineData: { data: page1State.clothingImage.base64, mimeType: page1State.clothingImage.mimeType } });
-            if (page1State.clothingText) {
-                parts.push({ text: `Стиль одежды: ${page1State.clothingText}.` });
+    const showCombinedSteps = async (imageState: ImageState) => {
+        if (!prompts) return;
+        try {
+            subtitle.textContent = 'Анализ фото...';
+            const subjectDetails = await checkImageSubject(imageState);
+            page1DetectedSubject = subjectDetails;
+            if (subjectDetails.category === 'other') {
+                subtitle.innerHTML = `<span class="text-red-400">На фото не удалось распознать человека. Пожалуйста, загрузите другое изображение.</span>`;
+                return;
             }
+            let subjectText = '';
+            switch(subjectDetails.category) {
+                case 'woman': currentClothingSuggestions = prompts.femaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'женщины'; break;
+                case 'man': currentClothingSuggestions = prompts.maleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'мужчины'; break;
+                case 'teenager': currentClothingSuggestions = prompts.teenClothingSuggestions; currentLocationSuggestions = prompts.teenLocationSuggestions; subjectText = 'подростка'; break;
+                case 'elderly_woman': currentClothingSuggestions = prompts.elderlyFemaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'пожилой женщины'; break;
+                case 'elderly_man': currentClothingSuggestions = prompts.elderlyMaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'пожилого мужчины'; break;
+                case 'child': currentClothingSuggestions = prompts.childClothingSuggestions; currentLocationSuggestions = prompts.childLocationSuggestions; subjectText = 'ребенка'; break;
+            }
+            shownClothingSuggestions.clear(); shownLocationSuggestions.clear();
+            subtitle.textContent = `Обнаружено фото ${subjectText}. Шаг 2: Опишите одежду и локацию.`;
+            displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput);
+            displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
+            clothingLocationContainer.classList.remove('hidden');
+            updatePage1WizardState();
+        } catch (e) {
+            const message = e instanceof Error ? e.message : 'Неизвестная ошибка анализа.';
+            subtitle.innerHTML = `<span class="text-red-400">${message}</span>`;
+            page1DetectedSubject = null;
+        }
+    };
+
+    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state) => {
+        page1ReferenceImage = state;
+        if (state) {
+            subtitle.textContent = 'Оптимизация изображения...';
+            let imageState = state;
+    
+            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES (PAGE 1) ---
+            const processedImageState = await new Promise<ImageState>((resolve) => {
+                const img = new Image();
+                img.onload = async () => {
+                    if (img.width > img.height) { // Only process horizontal images
+                        subtitle.textContent = 'Анализ композиции...';
+                        try {
+                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                            if (boundingBox) {
+                                const originalWidth = img.width;
+                                const originalHeight = img.height;
+                                const targetAspectRatio = 4 / 5;
+                                const newWidth = originalHeight * targetAspectRatio;
+                                
+                                if (newWidth < originalWidth) { // Check if it's wider than target
+                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                    let cropX = personCenterX - (newWidth / 2);
+                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+    
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = newWidth;
+                                    canvas.height = originalHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                        const [, croppedBase64] = croppedDataUrl.split(',');
+                                        
+                                        const imagePreview = document.getElementById('page1-image-preview') as HTMLImageElement;
+                                        if (imagePreview) imagePreview.src = croppedDataUrl;
+    
+                                        console.log("Фото для фотосессии успешно обрезано.");
+                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (cropError) {
+                            console.warn("Не удалось автоматически обрезать фото для фотосессии, используется оригинал:", cropError);
+                        }
+                    }
+                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
+                };
+                img.onerror = () => {
+                    console.error("Не удалось загрузить изображение для проверки размеров (Page 1).");
+                    resolve(imageState);
+                };
+                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+            });
+            // --- END OF AUTO-CROP LOGIC ---
+            
+            page1ReferenceImage = processedImageState;
+            await showCombinedSteps(processedImageState);
         } else {
-            parts.push({ text: `Наденьте на человека: ${page1State.clothingText}.` });
+            resetWizard();
         }
-        
-        // 3. Location (Image or Text)
-        if (page1State.locationImage.base64) {
-            parts.push({ inlineData: { data: page1State.locationImage.base64, mimeType: page1State.locationImage.mimeType } });
-             if (page1State.locationText) {
-                parts.push({ text: `Используй эту локацию как фон: ${page1State.locationText}.` });
-            }
+    });
+    
+    setupUploader('clothing-upload-container', 'clothing-image-upload', 'clothing-image-preview', 'clothing-upload-placeholder', 'clothing-clear-button', async (state) => {
+        if (!state) {
+            page1ClothingImage = null;
         } else {
-             parts.push({ text: `Поместите человека в эту локацию: ${page1State.locationText}.` });
-        }
-        
-        // 4. Final Instruction
-        parts.push({ text: "Создай реалистичное фото, где человек с первого фото органично вписан в одежду и локацию. Сохрани черты лица, но адаптируй позу и освещение для максимальной фотореалистичности." });
-        
-        const response = await fetch('/api/generatePhotoshoot', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-            body: JSON.stringify({ parts })
-        });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            updateCreditCounter(1); // Refund credit on failure
-            throw new Error(errorData.error || 'Ошибка генерации фотосессии.');
-        }
-
-        const data = await response.json();
-        page1State.generatedResult = data.generatedPhotoshootResult;
-        displayPhotoshootResult(data.resultUrl);
-
-    } catch (error) {
-        photoshootResultContainer.innerHTML = `<p class="text-red-400 text-center">Ошибка: ${(error as Error).message}</p>`;
-    } finally {
-        page1State.isGenerating = false;
-        updatePage1UI();
-    }
-}
-
-function displayPhotoshootResult(resultUrl: string) {
-    photoshootResultContainer.innerHTML = `
-        <div class="generated-photoshoot-wrapper w-full max-w-lg mx-auto">
-            <img src="${resultUrl}" alt="Результат фотосессии" class="w-full h-full object-contain rounded-lg shadow-lg">
-            <div class="result-actions">
-                <button id="regenerate-photoshoot-button" class="result-action-button" title="Пересоздать (1 кредит)">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 110 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
-                    </svg>
-                </button>
-                <button id="send-to-variations-button" class="result-action-button" title="Отправить в '4 Вариации'">
-                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
-                </button>
-            </div>
-        </div>
-    `;
-    document.getElementById('regenerate-photoshoot-button')?.addEventListener('click', handleGeneratePhotoshoot);
-    document.getElementById('send-to-variations-button')?.addEventListener('click', handleSendToVariations);
-}
-
-function handleSendToVariations() {
-    if (!page1State.generatedResult.base64) return;
-    
-    // Switch to page 2
-    (document.querySelector('.nav-button[data-page="page2"]') as HTMLButtonElement).click();
-
-    // Set the generated image as the new reference on page 2
-    referenceImage = page1State.generatedResult;
-    referenceImagePreview.src = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
-    referenceImagePreview.classList.remove('hidden');
-    uploadPlaceholder.classList.add('hidden');
-    uploadContainer.classList.remove('uploader-box');
-    referenceDownloadButton.href = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
-    referenceDownloadButton.download = `reference_${Date.now()}.jpg`;
-    referenceDownloadButton.classList.remove('hidden');
-
-    // IMPORTANT: The faceReferenceImage from the original upload on Page 1 is already in the global state
-    // and will be used automatically. We don't need to do anything here.
-    
-    // Clear the page 2 gallery
-    outputGallery.innerHTML = '';
-    
-    setStatus("Изображение из фотосессии установлено как референс!", "success", 4000);
-    setWizardStep('PAGE2_PLAN');
-}
-
-
-// --- Main Initialization ---
-
-async function main() {
-    // --- Assign DOM Elements ---
-    lightboxOverlay = document.getElementById('lightbox-overlay') as HTMLDivElement;
-    lightboxImage = document.getElementById('lightbox-image') as HTMLImageElement;
-    lightboxCloseButton = document.getElementById('lightbox-close-button') as HTMLButtonElement;
-    statusEl = document.getElementById('status') as HTMLDivElement;
-    planButtonsContainer = document.getElementById('plan-buttons') as HTMLDivElement;
-    generateButton = document.getElementById('generate-button') as HTMLButtonElement;
-    resetButton = document.getElementById('reset-button') as HTMLButtonElement;
-    outputGallery = document.getElementById('output-gallery') as HTMLDivElement;
-    uploadContainer = document.getElementById('upload-container') as HTMLDivElement;
-    imageUpload = document.getElementById('image-upload') as HTMLInputElement;
-    referenceImagePreview = document.getElementById('reference-image-preview') as HTMLImageElement;
-    uploadPlaceholder = document.getElementById('upload-placeholder') as HTMLDivElement;
-    customPromptInput = document.getElementById('custom-prompt-input') as HTMLInputElement;
-    referenceDownloadButton = document.getElementById('reference-download-button') as HTMLAnchorElement;
-    paymentModalOverlay = document.getElementById('payment-modal-overlay') as HTMLDivElement;
-    paymentConfirmButton = document.getElementById('payment-confirm-button') as HTMLButtonElement;
-    paymentCloseButton = document.getElementById('payment-close-button') as HTMLButtonElement;
-    creditCounterEl = document.getElementById('credit-counter') as HTMLDivElement;
-    promoCodeInput = document.getElementById('promo-code-input') as HTMLInputElement;
-    applyPromoButton = document.getElementById('apply-promo-button') as HTMLButtonElement;
-    authContainer = document.getElementById('auth-container') as HTMLDivElement;
-    googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
-    userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
-    userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
-    userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
-
-    // --- Setup Page 1 ---
-    setupPage1DOM();
-    const page1UploadPlaceholderContent = `
-        <div class="flex flex-col items-center justify-center text-center p-4 h-full">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 text-gray-400 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-            <h3 class="text-xl font-semibold mb-2 text-gray-200">Загрузите ваше лучшее фото</h3>
-            <p class="text-gray-400 max-w-xs">Для наилучшего результата используйте качественное фото, где хорошо видно ваше лицо.</p>
-        </div>`;
-    page1UploadPlaceholder.innerHTML = page1UploadPlaceholderContent;
-
-
-    // --- Load Prompts ---
-    try {
-        const response = await fetch('/prompts.json');
-        prompts = await response.json();
-        shufflePoseSequences();
-    } catch (error) {
-        console.error('Не удалось загрузить промпты:', error);
-        setStatus('Критическая ошибка: не удалось загрузить файл промптов.', 'error');
-        return;
-    }
-
-    // --- Event Listeners ---
-    generateButton.addEventListener('click', generateVariations);
-    resetButton.addEventListener('click', () => resetState(true));
-    uploadContainer.addEventListener('click', () => imageUpload.click());
-    imageUpload.addEventListener('change', (e) => handleImageUpload((e.target as HTMLInputElement).files![0]));
-
-    // Drag and Drop for Page 2
-    setupDragAndDrop(uploadContainer, handleImageUpload);
-
-    planButtonsContainer.addEventListener('click', (e) => {
-        const target = e.target as HTMLButtonElement;
-        if (target.matches('.plan-button')) {
-            document.querySelectorAll('.plan-button').forEach(btn => btn.classList.remove('selected'));
-            target.classList.add('selected');
-            selectedPlan = target.dataset.plan!;
-        }
-    });
-    
-    // Lightbox Listeners
-    outputGallery.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        const galleryItem = target.closest('.gallery-item');
-        if (galleryItem && !galleryItem.querySelector('p')) { // Ensure it's not an error message
-            const img = galleryItem.querySelector('img');
-            if (img) {
-                lightboxImage.src = img.src;
-                lightboxOverlay.classList.remove('opacity-0', 'pointer-events-none');
-            }
-        }
-    });
-    lightboxCloseButton.addEventListener('click', () => lightboxOverlay.classList.add('opacity-0', 'pointer-events-none'));
-    lightboxOverlay.addEventListener('click', (e) => {
-        if (e.target === lightboxOverlay) {
-            lightboxOverlay.classList.add('opacity-0', 'pointer-events-none');
-        }
-    });
-
-    // Payment Modal Listeners
-    creditCounterEl.addEventListener('click', showPaymentModal);
-    paymentCloseButton.addEventListener('click', hidePaymentModal);
-    paymentModalOverlay.addEventListener('click', (e) => {
-      if (e.target === paymentModalOverlay) hidePaymentModal();
-    });
-    paymentConfirmButton.addEventListener('click', handleConfirmPayment);
-    document.getElementById('payment-proceed-button')?.addEventListener('click', () => {
-        document.getElementById('payment-selection-view')?.classList.add('hidden');
-        const processingView = document.getElementById('payment-processing-view')!;
-        processingView.classList.remove('hidden');
-        setTimeout(() => {
-            processingView.classList.add('hidden');
-            document.getElementById('payment-final-view')?.classList.remove('hidden');
-        }, 1500);
-    });
-    document.querySelectorAll('.payment-method').forEach(method => {
-        method.addEventListener('click', () => {
-            document.querySelectorAll('.payment-method').forEach(m => m.classList.remove('selected'));
-            method.classList.add('selected');
-        });
-    });
-
-    // Auth Listeners
-    applyPromoButton.addEventListener('click', applyPromoCode);
-    userProfileContainer.addEventListener('click', handleLogout);
-
-    // --- Initial State ---
-    document.querySelector('.plan-button[data-plan="close_up"]')?.classList.add('selected');
-    updateCreditCounter(0); // Initialize display with 0
-    initializeGoogleSignIn();
-    resetState(true);
-    setWizardStep('PAGE1_PHOTO');
-}
-
-/**
- * Sets up drag and drop functionality for a given container.
- * @param container The element to attach listeners to.
- * @param handleFile The function to call with the dropped file.
- */
-function setupDragAndDrop(container: HTMLElement, handleFile: (file: File) => void) {
-    container.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        container.classList.add('drag-over');
-    });
-    container.addEventListener('dragleave', () => {
-        container.classList.remove('drag-over');
-    });
-    container.addEventListener('drop', (e) => {
-        e.preventDefault();
-        container.classList.remove('drag-over');
-        if (e.dataTransfer?.files[0]) {
-            handleFile(e.dataTransfer.files[0]);
-        }
-    });
-}
-
-
-/**
- * Aggressive Cache and Service Worker Cleaning
- * This ensures users always get the latest version of the app upon reload.
- */
-async function clearCacheAndServiceWorkers() {
-    console.log("Запуск агрессивной очистки кэша и Service Worker...");
-    try {
-        if ('serviceWorker' in navigator) {
-            const registrations = await navigator.serviceWorker.getRegistrations();
-            if (registrations.length > 0) {
-                for (const registration of registrations) {
-                    await registration.unregister();
-                    console.log(`Service Worker с областью ${registration.scope} удален.`);
+            try {
+                // Apply the new cropping logic for tall images like screenshots
+                const croppedState = await cropImage(state);
+                page1ClothingImage = croppedState;
+                
+                // Update the preview with the potentially cropped image
+                const imagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
+                if (imagePreview) {
+                    imagePreview.src = `data:${croppedState.mimeType};base64,${croppedState.base64}`;
                 }
-            } else {
-                 console.log("Активные Service Worker не найдены.");
+            } catch (err) {
+                 console.error("Ошибка обрезки изображения одежды:", err);
+                 showStatusError("Не удалось обрезать изображение одежды. Используется оригинал.");
+                 page1ClothingImage = state; // Fallback to original
             }
         }
 
-        if ('caches' in window) {
-            const keys = await caches.keys();
-            if (keys.length > 0) {
-                await Promise.all(keys.map(key => caches.delete(key)));
-                console.log("Все кэши успешно очищены.");
-            } else {
-                 console.log("Кэши для очистки не найдены.");
-            }
-           
+        clothingPromptInput.placeholder = page1ClothingImage ? 'Фото одежды загружено (можно добавить детали)' : 'Опишите или выберите вариант...';
+        clothingPromptInput.value = '';
+        updatePage1WizardState();
+    });
+
+    setupUploader('location-upload-container', 'location-image-upload', 'location-image-preview', 'location-upload-placeholder', 'location-clear-button', async (state) => {
+        page1LocationImage = state;
+        if (state) {
+            const originalPlaceholder = locationPromptInput.placeholder;
+            locationPromptInput.value = ''; locationPromptInput.placeholder = 'Анализ фото локации...'; locationPromptInput.disabled = true;
+            try {
+                const description = await analyzeImageForText(state, "Опиши фон или локацию на этом изображении одним коротким, но емким предложением. Ответ должен быть только описанием, без лишних слов. Например: 'уютная кофейня со старинной мебелью' или 'бескрайнее лавандовое поле на закате'.");
+                locationPromptInput.value = description;
+                locationPromptInput.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) { locationPromptInput.placeholder = e instanceof Error ? e.message : 'Ошибка'; }
+            finally { locationPromptInput.disabled = false; if (!locationPromptInput.value) locationPromptInput.placeholder = originalPlaceholder; }
+        } else {
+            locationPromptInput.value = '';
+            locationPromptInput.dispatchEvent(new Event('input', { bubbles: true }));
         }
-    } catch (error) {
-        console.error('Ошибка во время очистки кэша или Service Worker:', error);
+    });
+
+    generatePhotoshootButton.addEventListener('click', doGeneratePhotoshoot);
+    clothingPromptInput.addEventListener('input', updatePage1WizardState);
+    locationPromptInput.addEventListener('input', updatePage1WizardState);
+    refreshClothingBtn.addEventListener('mousedown', (e) => { e.preventDefault(); displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput) });
+    refreshLocationBtn.addEventListener('mousedown', (e) => { if (!prompts) return; e.preventDefault(); displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput) });
+    clothingPromptInput.addEventListener('focus', () => clothingSuggestionsContainer.classList.add('visible'));
+    clothingPromptInput.addEventListener('blur', () => setTimeout(() => clothingSuggestionsContainer.classList.remove('visible'), 200));
+    locationPromptInput.addEventListener('focus', () => locationSuggestionsContainer.classList.add('visible'));
+    locationPromptInput.addEventListener('blur', () => setTimeout(() => locationSuggestionsContainer.classList.remove('visible'), 200));
+
+    resetWizard();
+}
+
+function getUploaderPlaceholderHtml(): string {
+  return `<div class="w-full h-full flex flex-col items-center justify-center p-4 gap-4">
+    <div class="w-full max-w-xs aspect-square border border-stone-400/50 rounded-lg flex items-center justify-center p-2">
+      <svg version="1.0" xmlns="http://www.w3.org/2000/svg" width="1024pt" height="1024pt" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid" meet" class="w-full h-full object-contain text-stone-600 opacity-70 pointer-events-none">
+        <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
+          <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
+          <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 7 -12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
+          <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
+          <path d="M4715 8253 c-32 -6 -107 -35 -103 -39 2 -2 32 6 67 16 79 25 157 25 221 1 27 -11 48 -15 45 -11 -17 28 -160 48 -230 33z"/>
+          <path d="M5664 8234 c-19 -15 -19 -15 1 -6 11 5 27 12 35 15 13 5 13 6 -1 6 -8 1 -24 -6 -35 -15z"/>
+          <path d="M4690 8194 c-36 -9 -92 -19 -125 -22 l-60 -7 28 -20 c16 -11 40 -30 55 -41 44 -35 107 -63 154 -69 l43 -6 -52 20 c-29 11 -67 29 -84 42 l-31 22 23 12 c50 26 69 28 69 7 0 -11 9 -30 20 -43 l20 -24 -15 38 c-9 21 -13 42 -10 47 10 17 43 11 50 -9 3 -10 14 -26 25 -36 30 -27 70 -7 70 35 0 31 6 35 34 24 21 -8 20 -43 0 -72 -9 -13 -14 -25 -11 -28 7 -7 47 46 47 62 0 21 12 17 53 -17 48 -40 48 -21 0 21 -79 70 -186 92 -303 64z"/>
+          <path d="M5691 8193 c-44 -16 -131 -90 -131 -111 0 -7 18 6 40 28 22 22 43 40 48 40 4 0 15 -18 24 -40 9 -22 21 -40 27 -40 6 0 4 12 -5 28 -20 38 -18 60 7 67 24 8 22 9 35 -30 8 -26 14 -30 44 -30 32 0 35 3 38 33 3 28 7 33 25 30 20 -3 22 -9 20 -53 -1 -46 0 -48 13 -31 8 11 14 31 14 44 0 21 3 23 28 17 15 -3 31 -11 37 -16 13 -13 -38 -54 -100 -78 -37 -15 -44 -20 -25 -20 42 -1 123 43 185 102 l60 57 -33 -5 c-19 -2 -67 3 -109 11 -95 18 -186 17 -242 -3z"/>
+          <path d="M6157 7789 c-21 -79 -50 -205 -66 -279 -47 -218 -77 -289 -177 -410 -85 -105 -325 -335 -374 -360 -63 -32 -264 -46 -347 -24 -142 37 -572 317 -655 426 -39 51 -56 88 -135 298 -41 107 -80 201 -87 208 -18 18 113 -368 149 -438 15 -30 42 -75 59 -99 68 -95 317 -279 513 -378 l95 -48 162 0 c177 1 207 7 279 58 75 54 286 248 349 322 64 75 118 164 143 235 9 25 33 130 55 235 22 104 49 232 60 284 33 148 18 129 -23 -30z"/>
+          <path d="M5422 7566 c-34 -28 -66 -46 -85 -46 -8 0 -34 13 -58 30 -43 29 -72 36 -103 24 -9 -3 -16 -12 -16 -20 0 -11 9 -13 41 -8 32 5 46 3 69 -15 40 -29 92 -27 138 4 20 14 49 25 65 25 31 0 29 14 -3 23 -13 3 -31 -3 -48 -17z"/>
+          <path d="M5150 7324 c-95 -32 -174 -41 -195 -24 -19 16 -32 5 -16 -14 15 -18 117 -36 202 -36 35 0 91 -5 124 -10 45 -7 85 -6 160 5 248 38 295 50 295 82 0 14 -2 14 -20 -2 -26 -24 -99 -23 -179 4 -75 25 -123 27 -154 6 -19 -12 -28 -12 -62 0 -53 19 -67 18 -155 -11z m370 -13 l85 -28 -60 -7 c-33 -4 -92 -11 -132 -18 -54 -8 -103 -8 -202 2 -72 7 -131 16 -131 20 0 10 133 50 165 50 16 0 43 -5 62 -12 27 -10 38 -9 65 4 45 23 52 22 148 -11z"/>
+          <path d="M5541 7169 c-59 -53 -130 -73 -232 -66 -83 5 -173 39 -216 79 -13 12 -23 16 -23 10 0 -7 19 -26 43 -42 23 -17 49 -37 58 -44 9 -7 30 -18 49 -24 55 -20 238 -13 225 8 -2 4 13 15 34 25 22 9 56 35 77 56 49 50 41 49 -15 -2z"/>
+          <path d="M4507 6975 c8 -168 -38 -341 -127 -470 -18 -26 -102 -119 -189 -208 -144 -150 -215 -229 -236 -267 -10 -17 259 234 343 320 152 156 226 338 226 560 0 63 -5 126 -11 140 -8 19 -10 3 -6 -75z"/>
+          <path d="M5662 6687 c-105 -331 -172 -699 -172 -942 0 -60 6 -128 12 -150 11 -36 13 -22 19 140 12 301 84 706 183 1027 8 26 12 50 8 52 -5 3 -27 -55 -50 -127z"/>
+          <path d="M4545 6184 c-125 -33 -302 -100 -291 -111 2 -2 59 15 127 38 69 30 146 44 200 47 71 4 82 2 138 -27 133 -67 278 -178 356 -271 50 -59 92 -150 110 -236 28 -140 48 -449 47 -744 -1 -157 -3 -295 -6 -308 -3 -12 -8 -147 -11 -300 l-6 -277 -77 -59 c-183 -141 -361 -286 -407 -332 -27 -27 -71 -66 -99 -86 -27 -21 -65 -52 -85 -71 -20 -18 -44 -38 -53 -43 -10 -5 -58 -50 -108 -98 -58 -57 -91 -84 -94 -75 -3 8 -28 156 -56 329 -90 549 -128 721 -189 853 -26 57 -81 125 -81 100 0 -6 6 -16 14 -22 21 -17 63 -124 85 -216 27 -109 60 -299 121 -684 28 -179 55 -344 59 -368 l8 -43 -158 -160 c-87 -88 -160 -156 -163 -151 -8 12 -65 169 -76 206 -4 17 -41 122 -80 235 -208 591 -249 776 -257 1145 -6 284 10 450 72 760 69 340 127 490 263 671 35 47 63 87 61 89 -5 4 -108 -117 -150 -175 -238 -329 -399 -1005 -359 -1510 28 -366 143 -748 394 -1313 35 -78 66 -153 70 -165 8 -25 -44 -100 -136 -192 -82 -82 -236 -294 -279 -384 -71 -145 -47 -255 66 -307 39 -18 136 -26 169 -13 26 10 18 24 -15 24 -37 0 -30 16 11 25 17 4 30 11 30 16 0 5 -1 9 -2 9 -2 1 -30 3 -63 6 -79 7 -157 29 -186 53 -19 15 -24 29 -24 64 0 36 9 57 49 118 27 41 77 108 110 149 61 76 292 322 307 328 4 2 24 -27 43 -65 43 -84 46 -78 6 10 -16 37 -30 70 -30 74 0 5 10 14 21 22 18 11 23 11 31 -1 7 -9 8 -7 3 8 -5 18 18 44 127 149 143 136 166 154 173 133 6 -20 170 -843 206 -1033 17 -93 40 -191 50 -217 23 -59 282 -558 287 -553 2 1 -5 20 -16 42 -11 21 -47 106 -81 188 -34 83 -89 205 -122 271 -49 98 -63 138 -75 210 -73 455 -75 471 -185 1004 l-30 145 23 18 c23 18 92 76 158 132 19 17 69 57 110 90 41 33 77 63 78 68 2 4 10 7 17 7 7 0 15 4 17 9 2 7 125 100 179 136 9 6 51 33 95 62 43 28 90 61 102 72 13 12 28 21 32 21 5 0 29 13 53 30 25 17 48 30 51 30 3 0 6 -24 6 -52 0 -66 39 -588 46 -607 12 -35 13 6 4 125 -5 71 -12 228 -15 349 l-7 220 47 28 c25 15 50 27 55 27 6 0 10 3 10 8 0 4 17 16 38 27 20 11 39 23 42 26 3 4 21 14 40 23 19 9 49 25 65 35 30 19 152 81 210 106 17 7 75 35 130 63 105 52 358 162 372 161 4 0 -35 -23 -87 -50 -111 -59 -103 -58 40 4 58 25 143 57 190 72 47 15 90 29 96 32 6 2 32 -24 57 -59 25 -35 98 -121 162 -193 175 -194 175 -193 175 -285 0 -180 -52 -318 -230 -614 -70 -116 -146 -247 -170 -291 l-42 -80 71 75 c196 207 329 435 382 657 18 73 20 108 16 204 -3 75 -10 126 -20 146 -9 16 -66 85 -129 154 -112 122 -248 283 -248 291 0 3 19 10 43 17 67 20 164 70 180 94 28 44 28 83 1 123 -33 47 -58 69 -113 95 -56 26 -104 22 -231 -20 -50 -17 -95 -31 -100 -31 -17 0 -91 159 -111 238 -11 43 -19 110 -19 156 -1 142 -18 309 -40 378 -55 179 -200 303 -459 392 -116 40 -146 40 -55 0 205 -91 265 -125 338 -194 80 -77 127 -152 146 -240 7 -30 16 -149 20 -265 6 -171 11 -220 28 -265 26 -75 59 -137 94 -182 l28 -36 -162 -80 c-266 -129 -614 -336 -778 -462 -19 -15 -48 -35 -63 -45 l-29 -18 7 194 c4 107 9 212 11 234 12 131 15 629 5 761 -37 466 -69 573 -214 717 -74 73 -168 140 -290 207 -64 35 -89 43 -140 46 -34 1 -71 1 -82 -2z m-872 -2774 c14 -41 76 -185 137 -319 611 -241 111 -244 92 -263 -19 -19 -20 -18 -75 129 -67 176 -175 476 -188 517 -18 59 9 9 34 -64z"/>
+          <path d="M5282 3060 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5322 2580 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5332 2470 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M4065 2325 c34 -109 49 -199 48 -300 0 -121 -10 -161 -70 -280 -74 -145 -132 -212 -472 -535 -278 -265 -438 -470 -570 -729 -64 -126 -85 -192 -26 -82 75 140 317 425 460 544 143 94 445 399 506 466 214 233 287 499 205 745 -22 66 -98 227 -81 171z"/>
+          <path d="M5350 2278 c-1 -36 57 -172 166 -393 139 -283 166 -354 265 -720 98 -357 171 -607 176 -601 5 8 -219 891 -258 1004 -23 64 -70 176 -105 247 -126 258 -243 480 -244 463z" />
+        </g>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="bg-white/30 backdrop-blur-md p-4 rounded-xl inline-block">
+        <p class="text-stone-700 font-semibold text-lg mb-1">Ваше лучшее фото</p>
+        <div class="text-sm max-w-xs mx-auto mb-3 text-stone-500 text-left px-2 sm:px-0">
+          <p class="font-semibold text-stone-600 mb-2">Чтобы сэкономить кредиты, используйте качественное фото:</p>
+          <ul class="list-disc list-inside space-y-1 text-stone-600">
+            <li>хорошее освещение, лицо в фокусе;</li>
+            <li>без других людей в кадре;</li>
+            <li class="font-semibold text-red-500">поясной портрет до бедер, как на рисунке.</li>
+          </ul>
+        </div>
+        <div class="p-2 bg-stone-100/50 border border-stone-300/80 rounded-lg transition-colors duration-200 inline-block">
+          <p class="text-stone-700 text-xs font-medium">Нажмите или перетащите файл</p>
+          <p class="text-xs text-stone-400 mt-1">PNG, JPG, WEBP</p>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function applyPromoCode() {
+    if (!promoCodeInput) return;
+    const code = promoCodeInput.value.trim().toUpperCase();
+    if (!code) { showStatusError("Пожалуйста, введите промокод."); return; }
+    const usedCodes: string[] = JSON.parse(localStorage.getItem('usedPromoCodes') || '[]');
+    if (usedCodes.includes(code)) {
+        showStatusError("Этот промокод уже был использован.");
+        promoCodeInput.value = '';
+        return;
     }
-     console.log("Очистка завершена.");
+    const promo = PROMO_CODES[code];
+    if (promo?.type === 'credits') {
+        generationCredits += promo.value;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        usedCodes.push(code);
+        localStorage.setItem('usedPromoCodes', JSON.stringify(usedCodes));
+        statusEl.innerHTML = `<span class="text-green-400">${promo.message}</span>`;
+        promoCodeInput.value = '';
+    } else {
+        showStatusError("Неверный промокод.");
+    }
+}
+
+// --- Auth Functions ---
+async function handleCredentialResponse(response: any) {
+    try {
+        // Use the token to log in to our backend
+        const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
+        
+        // Store the token in localStorage to persist the session
+        localStorage.setItem('idToken', response.credential);
+        idToken = response.credential; // Also keep it in memory
+        
+        isLoggedIn = true;
+        userProfile = serverProfile;
+        generationCredits = credits;
+
+        // Update UI
+        updateAuthUI();
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
+
+    } catch (error) {
+        console.error("Login failed:", error);
+        const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка входа.";
+        showStatusError(`Не удалось войти: ${errorMessage}`);
+        // If login fails, ensure we are fully signed out
+        signOut();
+    }
+}
+
+function signOut() {
+    // Clear token from memory and localStorage
+    idToken = null; 
+    localStorage.removeItem('idToken');
+
+    isLoggedIn = false;
+    userProfile = null;
+    generationCredits = 0; // Reset credits on sign out
+    
+    // Tell Google to forget the user for auto-login
+    if ((window as any).google) {
+        (window as any).google.accounts.id.disableAutoSelect();
+    }
+    
+    // Update UI to reflect signed-out state
+    updateAuthUI();
+    updateCreditCounterUI();
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    if(statusEl) statusEl.innerText = "Вы вышли из системы.";
+}
+
+function updateAuthUI() {
+    if (isLoggedIn && userProfile) {
+        googleSignInContainer.classList.add('hidden');
+        userProfileContainer.classList.remove('hidden');
+        userProfileImage.src = userProfile.picture;
+        userProfileName.textContent = userProfile.name.split(' ')[0]; // Show first name
+    } else {
+        googleSignInContainer.classList.remove('hidden');
+        userProfileContainer.classList.add('hidden');
+        userProfileImage.src = '';
+        userProfileName.textContent = '';
+    }
 }
 
 
-// --- Entry Point ---
-window.addEventListener('DOMContentLoaded', () => {
-    clearCacheAndServiceWorkers().then(() => {
-        main();
+// --- MAIN APP INITIALIZATION ---
+document.addEventListener('DOMContentLoaded', async () => {
+  /* --- Service Worker Registration DISABLED ---
+  // We are not registering a new service worker for now to avoid caching issues.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').then(registration => {
+        console.log('ServiceWorker registration successful with scope: ', registration.scope);
+      }, err => {
+        console.log('ServiceWorker registration failed: ', err);
+      });
     });
+  }
+  */
+
+  // --- DOM Element Selection (Safe Zone) ---
+  lightboxOverlay = document.querySelector('#lightbox-overlay')!;
+  lightboxImage = document.querySelector('#lightbox-image')!;
+  lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
+  statusEl = document.querySelector('#status')!;
+  planButtonsContainer = document.querySelector('#plan-buttons')!;
+  generateButton = document.querySelector('#generate-button')!;
+  resetButton = document.querySelector('#reset-button')!;
+  outputGallery = document.querySelector('#output-gallery')!;
+  uploadContainer = document.querySelector('#upload-container')!;
+  imageUpload = document.querySelector('#image-upload')!;
+  referenceImagePreview = document.querySelector('#reference-image-preview')!;
+  uploadPlaceholder = document.querySelector('#upload-placeholder')!;
+  customPromptInput = document.querySelector('#custom-prompt-input')!;
+  referenceDownloadButton = document.querySelector('#reference-download-button')!;
+  paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
+  paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
+  paymentCloseButton = document.querySelector('#payment-close-button')!;
+  creditCounterEl = document.querySelector('#credit-counter')!;
+  promoCodeInput = document.querySelector('#promo-code-input')!;
+  applyPromoButton = document.querySelector('#apply-promo-button')!;
+  authContainer = document.getElementById('auth-container') as HTMLDivElement;
+  googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
+  userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
+  userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
+  userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
+
+  try {
+    // User starts with 0 and receives them from the server upon login.
+    generationCredits = 0;
+    updateCreditCounterUI(); 
+
+    // Initialize Google Auth
+    (window as any).google?.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleCredentialResponse
+    });
+    (window as any).google?.accounts.id.renderButton(
+      googleSignInContainer,
+      { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" } 
+    );
+     
+    // --- AUTO-LOGIN LOGIC ---
+    const storedToken = localStorage.getItem('idToken');
+    if (storedToken) {
+        statusEl.innerText = 'Восстанавливаем сессию...';
+        await handleCredentialResponse({ credential: storedToken });
+    } else {
+        // If no token, show the One Tap prompt for returning users.
+        (window as any).google?.accounts.id.prompt();
+    }
+
+    const response = await fetch('/prompts.json');
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    prompts = await response.json();
+    
+    // --- Initial UI Setup & Event Listeners ---
+    const placeholderHtml = getUploaderPlaceholderHtml();
+    document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
+    uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
+
+
+    setupNavigation();
+    initializePage1Wizard();
+    
+    selectPlan(selectedPlan);
+    initializePoseSequences();
+
+    // --- Attach all event listeners now that elements are guaranteed to exist ---
+    lightboxOverlay.addEventListener('click', (e) => {
+        // Only close if the dark background itself is clicked, not children like the image or button.
+        if (e.target === lightboxOverlay) {
+          hideLightbox();
+        }
+    });
+    lightboxCloseButton.addEventListener('click', hideLightbox);
+
+    generateButton.addEventListener('click', generate);
+    resetButton.addEventListener('click', resetApp);
+    applyPromoButton.addEventListener('click', applyPromoCode);
+    promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
+    paymentConfirmButton.addEventListener('click', handlePaymentConfirmation);
+    paymentCloseButton.addEventListener('click', hidePaymentModal);
+    paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
+    creditCounterEl.addEventListener('click', showPaymentModal);
+    userProfileContainer.addEventListener('click', signOut);
+    
+    paymentProceedButton.addEventListener('click', () => {
+        paymentSelectionView.classList.add('hidden');
+        paymentProcessingView.classList.remove('hidden');
+        setTimeout(() => {
+            paymentProcessingView.classList.add('hidden');
+            paymentFinalView.classList.remove('hidden');
+        }, 2000);
+    });
+
+    paymentMethodsContainer.addEventListener('click', (e) => {
+        const methodButton = (e.target as HTMLElement).closest('.payment-method');
+        if (methodButton) {
+            paymentMethodsContainer.querySelectorAll('.payment-method').forEach(btn => btn.classList.remove('selected'));
+            methodButton.classList.add('selected');
+        }
+    });
+
+    referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
+    
+    planButtonsContainer.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-plan]');
+      if (button?.dataset.plan) selectPlan(button.dataset.plan);
+    });
+
+    const handlePage2Upload = (file: File) => {
+      if (!file || !file.type.startsWith('image/')) { showStatusError('Пожалуйста, выберите файл изображения.'); return; }
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const dataUrl = e.target?.result as string;
+        if (dataUrl) {
+          const [header, base64] = dataUrl.split(',');
+          const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+          const originalImageState = { base64, mimeType };
+          
+          const overlay = document.createElement('div');
+          overlay.className = 'analysis-overlay';
+          overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
+          uploadContainer.appendChild(overlay);
+          const overlayText = overlay.querySelector('p');
+          setControlsDisabled(true);
+          setWizardStep('NONE');
+
+          try {
+            let imageState = await resizeImage(originalImageState);
+
+            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
+            const processedImageState = await new Promise<ImageState>((resolve) => {
+                const img = new Image();
+                img.onload = async () => {
+                    if (img.width > img.height) { // Only process horizontal images
+                        if (overlayText) overlayText.textContent = 'Анализ композиции...';
+                        try {
+                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                            if (boundingBox) {
+                                const originalWidth = img.width;
+                                const originalHeight = img.height;
+                                const targetAspectRatio = 4 / 5;
+                                const newWidth = originalHeight * targetAspectRatio;
+                                
+                                if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
+                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                    let cropX = personCenterX - (newWidth / 2);
+                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = newWidth;
+                                    canvas.height = originalHeight;
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                        const [, croppedBase64] = croppedDataUrl.split(',');
+                                        console.log("Изображение успешно обрезано до вертикального формата.");
+                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch (cropError) {
+                            console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
+                        }
+                    }
+                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
+                };
+                img.onerror = () => {
+                    console.error("Не удалось загрузить изображение для проверки размеров.");
+                    resolve(imageState);
+                };
+                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+            });
+            // --- END OF AUTO-CROP LOGIC ---
+            
+            imageState = processedImageState;
+            const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+
+            referenceImage = imageState;
+            referenceImagePreview.src = finalDataUrl;
+            referenceImagePreview.classList.remove('hidden');
+            referenceDownloadButton.href = finalDataUrl;
+            referenceDownloadButton.download = `reference-${Date.now()}.png`;
+            referenceDownloadButton.classList.remove('hidden');
+            uploadPlaceholder.classList.add('hidden');
+            uploadContainer.classList.remove('aspect-square');
+            outputGallery.innerHTML = '';
+            
+            if (overlayText) overlayText.textContent = 'Анализ фото...';
+
+            statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
+            
+            const { category, smile } = await checkImageSubject(imageState);
+            detectedSubjectCategory = category;
+            detectedSmileType = smile;
+            initializePoseSequences();
+            if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
+            const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
+            statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
+            setWizardStep('PAGE2_PLAN');
+
+          } catch (e) { 
+            showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
+            resetApp();
+          }
+          finally { 
+              overlay.remove();
+              setControlsDisabled(false); 
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    };
+    
+    imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
+    
+    uploadContainer.addEventListener('click', (e) => {
+      // Если изображение загружено и клик происходит именно по нему, открываем лайтбокс
+      if (referenceImage && e.target === referenceImagePreview) {
+        openLightbox(referenceImagePreview.src);
+      } else if (!(e.target as HTMLElement).closest('a')) {
+        // В противном случае (если клик по пустой области или плейсхолдеру и не по ссылке) открываем диалог загрузки файла
+        imageUpload.click();
+      }
+    });
+
+    ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
+        e.preventDefault(); e.stopPropagation();
+        if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
+        if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
+        if (eventName === 'drop' && (e as DragEvent).dataTransfer?.files?.[0]) {
+            imageUpload.files = (e as DragEvent).dataTransfer.files;
+            imageUpload.dispatchEvent(new Event('change'));
+        }
+    }));
+
+    (window as any).navigateToPage('page1');
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    updateAuthUI();
+
+  } catch (error) {
+    console.error("Fatal Error: Could not load prompts configuration.", error);
+    document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
+  }
 });
