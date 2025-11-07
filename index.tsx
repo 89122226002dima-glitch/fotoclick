@@ -311,7 +311,7 @@ function openLightbox(imageUrl: string) {
 
 async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCredits: number }> {
    try {
-        const data = await callApi('/api/generateVariation', { prompt, mainImage: image });
+        const data = await callApi('/api/generateVariation', { prompt, image: image });
         return { imageUrl: data.imageUrl, newCredits: data.newCredits };
     } catch (e) {
         console.error('generateVariation failed:', e);
