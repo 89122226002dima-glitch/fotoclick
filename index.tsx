@@ -484,7 +484,6 @@ function updateAllGenerateButtons() {
             }
         }
     }
-    updateCreditCounterUI();
 }
 
 
@@ -512,6 +511,8 @@ async function generate() {
     showStatusError('Пожалуйста, загрузите изображение-референс человека.');
     return;
   }
+
+  initializePoseSequences(); // Re-shuffle poses for every new generation batch.
 
   const progressContainer = document.querySelector('#progress-container') as HTMLDivElement;
   const progressBar = document.querySelector('#progress-bar') as HTMLDivElement;
