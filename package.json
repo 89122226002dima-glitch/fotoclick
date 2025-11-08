@@ -15,7 +15,7 @@
     "google-auth-library": "^9.11.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "yookassa": "^1.1.1"
+    "yookassa": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.2",
