@@ -1,4 +1,4 @@
-// server.js - Финальная, стабильная версия с корректной архитектурой.
+// server.js - Финальная, стабильная версия с корректной архитектурой и YooKassa.
 
 import express from 'express';
 import cors from 'cors';
@@ -7,41 +7,51 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
+import { Yookassa } from 'yookassa';
+import { randomUUID } from 'crypto';
 
 dotenv.config();
 
-// --- Диагностика .env для Gemini ---
+// --- Диагностика .env ---
 console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
-if (process.env.API_KEY) {
-  console.log('DIAGNOSTICS: API_KEY успешно загружен.');
+if (!process.env.API_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная API_KEY не найдена.');
+if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная GOOGLE_CLIENT_ID не найдена.');
+if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
+if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
+if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKASSA_SHOP_ID || !process.env.YOOKASSA_SECRET_KEY) {
+  console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Одна или несколько переменных окружения отсутствуют. Сервер не может запуститься.');
+  process.exit(1);
 } else {
-  console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная API_KEY не найдена.');
-}
-if (process.env.GOOGLE_CLIENT_ID) {
-  console.log('DIAGNOSTICS: GOOGLE_CLIENT_ID успешно загружен.');
-} else {
-  console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Переменная GOOGLE_CLIENT_ID не найдена.');
-  console.log('DIAGNOSTICS: СЕРВЕР НЕ МОЖЕТ ЗАПУСТИТЬСЯ! API_key или GOOGLE_CLIENT_ID не найден. Сервер не сможет работать.');
-  process.exit(1); // Exit if critical env vars are missing
+  console.log('DIAGNOSTICS: Все переменные окружения успешно загружены.');
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const yookassa = new Yookassa({
+    shopId: process.env.YOOKASSA_SHOP_ID,
+    secretKey: process.env.YOOKASSA_SECRET_KEY
+});
+
 const app = express();
-const port = 3001; // Используем порт 3001, как указано в паспорте проекта для Caddy
+const port = 3001;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In-memory "database" for user credits
 const userCredits = {};
 const INITIAL_CREDITS = 1;
 
 // --- Middleware ---
+// Raw body is needed for YooKassa webhook
+app.use((req, res, next) => {
+    if (req.path === '/api/payment-webhook') {
+        express.raw({ type: 'application/json' })(req, res, next);
+    } else {
+        express.json({ limit: '10mb' })(req, res, next);
+    }
+});
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
 
-// Middleware to verify Google token from Authorization header
 const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -65,34 +75,25 @@ const verifyToken = async (req, res, next) => {
     }
 };
 
-
-// Middleware to authenticate and charge credits
 const authenticateAndCharge = (cost) => async (req, res, next) => {
-    // First, verify the token to get the user's email
     await verifyToken(req, res, async () => {
         const userEmail = req.userEmail;
         if (!userEmail) {
-            // This case should be handled by verifyToken, but as a safeguard
             return res.status(401).json({ error: 'Не удалось определить пользователя.' });
         }
-
         if (userCredits[userEmail] === undefined) {
              return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
         }
-
         if (userCredits[userEmail] < cost) {
             return res.status(402).json({ error: 'Недостаточно кредитов.' });
         }
-        
         userCredits[userEmail] -= cost;
-        // The user's email is already on req from verifyToken, so we just proceed
         next();
     });
 };
 
 // --- API Routes ---
 
-// Login endpoint
 app.post('/api/login', async (req, res) => {
     const { token } = req.body;
     if (!token) {
@@ -109,7 +110,6 @@ app.post('/api/login', async (req, res) => {
         }
         const { email, name, picture } = payload;
         
-        // If user is new, grant them initial credits
         if (userCredits[email] === undefined) {
             userCredits[email] = INITIAL_CREDITS;
         }
@@ -124,16 +124,71 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Endpoint to add credits (simulated payment)
 app.post('/api/addCredits', verifyToken, (req, res) => {
     const userEmail = req.userEmail;
     if (userCredits[userEmail] === undefined) {
-        // This shouldn't happen for a logged-in user, but handle it
         userCredits[userEmail] = 0;
     }
-    userCredits[userEmail] += 12; // Add 12 credits on "payment"
+    userCredits[userEmail] += 12;
     res.json({ newCredits: userCredits[userEmail] });
 });
+
+// --- YooKassa Integration ---
+app.post('/api/create-payment', verifyToken, async (req, res) => {
+    try {
+        const userEmail = req.userEmail;
+        const idempotenceKey = randomUUID();
+        const payment = await yookassa.createPayment({
+            amount: {
+                value: '79.00',
+                currency: 'RUB'
+            },
+            payment_method_data: {
+                type: 'bank_card'
+            },
+            confirmation: {
+                type: 'redirect',
+                return_url: 'https://photo-click-ai.ru/?payment_status=success'
+            },
+            description: 'Пакет "12 фотографий" для photo-click-ai.ru',
+            metadata: {
+                userEmail: userEmail
+            },
+            capture: true
+        }, idempotenceKey);
+
+        res.json({ confirmationUrl: payment.confirmation.confirmation_url });
+    } catch (error) {
+        console.error('Ошибка создания платежа YooKassa:', error);
+        res.status(500).json({ error: 'Не удалось создать платеж.' });
+    }
+});
+
+app.post('/api/payment-webhook', (req, res) => {
+    try {
+        const notification = req.body;
+        console.log('Получено уведомление от YooKassa:', notification);
+
+        if (notification.event === 'payment.succeeded') {
+            const payment = notification.object;
+            const userEmail = payment.metadata.userEmail;
+            if (userEmail) {
+                if (userCredits[userEmail] === undefined) {
+                    userCredits[userEmail] = 0;
+                }
+                userCredits[userEmail] += 12;
+                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${userCredits[userEmail]}`);
+            } else {
+                console.error('Webhook: userEmail не найден в метаданных платежа.');
+            }
+        }
+        res.status(200).send('OK');
+    } catch (error) {
+        console.error('Ошибка обработки webhook от YooKassa:', error);
+        res.status(500).send('Webhook processing error');
+    }
+});
+
 
 // Check image subject endpoint
 app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) => { // 0 cost for analysis

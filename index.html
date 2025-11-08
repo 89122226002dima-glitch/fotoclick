@@ -28,7 +28,9 @@
     "dotenv": "https://aistudiocdn.com/dotenv@^17.2.3",
     "@google-cloud/aiplatform": "https://aistudiocdn.com/@google-cloud/aiplatform@^5.11.0",
     "module": "https://aistudiocdn.com/module@^1.2.5",
-    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.5.0"
+    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.5.0",
+    "crypto": "https://aistudiocdn.com/crypto@^1.0.1",
+    "yookassa": "https://aistudiocdn.com/yookassa@^0.1.1"
   }
 }
 </script>
@@ -319,6 +321,16 @@
 
         </div>
 
+        <footer class="app-footer">
+          <p>Самозанятый: Кайгородов Дмитрий Николаевич | ИНН: 666002617267</p>
+          <p>Для связи: WhatsApp +79292216920</p>
+          <div class="footer-links">
+            <a href="#">Пользовательское соглашение</a>
+            <span>&bull;</span>
+            <a href="#">Политика конфиденциальности</a>
+          </div>
+        </footer>
+
       </div>
     </div>
     
@@ -338,14 +350,14 @@
         <!-- Step 1: Selection -->
         <div id="payment-selection-view">
             <div class="text-center">
-                <h2 id="payment-modal-title" class="text-2xl font-bold mb-2">Разблокируйте больше генераций!</h2>
-                <p id="payment-modal-description" class="mb-6">Чтобы получить <strong>12 дополнительных генераций</strong> в разделе "4 Вариации", пожалуйста, произведите оплату.</p>
+                <h2 id="payment-modal-title" class="text-2xl font-bold mb-2">Разблокируйте больше фотографий!</h2>
+                <p id="payment-modal-description" class="mb-6">Чтобы получить <strong>пакет '12 фотографий'</strong>, пожалуйста, произведите оплату.</p>
             </div>
             
             <div class="bg-gray-800/50 border border-[var(--border-color)] rounded-lg p-6 flex flex-col items-center gap-4">
                  <div class="w-full text-center">
                      <p class="text-sm">Сумма к оплате</p>
-                     <p class="text-3xl font-bold">199 ₽</p>
+                     <p class="text-3xl font-bold">79 ₽</p>
                  </div>
                  
                  <div class="w-full h-px bg-[var(--border-color)] my-2"></div>
@@ -379,10 +391,10 @@
         <div id="payment-final-view" class="hidden text-center">
             <h2 class="text-2xl font-bold mb-4">Подтверждение оплаты</h2>
             <div class="bg-gray-800/50 border border-[var(--border-color)] rounded-lg p-6 flex flex-col items-center gap-4">
-                <p>Вы собираетесь оплатить <strong>199 ₽</strong> за пакет <strong>"12 генераций"</strong>.</p>
+                <p>Вы собираетесь оплатить <strong>79 ₽</strong> за пакет <strong>"12 фотографий"</strong>.</p>
                 <p class="text-xs text-gray-500">Это симуляция. Нажмите "Оплатить" для получения кредитов.</p>
                 <button id="payment-confirm-button" class="btn-primary w-full mt-4" style="background: linear-gradient(45deg, #10B981, #34D399);">
-                    Оплатить 199 ₽
+                    Оплатить 79 ₽
                 </button>
             </div>
         </div>

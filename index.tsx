@@ -500,7 +500,7 @@ async function generate() {
       const modalTitle = document.querySelector('#payment-modal-title');
       const modalDescription = document.querySelector('#payment-modal-description');
       if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-      if (modalDescription) modalDescription.innerHTML = `У вас осталось ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Чтобы получить <strong>12 дополнительных генераций</strong> за 199 ₽, пожалуйста, произведите оплату.`;
+      if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 79 ₽.`;
       
       setWizardStep('CREDITS');
       showPaymentModal();
@@ -854,7 +854,7 @@ function showPaymentModal() {
     if (paymentModalOverlay) {
         paymentSelectionView.classList.remove('hidden');
         paymentProcessingView.classList.add('hidden');
-        paymentFinalView.classList.add('hidden');
+        paymentFinalView.classList.add('hidden'); // Ensure this is hidden initially
         paymentModalOverlay.classList.remove('hidden');
     }
 }
@@ -869,18 +869,20 @@ function hidePaymentModal() {
     }
 }
 
-async function handlePaymentConfirmation() {
+async function handlePayment() {
+    paymentSelectionView.classList.add('hidden');
+    paymentProcessingView.classList.remove('hidden');
+
     try {
-        const { newCredits } = await callApi('/api/addCredits', {});
-        generationCredits = newCredits;
-        updateCreditCounterUI();
-        hidePaymentModal();
-        updatePage1WizardState();
-        updateAllGenerateButtons();
-        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Оплата прошла успешно! Вам начислено 12 генераций.</span>`;
+        const { confirmationUrl } = await callApi('/api/create-payment', {});
+        // Redirect user to YooKassa payment page
+        window.location.href = confirmationUrl;
     } catch (error) {
         const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
-        showStatusError(`Не удалось пополнить кредиты: ${message}`);
+        showStatusError(`Не удалось создать платеж: ${message}`);
+        // Revert modal to selection view on error
+        paymentProcessingView.classList.add('hidden');
+        paymentSelectionView.classList.remove('hidden');
     }
 }
 
@@ -1453,6 +1455,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         // If no token, show the One Tap prompt for returning users.
         (window as any).google?.accounts.id.prompt();
     }
+    
+    // --- Handle post-payment redirect ---
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('payment_status') === 'success') {
+      statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
+      // Clean the URL to avoid showing the message on every refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1483,20 +1494,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     resetButton.addEventListener('click', resetApp);
     applyPromoButton.addEventListener('click', applyPromoCode);
     promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
-    paymentConfirmButton.addEventListener('click', handlePaymentConfirmation);
+    
     paymentCloseButton.addEventListener('click', hidePaymentModal);
     paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
     creditCounterEl.addEventListener('click', showPaymentModal);
     userProfileContainer.addEventListener('click', signOut);
     
-    paymentProceedButton.addEventListener('click', () => {
-        paymentSelectionView.classList.add('hidden');
-        paymentProcessingView.classList.remove('hidden');
-        setTimeout(() => {
-            paymentProcessingView.classList.add('hidden');
-            paymentFinalView.classList.remove('hidden');
-        }, 2000);
-    });
+    paymentProceedButton.addEventListener('click', handlePayment);
 
     paymentMethodsContainer.addEventListener('click', (e) => {
         const methodButton = (e.target as HTMLElement).closest('.payment-method');
