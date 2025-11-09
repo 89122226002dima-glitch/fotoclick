@@ -7,8 +7,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
-import YookassaClient from 'yookassa';
-const { Yookassa } = YookassaClient;
+import Yookassa from 'yookassa'; // ИСПРАВЛЕНО: Правильный импорт для совместимости.
 import { randomUUID } from 'crypto';
 
 dotenv.config();
@@ -167,7 +166,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
 
 app.post('/api/payment-webhook', (req, res) => {
     try {
-        const notification = req.body;
+        const notification = JSON.parse(req.body); // YooKassa sends raw JSON
         console.log('Получено уведомление от YooKassa:', notification);
 
         if (notification.event === 'payment.succeeded') {
