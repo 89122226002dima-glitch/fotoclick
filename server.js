@@ -9,10 +9,8 @@ import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
 
-// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const Yookassa = require('yookassa');
+// --- ИСПРАВЛЕНИЕ: Используем стандартный import для ES-модулей ---
+import Yookassa from 'yookassa';
 // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 dotenv.config();

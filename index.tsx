@@ -859,6 +859,21 @@ async function showPaymentModal() {
     widgetContainer.innerHTML = `<div class="loading-spinner large mx-auto"></div><p class="mt-4 text-center">Загрузка формы оплаты...</p>`;
 
     try {
+        // ИСПРАВЛЕНИЕ: Добавляем поллер для ожидания загрузки виджета YooKassa
+        await new Promise<void>((resolve, reject) => {
+            let attempts = 0;
+            const interval = setInterval(() => {
+                if ((window as any).YooKassaCheckoutWidget) {
+                    clearInterval(interval);
+                    resolve();
+                } else if (attempts++ > 50) { // Тайм-аут через 5 секунд
+                    clearInterval(interval);
+                    reject(new Error("Не удалось загрузить скрипт виджета YooKassa."));
+                }
+            }, 100);
+        });
+        // КОНЕЦ ИСПРАВЛЕНИЯ
+
         const { confirmationToken } = await callApi('/api/create-payment', {});
         
         if (yooKassaWidget) {
@@ -873,8 +888,8 @@ async function showPaymentModal() {
             },
             error_callback: function(error: any) {
                 console.error('YooKassa Widget Error:', error);
-                showStatusError(`Ошибка виджета оплаты: ${error?.message || 'Неизвестная ошибка'}`);
-                hidePaymentModal();
+                const message = error?.message || 'Неизвестная ошибка.';
+                displayErrorInContainer(widgetContainer, `Ошибка виджета оплаты: ${message}`);
             }
         });
         
