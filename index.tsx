@@ -859,29 +859,30 @@ async function showPaymentModal() {
     widgetContainer.innerHTML = `<div class="loading-spinner large mx-auto"></div><p class="mt-4 text-center">Загрузка формы оплаты...</p>`;
 
     try {
-        // ИСПРАВЛЕНИЕ: Добавляем поллер для ожидания загрузки виджета YooKassa
-        await new Promise<void>((resolve, reject) => {
+        // ИСПРАВЛЕНИЕ: Сначала получаем токен, потом ждем виджет.
+        // Шаг 1: Получаем токен с нашего сервера. Это происходит параллельно с загрузкой скрипта YooKassa.
+        const { confirmationToken } = await callApi('/api/create-payment', {});
+
+        // Шаг 2: Теперь ждем, пока скрипт виджета будет готов.
+        const checkoutWidget = await new Promise<any>((resolve, reject) => {
             let attempts = 0;
             const interval = setInterval(() => {
                 if ((window as any).YooKassaCheckoutWidget) {
                     clearInterval(interval);
-                    resolve();
-                } else if (attempts++ > 50) { // Тайм-аут через 5 секунд
+                    resolve((window as any).YooKassaCheckoutWidget);
+                } else if (attempts++ > 100) { // Увеличенный тайм-аут до 10 секунд
                     clearInterval(interval);
-                    reject(new Error("Не удалось загрузить скрипт виджета YooKassa."));
+                    reject(new Error("Скрипт виджета YooKassa не загрузился. Проверьте интернет или отключите блокировщики рекламы."));
                 }
             }, 100);
         });
-        // КОНЕЦ ИСПРАВЛЕНИЯ
-
-        const { confirmationToken } = await callApi('/api/create-payment', {});
         
         if (yooKassaWidget) {
             yooKassaWidget.destroy();
             yooKassaWidget = null;
         }
 
-        yooKassaWidget = new (window as any).YooKassaCheckoutWidget({
+        yooKassaWidget = new checkoutWidget({
             confirmation_token: confirmationToken,
             customization: {
                 payment_methods: ['bank_card', 'sberbank', 'sbp']

@@ -8,9 +8,11 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
+import { createRequire } from 'module';
 
-// --- ИСПРАВЛЕНИЕ: Используем стандартный import для ES-модулей ---
-import Yookassa from 'yookassa';
+// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CJS-пакета в ES-модуле ---
+const require = createRequire(import.meta.url);
+const Yookassa = require('yookassa');
 // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 dotenv.config();
