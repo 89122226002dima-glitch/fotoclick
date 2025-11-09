@@ -161,53 +161,36 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
 // --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
-        const { paymentMethod } = req.body;
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
-        
-        let paymentPayload;
 
-        if (paymentMethod === 'sberpay') {
-            paymentPayload = {
-                amount: { value: '79.00', currency: 'RUB' },
-                payment_method_data: { type: 'sbp' }, // ИЗМЕНЕНО: Используем универсальный СБП
-                confirmation: {
-                    type: 'redirect', // YooKassa сама решит, как лучше перенаправить (QR или приложение)
-                    return_url: 'https://photo-click-ai.ru/?payment_status=success'
-                },
-                description: 'Пакет "12 фотографий" для photo-click-ai.ru',
-                metadata: { userEmail: userEmail },
-                capture: true
-            };
-        } else { // Default to bank card
-            paymentPayload = {
-                amount: {
-                    value: '79.00',
-                    currency: 'RUB'
-                },
-                payment_method_data: {
-                    type: 'bank_card'
-                },
-                confirmation: {
-                    type: 'redirect',
-                    return_url: 'https://photo-click-ai.ru/?payment_status=success'
-                },
-                description: 'Пакет "12 фотографий" для photo-click-ai.ru',
-                metadata: {
-                    userEmail: userEmail
-                },
-                capture: true
-            };
-        }
+        // Универсальный запрос, который позволяет YooKassa отобразить все доступные способы оплаты.
+        // Мы больше не указываем 'payment_method_data'.
+        const paymentPayload = {
+            amount: {
+                value: '79.00',
+                currency: 'RUB'
+            },
+            confirmation: {
+                type: 'redirect',
+                return_url: 'https://photo-click-ai.ru/?payment_status=success'
+            },
+            description: 'Пакет "12 фотографий" для photo-click-ai.ru',
+            metadata: {
+                userEmail: userEmail
+            },
+            capture: true
+        };
 
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
     } catch (error) {
-        console.error('Ошибка создания платежа YooKassa:', error);
-        res.status(500).json({ error: 'Не удалось создать платеж.' });
+        console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
     }
 });
+
 
 app.post('/api/payment-webhook', (req, res) => {
     try {
