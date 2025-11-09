@@ -7,8 +7,13 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
-import Yookassa from 'yookassa'; // ИСПРАВЛЕНО: Правильный импорт для совместимости.
 import { randomUUID } from 'crypto';
+
+// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const Yookassa = require('yookassa');
+// --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 dotenv.config();
 
