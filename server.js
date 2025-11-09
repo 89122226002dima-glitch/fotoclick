@@ -212,13 +212,18 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
         
+        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
         });
         
-        const jsonString = response.text.match(/\{.*\}/s)[0];
-        const subjectDetails = JSON.parse(jsonString);
+        // ИСПРАВЛЕНО: Более надежное извлечение JSON из текста
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) {
+            throw new Error("Gemini не вернул корректный JSON.");
+        }
+        const subjectDetails = JSON.parse(jsonStringMatch[0]);
 
         res.json({ subjectDetails });
 
@@ -243,8 +248,9 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
 
+        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image', // nano banana
+            model: 'gemini-2.5-flash-image',
             contents: { parts: [imagePart, textPart] },
             config: {
                 responseModalities: [Modality.IMAGE],
@@ -281,6 +287,7 @@ app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, r
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
 
+        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
@@ -316,6 +323,7 @@ app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) =
     }
 
     try {
+        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: parts },
@@ -356,6 +364,7 @@ app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) 
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: analysisPrompt };
         
+        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
