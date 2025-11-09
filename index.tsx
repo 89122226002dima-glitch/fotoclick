@@ -58,11 +58,12 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     planButtonsContainer: HTMLDivElement, generateButton: HTMLButtonElement, resetButton: HTMLButtonElement,
     outputGallery: HTMLDivElement, uploadContainer: HTMLDivElement, imageUpload: HTMLInputElement,
     referenceImagePreview: HTMLImageElement, uploadPlaceholder: HTMLDivElement, customPromptInput: HTMLInputElement,
-    referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
-    paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
+    referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement,
+    creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
     applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
     userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement,
-    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement;
+    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement,
+    paymentProceedButton: HTMLButtonElement, paymentCloseButton: HTMLButtonElement;
 
 
 // --- State Variables ---
@@ -849,7 +850,6 @@ async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; ge
 const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
 const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
 const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
-const paymentProceedButton = document.querySelector('#payment-proceed-button') as HTMLButtonElement;
 
 
 function showPaymentModal() {
@@ -1331,6 +1331,9 @@ function applyPromoCode() {
 // --- Auth Functions ---
 async function handleCredentialResponse(response: any) {
     try {
+        if (!response.credential) {
+            throw new Error("Credential not found in Google's response.");
+        }
         // Use the token to log in to our backend
         const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
         
@@ -1368,7 +1371,7 @@ function signOut() {
     generationCredits = 0; // Reset credits on sign out
     
     // Tell Google to forget the user for auto-login
-    if ((window as any).google) {
+    if ((window as any).google && (window as any).google.accounts) {
         (window as any).google.accounts.id.disableAutoSelect();
     }
     
@@ -1397,18 +1400,22 @@ function updateAuthUI() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  /* --- Service Worker Registration DISABLED ---
-  // We are not registering a new service worker for now to avoid caching issues.
+  // --- AGGRESSIVE CACHE & SERVICE WORKER CLEANUP ---
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js').then(registration => {
-        console.log('ServiceWorker registration successful with scope: ', registration.scope);
-      }, err => {
-        console.log('ServiceWorker registration failed: ', err);
-      });
-    });
+    try {
+        console.log('Checking for service workers and caches to clear...');
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const registration of registrations) {
+            await registration.unregister();
+            console.log('ServiceWorker unregistered successfully:', registration.scope);
+        }
+        const keys = await caches.keys();
+        await Promise.all(keys.map(key => caches.delete(key)));
+        console.log('All caches cleared successfully.');
+    } catch (err) {
+        console.error('Error during SW unregister/cache clear:', err);
+    }
   }
-  */
 
   // --- DOM Element Selection (Safe Zone) ---
   lightboxOverlay = document.querySelector('#lightbox-overlay')!;
@@ -1426,7 +1433,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   customPromptInput = document.querySelector('#custom-prompt-input')!;
   referenceDownloadButton = document.querySelector('#reference-download-button')!;
   paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
-  paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
   paymentCloseButton = document.querySelector('#payment-close-button')!;
   creditCounterEl = document.querySelector('#credit-counter')!;
   promoCodeInput = document.querySelector('#promo-code-input')!;
@@ -1439,6 +1445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+  paymentProceedButton = document.getElementById('payment-proceed-button') as HTMLButtonElement;
 
 
   try {
@@ -1446,31 +1453,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     generationCredits = 0;
     updateCreditCounterUI(); 
 
-    // Initialize Google Auth
-    (window as any).google?.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: handleCredentialResponse
-    });
-    (window as any).google?.accounts.id.renderButton(
-      googleSignInContainer,
-      { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" } 
-    );
-     
-    // --- AUTO-LOGIN LOGIC ---
-    const storedToken = localStorage.getItem('idToken');
-    if (storedToken) {
-        statusEl.innerText = 'Восстанавливаем сессию...';
-        await handleCredentialResponse({ credential: storedToken });
-    } else {
-        // If no token, show the One Tap prompt for returning users.
-        (window as any).google?.accounts.id.prompt();
+    // --- ROBUST GOOGLE AUTH INITIALIZATION ---
+    function initializeGoogleAuth() {
+        if ((window as any).google && (window as any).google.accounts && (window as any).google.accounts.id) {
+            console.log('Google GSI library loaded, initializing auth...');
+            
+            (window as any).google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: handleCredentialResponse
+            });
+
+            (window as any).google.accounts.id.renderButton(
+                googleSignInContainer,
+                { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" }
+            );
+
+            const attemptAutoLogin = async () => {
+                const storedToken = localStorage.getItem('idToken');
+                if (storedToken) {
+                    if (statusEl) statusEl.innerText = 'Восстанавливаем сессию...';
+                    await handleCredentialResponse({ credential: storedToken });
+                } else {
+                    (window as any).google.accounts.id.prompt();
+                }
+            };
+            attemptAutoLogin();
+        } else {
+            console.log('Waiting for Google GSI library...');
+            setTimeout(initializeGoogleAuth, 150);
+        }
     }
-    
+    initializeGoogleAuth();
+     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('payment_status') === 'success') {
       statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
-      // Clean the URL to avoid showing the message on every refresh
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
@@ -1493,7 +1511,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // --- Attach all event listeners now that elements are guaranteed to exist ---
     lightboxOverlay.addEventListener('click', (e) => {
-        // Only close if the dark background itself is clicked, not children like the image or button.
         if (e.target === lightboxOverlay) {
           hideLightbox();
         }
