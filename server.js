@@ -170,7 +170,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
         if (paymentMethod === 'sberpay') {
             paymentPayload = {
                 amount: { value: '79.00', currency: 'RUB' },
-                payment_method_data: { type: 'sberbank' },
+                payment_method_data: { type: 'sbp' }, // ИСПРАВЛЕНО: 'sberbank' -> 'sbp' для QR-кода
                 confirmation: { type: 'qr' }, // Request a QR code
                 description: 'Пакет "12 фотографий" для photo-click-ai.ru',
                 metadata: { userEmail: userEmail },
