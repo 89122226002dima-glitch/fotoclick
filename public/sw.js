@@ -1,4 +1,4 @@
-// sw.js - Service Worker Uninstaller
+// sw.js - Simplified Service Worker Uninstaller
 
 self.addEventListener('install', () => {
   // This service worker is designed to unregister itself and clean up.
@@ -13,18 +13,9 @@ self.addEventListener('activate', (event) => {
     self.registration
       .unregister()
       .then(() => {
-        console.log('[SW-Uninstaller] Unregistration successful.');
-        // After unregistering, find all clients (open tabs) and refresh them
-        // to ensure they are no longer controlled by any service worker.
-        return self.clients.matchAll({ type: 'window' });
-      })
-      .then((clients) => {
-        clients.forEach((client) => {
-          if (client.url && 'navigate' in client) {
-            console.log(`[SW-Uninstaller] Refreshing client: ${client.url}`);
-            client.navigate(client.url);
-          }
-        });
+        console.log('[SW-Uninstaller] Unregistration successful. The browser will use the new version on the next load.');
+        // No longer forcing a refresh on all clients to avoid race conditions.
+        // The page's own cache-busting will handle loading the new version.
       })
   );
 });
