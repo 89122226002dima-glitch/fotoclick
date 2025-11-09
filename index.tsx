@@ -61,7 +61,9 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     referenceDownloadButton: HTMLAnchorElement, paymentModalOverlay: HTMLDivElement, paymentConfirmButton: HTMLButtonElement,
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
     applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
-    userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement;
+    userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement,
+    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement;
+
 
 // --- State Variables ---
 let selectedPlan = 'close_up';
@@ -854,6 +856,7 @@ function showPaymentModal() {
     if (paymentModalOverlay) {
         paymentSelectionView.classList.remove('hidden');
         paymentProcessingView.classList.add('hidden');
+        paymentQrView.classList.add('hidden');
         paymentFinalView.classList.add('hidden'); // Ensure this is hidden initially
         paymentModalOverlay.classList.remove('hidden');
     }
@@ -870,13 +873,26 @@ function hidePaymentModal() {
 }
 
 async function handlePayment() {
+    const selectedMethodEl = paymentMethodsContainer.querySelector('.payment-method.selected');
+    const paymentMethod = selectedMethodEl?.getAttribute('data-method') || 'card';
+
     paymentSelectionView.classList.add('hidden');
     paymentProcessingView.classList.remove('hidden');
 
     try {
-        const { confirmationUrl } = await callApi('/api/create-payment', {});
-        // Redirect user to YooKassa payment page
-        window.location.href = confirmationUrl;
+        const response = await callApi('/api/create-payment', { paymentMethod });
+        const confirmationUrl = response.confirmationUrl;
+        
+        if (confirmationUrl.startsWith('data:image')) {
+            // This is a QR code
+            paymentProcessingView.classList.add('hidden');
+            paymentQrView.classList.remove('hidden');
+            paymentQrImage.src = confirmationUrl;
+        } else {
+            // This is a redirect URL
+            window.location.href = confirmationUrl;
+        }
+
     } catch (error) {
         const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
         showStatusError(`Не удалось создать платеж: ${message}`);
@@ -1430,6 +1446,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
   userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
   userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
+  paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
+  paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
+  paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+
 
   try {
     // User starts with 0 and receives them from the server upon login.
@@ -1501,6 +1521,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     userProfileContainer.addEventListener('click', signOut);
     
     paymentProceedButton.addEventListener('click', handlePayment);
+    paymentBackButton.addEventListener('click', () => {
+        paymentQrView.classList.add('hidden');
+        paymentSelectionView.classList.remove('hidden');
+        if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
+    });
+
 
     paymentMethodsContainer.addEventListener('click', (e) => {
         const methodButton = (e.target as HTMLElement).closest('.payment-method');

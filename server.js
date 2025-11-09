@@ -97,6 +97,26 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
     });
 };
 
+/**
+ * Enhanced error handler for Gemini API calls.
+ * @param {Error} error The error object caught.
+ * @param {string} defaultMessage A default message for the user.
+ * @returns {string} A user-friendly error message.
+ */
+const handleGeminiError = (error, defaultMessage) => {
+    console.error(`Ошибка Gemini: ${error.message}`);
+    // Check for specific API key error message from Google
+    if (error.message && (error.message.includes('API key not valid') || error.message.includes('API_KEY_INVALID'))) {
+        return 'Ошибка: API-ключ Google недействителен. Пожалуйста, проверьте ключ в Google AI Studio и в файле .env на сервере.';
+    }
+    // Check for permission denied errors
+    if (error.message && error.message.toLowerCase().includes('permission denied')) {
+        return 'Ошибка: У API-ключа Google нет необходимых разрешений. Проверьте настройки в Google Cloud.';
+    }
+    return defaultMessage;
+};
+
+
 // --- API Routes ---
 
 app.post('/api/login', async (req, res) => {
@@ -141,26 +161,43 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
 // --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
+        const { paymentMethod } = req.body;
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
-        const payment = await yookassa.createPayment({
-            amount: {
-                value: '79.00',
-                currency: 'RUB'
-            },
-            payment_method_data: {
-                type: 'bank_card'
-            },
-            confirmation: {
-                type: 'redirect',
-                return_url: 'https://photo-click-ai.ru/?payment_status=success'
-            },
-            description: 'Пакет "12 фотографий" для photo-click-ai.ru',
-            metadata: {
-                userEmail: userEmail
-            },
-            capture: true
-        }, idempotenceKey);
+        
+        let paymentPayload;
+
+        if (paymentMethod === 'sberpay') {
+            paymentPayload = {
+                amount: { value: '79.00', currency: 'RUB' },
+                payment_method_data: { type: 'sberbank' },
+                confirmation: { type: 'qr' }, // Request a QR code
+                description: 'Пакет "12 фотографий" для photo-click-ai.ru',
+                metadata: { userEmail: userEmail },
+                capture: true
+            };
+        } else { // Default to bank card
+            paymentPayload = {
+                amount: {
+                    value: '79.00',
+                    currency: 'RUB'
+                },
+                payment_method_data: {
+                    type: 'bank_card'
+                },
+                confirmation: {
+                    type: 'redirect',
+                    return_url: 'https://photo-click-ai.ru/?payment_status=success'
+                },
+                description: 'Пакет "12 фотографий" для photo-click-ai.ru',
+                metadata: {
+                    userEmail: userEmail
+                },
+                capture: true
+            };
+        }
+
+        const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
     } catch (error) {
@@ -212,13 +249,11 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
         
-        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
         });
         
-        // ИСПРАВЛЕНО: Более надежное извлечение JSON из текста
         const jsonStringMatch = response.text.match(/\{.*\}/s);
         if (!jsonStringMatch) {
             throw new Error("Gemini не вернул корректный JSON.");
@@ -228,8 +263,8 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
         res.json({ subjectDetails });
 
     } catch (error) {
-        console.error('Ошибка анализа изображения в Gemini:', error);
-        res.status(500).json({ error: 'Не удалось проанализировать изображение.' });
+        const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
+        res.status(500).json({ error: userMessage });
     }
 });
 
@@ -239,7 +274,6 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
     const userEmail = req.userEmail;
 
     if (!prompt || !image || !image.base64 || !image.mimeType) {
-        // Refund if request is bad
         userCredits[userEmail] += 1;
         return res.status(400).json({ error: 'Отсутствует промпт или изображение.' });
     }
@@ -248,7 +282,6 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
 
-        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: [imagePart, textPart] },
@@ -267,10 +300,9 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
         res.json({ imageUrl, newCredits: userCredits[userEmail] });
 
     } catch (error) {
-        console.error('Ошибка генерации вариации:', error);
-        // Refund credits on failure
-        userCredits[userEmail] += 1;
-        res.status(500).json({ error: 'Не удалось сгенерировать вариацию.' });
+        userCredits[userEmail] += 1; // Refund credits on failure
+        const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариацию.');
+        res.status(500).json({ error: userMessage });
     }
 });
 
@@ -287,7 +319,6 @@ app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, r
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
 
-        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
@@ -307,8 +338,8 @@ app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, r
         res.json({ boundingBox });
 
     } catch (error) {
-        console.error('Ошибка определения ограничивающей рамки в Gemini:', error);
-        res.status(500).json({ error: 'Не удалось определить положение человека на фото.' });
+        const userMessage = handleGeminiError(error, 'Не удалось определить положение человека на фото.');
+        res.status(500).json({ error: userMessage });
     }
 });
 
@@ -323,7 +354,6 @@ app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) =
     }
 
     try {
-        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: parts },
@@ -347,9 +377,9 @@ app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) =
         res.json({ resultUrl, generatedPhotoshootResult, newCredits: userCredits[userEmail] });
 
     } catch (error) {
-        console.error('Ошибка генерации фотосессии:', error);
         userCredits[userEmail] += 1; // Refund
-        res.status(500).json({ error: 'Не удалось сгенерировать фотосессию.' });
+        const userMessage = handleGeminiError(error, 'Не удалось сгенерировать фотосессию.');
+        res.status(500).json({ error: userMessage });
     }
 });
 
@@ -364,7 +394,6 @@ app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) 
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: analysisPrompt };
         
-        // ИСПРАВЛЕНО: Обновлен вызов API до современного формата
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: { parts: [imagePart, textPart] },
@@ -372,8 +401,8 @@ app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) 
 
         res.json({ text: response.text });
     } catch (error) {
-        console.error('Ошибка анализа изображения для текста:', error);
-        res.status(500).json({ error: 'Не удалось проанализировать изображение.' });
+        const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
+        res.status(500).json({ error: userMessage });
     }
 });
 

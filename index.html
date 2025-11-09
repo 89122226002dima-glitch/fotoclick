@@ -387,6 +387,17 @@
             <p class="text-sm mt-1">Это может занять несколько секунд.</p>
         </div>
 
+        <!-- Step 2b: QR Code Display -->
+        <div id="payment-qr-view" class="hidden text-center py-4">
+            <h2 class="text-xl font-bold mb-2">Оплата через SberPay</h2>
+            <p class="mb-4">Отсканируйте QR-код в приложении СберБанк Онлайн</p>
+            <div class="bg-white p-2 rounded-lg inline-block">
+                <img id="payment-qr-image" src="" alt="QR-код для оплаты" class="w-48 h-48 mx-auto" />
+            </div>
+            <p class="text-2xl font-bold mt-4">79 ₽</p>
+            <button id="payment-back-button" class="btn-secondary w-full mt-6">Выбрать другой способ</button>
+        </div>
+
         <!-- Step 3: Final Confirmation -->
         <div id="payment-final-view" class="hidden text-center">
             <h2 class="text-2xl font-bold mb-4">Подтверждение оплаты</h2>
