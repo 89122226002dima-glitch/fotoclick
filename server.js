@@ -161,10 +161,11 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
 // --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
-        const { paymentMethod } = req.body;
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
 
+        // Универсальный "Умный платеж": не указываем способ оплаты,
+        // чтобы YooKassa сама показала пользователю все доступные варианты.
         const paymentPayload = {
             amount: {
                 value: '79.00',
@@ -181,16 +182,6 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             capture: true
         };
         
-        // В соответствии с документацией YooKassa, добавляем `payment_method_data`
-        // только когда пользователь явно выбрал СБП.
-        if (paymentMethod === 'sberpay') {
-             paymentPayload.payment_method_data = {
-                type: 'sbp'
-            };
-        }
-        // Если paymentMethod === 'card' или не указан, мы НЕ добавляем `payment_method_data`,
-        // чтобы YooKassa показала универсальную страницу выбора.
-
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });

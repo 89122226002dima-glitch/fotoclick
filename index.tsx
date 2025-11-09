@@ -850,7 +850,7 @@ const paymentSelectionView = document.querySelector('#payment-selection-view') a
 const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
 const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
 const paymentProceedButton = document.querySelector('#payment-proceed-button') as HTMLButtonElement;
-const paymentMethodsContainer = document.querySelector('#payment-methods') as HTMLDivElement;
+
 
 function showPaymentModal() {
     if (paymentModalOverlay) {
@@ -873,14 +873,12 @@ function hidePaymentModal() {
 }
 
 async function handlePayment() {
-    const selectedMethodEl = paymentMethodsContainer.querySelector('.payment-method.selected');
-    const paymentMethod = selectedMethodEl?.getAttribute('data-method') || 'card';
-
     paymentSelectionView.classList.add('hidden');
     paymentProcessingView.classList.remove('hidden');
 
     try {
-        const response = await callApi('/api/create-payment', { paymentMethod });
+        // Send an empty object because the server no longer needs paymentMethod
+        const response = await callApi('/api/create-payment', {});
         
         // This is a redirect URL
         window.location.href = response.confirmationUrl;
@@ -1517,15 +1515,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         paymentQrView.classList.add('hidden');
         paymentSelectionView.classList.remove('hidden');
         if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
-    });
-
-
-    paymentMethodsContainer.addEventListener('click', (e) => {
-        const methodButton = (e.target as HTMLElement).closest('.payment-method');
-        if (methodButton) {
-            paymentMethodsContainer.querySelectorAll('.payment-method').forEach(btn => btn.classList.remove('selected'));
-            methodButton.classList.add('selected');
-        }
     });
 
     referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
