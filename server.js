@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
-import { Yookassa } from 'yookassa';
+import YookassaClient from 'yookassa';
+const { Yookassa } = YookassaClient;
 import { randomUUID } from 'crypto';
 
 dotenv.config();
