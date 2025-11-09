@@ -881,17 +881,9 @@ async function handlePayment() {
 
     try {
         const response = await callApi('/api/create-payment', { paymentMethod });
-        const confirmationUrl = response.confirmationUrl;
         
-        if (confirmationUrl.startsWith('data:image')) {
-            // This is a QR code
-            paymentProcessingView.classList.add('hidden');
-            paymentQrView.classList.remove('hidden');
-            paymentQrImage.src = confirmationUrl;
-        } else {
-            // This is a redirect URL
-            window.location.href = confirmationUrl;
-        }
+        // This is a redirect URL
+        window.location.href = response.confirmationUrl;
 
     } catch (error) {
         const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
