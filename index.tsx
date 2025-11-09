@@ -62,8 +62,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
     applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
     userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement,
-    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement,
-    paymentProceedButton: HTMLButtonElement, paymentCloseButton: HTMLButtonElement;
+    paymentCloseButton: HTMLButtonElement;
 
 
 // --- State Variables ---
@@ -79,6 +78,7 @@ let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
 let idToken: string | null = null; // Holds the Google Auth Token
+let yooKassaWidget: any = null; // To hold the YooKassa Widget instance
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
@@ -847,48 +847,64 @@ async function generatePhotoshoot(parts: any[]): Promise<{ resultUrl: string; ge
 }
 
 
-const paymentSelectionView = document.querySelector('#payment-selection-view') as HTMLDivElement;
-const paymentProcessingView = document.querySelector('#payment-processing-view') as HTMLDivElement;
-const paymentFinalView = document.querySelector('#payment-final-view') as HTMLDivElement;
+async function showPaymentModal() {
+    if (!paymentModalOverlay) return;
+    
+    paymentModalOverlay.classList.remove('hidden');
+    
+    const widgetContainer = document.getElementById('payment-widget-container');
+    if (!widgetContainer) return;
 
+    // Show loading spinner initially
+    widgetContainer.innerHTML = `<div class="loading-spinner large mx-auto"></div><p class="mt-4 text-center">Загрузка формы оплаты...</p>`;
 
-function showPaymentModal() {
-    if (paymentModalOverlay) {
-        paymentSelectionView.classList.remove('hidden');
-        paymentProcessingView.classList.add('hidden');
-        paymentQrView.classList.add('hidden');
-        paymentFinalView.classList.add('hidden'); // Ensure this is hidden initially
-        paymentModalOverlay.classList.remove('hidden');
+    try {
+        const { confirmationToken } = await callApi('/api/create-payment', {});
+        
+        if (yooKassaWidget) {
+            yooKassaWidget.destroy();
+            yooKassaWidget = null;
+        }
+
+        yooKassaWidget = new (window as any).YooKassaCheckoutWidget({
+            confirmation_token: confirmationToken,
+            customization: {
+                payment_methods: ['bank_card', 'sberbank', 'sbp']
+            },
+            error_callback: function(error: any) {
+                console.error('YooKassa Widget Error:', error);
+                showStatusError(`Ошибка виджета оплаты: ${error?.message || 'Неизвестная ошибка'}`);
+                hidePaymentModal();
+            }
+        });
+        
+        yooKassaWidget.on('success', () => {
+            console.log('Payment successful via widget!');
+            hidePaymentModal();
+            if (statusEl) statusEl.innerHTML = '<span class="text-green-400">Оплата прошла успешно! Кредиты будут зачислены в течение минуты.</span>';
+            // The webhook will handle crediting, but we can give immediate feedback.
+            // Optionally, poll for new credit balance after a short delay.
+        });
+
+        yooKassaWidget.render('payment-widget-container');
+
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        displayErrorInContainer(widgetContainer, `Не удалось загрузить форму оплаты: ${message}`);
     }
 }
 
 function hidePaymentModal() {
+    if (yooKassaWidget) {
+        yooKassaWidget.destroy();
+        yooKassaWidget = null;
+    }
     paymentModalOverlay?.classList.add('hidden');
     const page1 = document.getElementById('page1');
     if (page1 && !page1.classList.contains('hidden')) {
         updatePage1WizardState();
     } else {
         if(referenceImage) setWizardStep('PAGE2_GENERATE');
-    }
-}
-
-async function handlePayment() {
-    paymentSelectionView.classList.add('hidden');
-    paymentProcessingView.classList.remove('hidden');
-
-    try {
-        // Send an empty object because the server no longer needs paymentMethod
-        const response = await callApi('/api/create-payment', {});
-        
-        // This is a redirect URL
-        window.location.href = response.confirmationUrl;
-
-    } catch (error) {
-        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
-        showStatusError(`Не удалось создать платеж: ${message}`);
-        // Revert modal to selection view on error
-        paymentProcessingView.classList.add('hidden');
-        paymentSelectionView.classList.remove('hidden');
     }
 }
 
@@ -1442,11 +1458,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
   userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
   userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
-  paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
-  paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
-  paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
-  paymentProceedButton = document.getElementById('payment-proceed-button') as HTMLButtonElement;
-
 
   try {
     // User starts with 0 and receives them from the server upon login.
@@ -1485,14 +1496,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     initializeGoogleAuth();
      
-    // --- Handle post-payment redirect ---
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('payment_status') === 'success') {
-      statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-
-
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     prompts = await response.json();
@@ -1526,13 +1529,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
     creditCounterEl.addEventListener('click', showPaymentModal);
     userProfileContainer.addEventListener('click', signOut);
-    
-    paymentProceedButton.addEventListener('click', handlePayment);
-    paymentBackButton.addEventListener('click', () => {
-        paymentQrView.classList.add('hidden');
-        paymentSelectionView.classList.remove('hidden');
-        if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
-    });
 
     referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
     

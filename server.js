@@ -158,22 +158,20 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
     res.json({ newCredits: userCredits[userEmail] });
 });
 
-// --- YooKassa Integration ---
+// --- YooKassa Integration with Embedded Widget ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
 
-        // Универсальный "Умный платеж": не указываем способ оплаты,
-        // чтобы YooKassa сама показала пользователю все доступные варианты.
+        // Создаем платеж для встраиваемого виджета
         const paymentPayload = {
             amount: {
                 value: '79.00',
                 currency: 'RUB'
             },
             confirmation: {
-                type: 'redirect',
-                return_url: 'https://photo-click-ai.ru/?payment_status=success'
+                type: 'embedded' // Ключевое изменение: используем embedded вместо redirect
             },
             description: 'Пакет "12 фотографий" для photo-click-ai.ru',
             metadata: {
@@ -184,7 +182,8 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
         
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
-        res.json({ confirmationUrl: payment.confirmation.confirmation_url });
+        // Отправляем на фронтенд confirmation_token вместо URL
+        res.json({ confirmationToken: payment.confirmation.confirmation_token });
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
         res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
