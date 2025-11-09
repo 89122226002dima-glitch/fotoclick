@@ -170,9 +170,9 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
         if (paymentMethod === 'sberpay') {
             paymentPayload = {
                 amount: { value: '79.00', currency: 'RUB' },
-                payment_method_data: { type: 'sberbank' }, // ИЗМЕНЕНО: Используем прямой метод 'sberbank'
+                payment_method_data: { type: 'sbp' }, // ИЗМЕНЕНО: Используем универсальный СБП
                 confirmation: {
-                    type: 'redirect', // ИЗМЕНЕНО: Используем перенаправление вместо QR-кода
+                    type: 'redirect', // YooKassa сама решит, как лучше перенаправить (QR или приложение)
                     return_url: 'https://photo-click-ai.ru/?payment_status=success'
                 },
                 description: 'Пакет "12 фотографий" для photo-click-ai.ru',
