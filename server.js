@@ -170,7 +170,8 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                 currency: 'RUB'
             },
             confirmation: {
-                type: 'embedded'
+                type: 'redirect',
+                return_url: 'https://photo-click-ai.ru?payment_status=success'
             },
             description: 'Пакет "12 фотографий" для photo-click-ai.ru',
             metadata: {
@@ -181,7 +182,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
         
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
-        res.json({ confirmationToken: payment.confirmation.confirmation_token });
+        res.json({ confirmationUrl: payment.confirmation.confirmation_url });
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
         res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });

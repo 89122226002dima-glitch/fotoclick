@@ -14,7 +14,6 @@
     />
     <link rel="stylesheet" href="/index.css" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js" async></script>
 
   <script type="importmap">
 {
@@ -369,19 +368,10 @@
             </div>
         </div>
 
-        <!-- NEW: YooKassa Widget View -->
-        <div id="payment-widget-view" class="hidden">
-            <div class="text-center">
-                <h2 class="text-2xl font-bold mb-2">Оплата заказа</h2>
-                <p class="mb-4 text-gray-400">Выберите удобный способ оплаты. После успешной оплаты окно закроется автоматически.</p>
-            </div>
-            <div id="payment-widget-container" class="min-h-[400px] rounded-lg overflow-hidden"></div>
-        </div>
-
         <!-- Step 2: Processing / Loading -->
         <div id="payment-processing-view" class="hidden text-center py-12">
             <div class="loading-spinner large mx-auto"></div>
-            <p class="mt-4 font-semibold">Подготовка формы оплаты...</p>
+            <p class="mt-4 font-semibold">Перенаправляем на страницу оплаты...</p>
             <p class="text-sm mt-1">Это может занять несколько секунд.</p>
         </div>
 

@@ -62,8 +62,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
     applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
     userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement,
-    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement,
-    paymentWidgetView: HTMLDivElement;
+    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement;
 
 
 // --- State Variables ---
@@ -85,7 +84,6 @@ const PROMO_CODES: { [key: string]: { type: string; value: number; message: stri
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
     "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." }
 };
-let checkoutWidget: any | null = null; // Holds the YooKassa widget instance
 
 let poseSequences: {
     female: string[]; femaleGlamour: string[]; male: string[]; femaleCloseUp: string[]; maleCloseUp: string[];
@@ -857,32 +855,13 @@ function showPaymentModal() {
     if (paymentModalOverlay) {
         // Reset to initial state every time
         paymentSelectionView.classList.remove('hidden');
-        paymentWidgetView.classList.add('hidden');
         paymentProcessingView.classList.add('hidden');
-
-        // Clear previous widget content
-        const widgetContainer = document.getElementById('payment-widget-container');
-        if (widgetContainer) widgetContainer.innerHTML = '';
-
-        // Destroy old widget instance
-        if (checkoutWidget) {
-            checkoutWidget.destroy();
-            checkoutWidget = null;
-        }
-
         paymentModalOverlay.classList.remove('hidden');
     }
 }
 
 function hidePaymentModal() {
     paymentModalOverlay?.classList.add('hidden');
-
-    // Ensure the widget is destroyed when the modal is closed
-    if (checkoutWidget) {
-        checkoutWidget.destroy();
-        checkoutWidget = null;
-    }
-
     const page1 = document.getElementById('page1');
     if (page1 && !page1.classList.contains('hidden')) {
         updatePage1WizardState();
@@ -892,60 +871,29 @@ function hidePaymentModal() {
 }
 
 async function handlePayment() {
+    if (paymentProceedButton.disabled) return; // Prevent double clicks
+
+    paymentProceedButton.disabled = true;
     paymentSelectionView.classList.add('hidden');
     paymentProcessingView.classList.remove('hidden');
 
     try {
         const response = await callApi('/api/create-payment', {});
-        const confirmationToken = response.confirmationToken;
+        const confirmationUrl = response.confirmationUrl;
 
-        if (!confirmationToken) {
-            throw new Error("Не удалось получить токен для виджета оплаты.");
+        if (!confirmationUrl) {
+            throw new Error("Не удалось получить ссылку для оплаты.");
         }
-
-        paymentProcessingView.classList.add('hidden');
-        paymentWidgetView.classList.remove('hidden');
-
-        if (checkoutWidget) {
-            checkoutWidget.destroy();
-        }
-
-        checkoutWidget = new (window as any).YooKassaCheckoutWidget({
-            confirmation_token: confirmationToken,
-            error_callback: function(error: any) {
-                console.error('YooKassa Widget Error:', error);
-                showStatusError('Ошибка виджета оплаты. Пожалуйста, попробуйте еще раз.');
-                hidePaymentModal();
-            }
-        });
-
-        checkoutWidget.render('#payment-widget-container');
-
-        checkoutWidget.on('success', () => {
-             console.log('Payment successful via widget');
-             statusEl.innerHTML = '<span class="text-green-400">Оплата прошла успешно! Кредиты будут зачислены в течение минуты.</span>';
-             setTimeout(() => {
-                hidePaymentModal();
-             }, 3000);
-             checkoutWidget.destroy();
-             checkoutWidget = null;
-        });
-
-        checkoutWidget.on('fail', () => {
-             console.log('Payment failed or cancelled via widget');
-             showStatusError('Оплата не удалась или была отменена.');
-             setTimeout(() => {
-                hidePaymentModal();
-             }, 2000);
-             checkoutWidget.destroy();
-             checkoutWidget = null;
-        });
+        
+        // Redirect to YooKassa payment page
+        window.location.href = confirmationUrl;
 
     } catch (error) {
         const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
         showStatusError(`Не удалось создать платеж: ${message}`);
         paymentProcessingView.classList.add('hidden');
         paymentSelectionView.classList.remove('hidden');
+        paymentProceedButton.disabled = false; // Re-enable button on error
     }
 }
 
@@ -1512,7 +1460,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
-  paymentWidgetView = document.getElementById('payment-widget-view') as HTMLDivElement;
 
 
   try {
