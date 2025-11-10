@@ -281,6 +281,11 @@ async function callApi(endpoint: string, body: object) {
 
     // If the response was not OK (e.g., 401, 402, 500), throw an error with the server's message
     if (!response.ok) {
+        if (response.status === 401) {
+             console.log("Сессия истекла. Пользователю нужно войти снова.");
+             signOut(); // Automatically sign out the user
+             throw new Error("Ваша сессия истекла. Пожалуйста, войдите снова.");
+        }
         console.error(`Ошибка API на ${endpoint}:`, responseData);
         throw new Error(responseData.error || `Произошла ошибка (${response.status}).`);
     }
@@ -303,16 +308,6 @@ function openLightbox(imageUrl: string) {
     if (lightboxImage && lightboxOverlay) {
         lightboxImage.src = imageUrl;
         lightboxOverlay.classList.remove('opacity-0', 'pointer-events-none');
-    }
-}
-
-async function generateVariation(prompt: string, image: ImageState): Promise<{ imageUrl: string, newCredits: number }> {
-   try {
-        const data = await callApi('/api/generateVariation', { prompt, image: image });
-        return { imageUrl: data.imageUrl, newCredits: data.newCredits };
-    } catch (e) {
-        console.error('generateVariation failed:', e);
-        throw e;
     }
 }
 
@@ -612,74 +607,63 @@ async function generate() {
     }
     
     if (progressText) progressText.innerText = 'Генерация... 10%';
-    const generationPromises = generationPrompts.map(prompt => generateVariation(prompt, referenceImage!));
-    
-    const results = await Promise.allSettled(generationPromises);
+
+    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
+        prompts: generationPrompts,
+        image: referenceImage!
+    });
     
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
     }
 
-    let lastSuccessfulCredits: number | null = null;
+    generationCredits = newCredits;
+    updateCreditCounterUI();
+    updateAllGenerateButtons();
 
-    results.forEach((result, i) => {
+    imageUrls.forEach((imageUrl: string, i: number) => {
         const imgContainer = placeholders[i];
         imgContainer.classList.remove('placeholder-shimmer');
         imgContainer.innerHTML = '';
         
-        if (result.status === 'fulfilled') {
-            const { imageUrl, newCredits } = result.value;
-            lastSuccessfulCredits = newCredits; // Store the latest credit count
-            imgContainer.classList.add('cursor-pointer', 'gallery-item');
-            const img = document.createElement('img');
-            img.src = imageUrl;
-            img.alt = 'Сгенерированная вариация';
-            img.className = 'w-full h-full object-cover block rounded-lg';
-            imgContainer.appendChild(img);
-            imgContainer.innerHTML += `
-              <div class="ref-indicator absolute top-2 left-2 bg-blue-500 text-white p-1.5 rounded-full z-20" title="Текущий референс">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" /></svg>
-              </div>
-              <a href="${imageUrl}" download="variatsiya-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-              </a>
-              <button class="set-ref-button absolute bottom-2 left-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Сделать референсом">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>
-              </button>`;
-            
-            const setAsReference = () => {
-              const [header, base64] = img.src.split(',');
-              const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-              referenceImage = { base64, mimeType };
-              referenceImagePreview.src = img.src;
-              referenceDownloadButton.href = img.src;
-              referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
-              referenceDownloadButton.classList.remove('hidden');
-              initializePoseSequences();
-              uploadContainer.classList.remove('aspect-square');
-              outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
-              imgContainer.classList.add('is-reference');
-              statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
-            };
+        imgContainer.classList.add('cursor-pointer', 'gallery-item');
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = 'Сгенерированная вариация';
+        img.className = 'w-full h-full object-cover block rounded-lg';
+        imgContainer.appendChild(img);
+        imgContainer.innerHTML += `
+            <div class="ref-indicator absolute top-2 left-2 bg-blue-500 text-white p-1.5 rounded-full z-20" title="Текущий референс">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" /></svg>
+            </div>
+            <a href="${imageUrl}" download="variatsiya-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+            </a>
+            <button class="set-ref-button absolute bottom-2 left-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Сделать референсом">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>
+            </button>`;
+        
+        const setAsReference = () => {
+            const [header, base64] = img.src.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+            referenceImage = { base64, mimeType };
+            referenceImagePreview.src = img.src;
+            referenceDownloadButton.href = img.src;
+            referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
+            referenceDownloadButton.classList.remove('hidden');
+            initializePoseSequences();
+            uploadContainer.classList.remove('aspect-square');
+            outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
+            imgContainer.classList.add('is-reference');
+            statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
+        };
 
-            imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
-            imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAsReference(); });
-            imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
-
-        } else {
-            const error = result.reason as Error;
-            const errorMessage = error.message || 'Ошибка генерации';
-            displayErrorInContainer(imgContainer, errorMessage, true);
-            console.error(`Error generating variation ${i + 1}:`, error);
-        }
+        imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+        imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAsReference(); });
+        imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
     });
 
-    if (lastSuccessfulCredits !== null) {
-        generationCredits = lastSuccessfulCredits;
-        updateCreditCounterUI();
-        updateAllGenerateButtons();
-    }
 
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
@@ -715,6 +699,7 @@ function setupNavigation() {
         if (pageId === 'page1') {
             updatePage1WizardState();
         } else if (pageId === 'page2') {
+            updateAllGenerateButtons(); // FIX: Ensure button state is updated on page switch
             if (referenceImage) {
                 setWizardStep('PAGE2_PLAN');
             } else {

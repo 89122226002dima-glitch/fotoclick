@@ -303,7 +303,50 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
     }
 });
 
-// Endpoint for generating a single variation
+// Helper function to call Gemini for a single variation
+const callGeminiForVariation = async (prompt, image) => {
+    const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+    const textPart = { text: prompt };
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, textPart] },
+        config: { responseModalities: [Modality.IMAGE] },
+    });
+    
+    const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+
+    if (!generatedImagePart || !generatedImagePart.inlineData) {
+        throw new Error('Gemini не вернул изображение.');
+    }
+
+    return `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
+};
+
+// New atomic endpoint for generating 4 variations
+app.post('/api/generateFourVariations', authenticateAndCharge(4), async (req, res) => {
+    const { prompts, image } = req.body;
+    const userEmail = req.userEmail;
+
+    if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
+        userCredits[userEmail] += 4; // Refund if input is invalid
+        return res.status(400).json({ error: 'Некорректные данные для генерации.' });
+    }
+
+    try {
+        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
+        const imageUrls = await Promise.all(generationPromises);
+        
+        res.json({ imageUrls, newCredits: userCredits[userEmail] });
+    } catch (error) {
+        userCredits[userEmail] += 4; // Refund on failure
+        const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариации.');
+        res.status(500).json({ error: userMessage });
+    }
+});
+
+
+// Endpoint for generating a single variation (legacy, can be removed later)
 app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => {
     const { prompt, image } = req.body;
     const userEmail = req.userEmail;
@@ -314,26 +357,8 @@ app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) =>
     }
 
     try {
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: prompt };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [imagePart, textPart] },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
-        });
-        
-        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение.');
-        }
-
-        const imageUrl = `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
+        const imageUrl = await callGeminiForVariation(prompt, image);
         res.json({ imageUrl, newCredits: userCredits[userEmail] });
-
     } catch (error) {
         userCredits[userEmail] += 1; // Refund credits on failure
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариацию.');
