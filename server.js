@@ -31,7 +31,6 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const yookassa = new Yookassa({
     shopId: process.env.YOOKASSA_SHOP_ID,
     secretKey: process.env.YOOKASSA_SECRET_KEY
@@ -73,6 +72,8 @@ const verifyToken = async (req, res, next) => {
     }
     const token = authHeader.split(' ')[1];
     try {
+        // FIX: Create a new client on each request to avoid stale state/caching issues.
+        const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
             idToken: token,
             audience: process.env.GOOGLE_CLIENT_ID,
@@ -134,6 +135,8 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ error: 'Токен не предоставлен.' });
     }
     try {
+        // FIX: Create a new client to ensure fresh validation.
+        const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
             idToken: token,
             audience: process.env.GOOGLE_CLIENT_ID,
