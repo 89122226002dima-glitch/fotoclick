@@ -14,6 +14,7 @@
     />
     <link rel="stylesheet" href="/index.css" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js" async></script>
 
   <script type="importmap">
 {
@@ -362,28 +363,25 @@
                  
                  <div class="w-full h-px bg-[var(--border-color)] my-2"></div>
 
-                 <p class="font-semibold mb-2">Выберите способ оплаты:</p>
-                 <div id="payment-methods" class="w-full space-y-3">
-                     <div class="payment-method selected" data-method="card">
-                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
-                         <span>Банковская карта</span>
-                     </div>
-                      <div class="payment-method" data-method="sberpay">
-                         <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15.429 4.922a.998.998 0 00-1.14.072l-7.462 6.551a1 1 0 00-.28 1.103l4.634 10.354a1 1 0 001.768-.103l2.844-6.354a1 1 0 00-.737-1.28l-5.6-2.126 6.33-5.545a1 1 0 00-.357-1.672z" fill="#4CAF50"/><path d="M11.66 12.03a1 1 0 00-1.102-.28L.963 16.384a1 1 0 00-.103 1.768l6.354 2.844a1 1 0 001.28-.737l2.126-5.6a1 1 0 00-1.06-1.63z" fill="#2E7D32"/></svg>
-                         <span>SberPay</span>
-                     </div>
-                 </div>
-
                  <button id="payment-proceed-button" class="btn-primary w-full mt-4">
-                     Перейти к оплате
+                     Перейти к оплате 79 ₽
                  </button>
             </div>
         </div>
 
-        <!-- Step 2: Processing -->
+        <!-- NEW: YooKassa Widget View -->
+        <div id="payment-widget-view" class="hidden">
+            <div class="text-center">
+                <h2 class="text-2xl font-bold mb-2">Оплата заказа</h2>
+                <p class="mb-4 text-gray-400">Выберите удобный способ оплаты. После успешной оплаты окно закроется автоматически.</p>
+            </div>
+            <div id="payment-widget-container" class="min-h-[400px] rounded-lg overflow-hidden"></div>
+        </div>
+
+        <!-- Step 2: Processing / Loading -->
         <div id="payment-processing-view" class="hidden text-center py-12">
             <div class="loading-spinner large mx-auto"></div>
-            <p class="mt-4 font-semibold">Перенаправляем на страницу оплаты...</p>
+            <p class="mt-4 font-semibold">Подготовка формы оплаты...</p>
             <p class="text-sm mt-1">Это может занять несколько секунд.</p>
         </div>
 

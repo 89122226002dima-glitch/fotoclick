@@ -161,7 +161,6 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
 // --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
-        const { paymentMethod } = req.body;
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
 
@@ -171,8 +170,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                 currency: 'RUB'
             },
             confirmation: {
-                type: 'redirect',
-                return_url: 'https://photo-click-ai.ru/?payment_status=success'
+                type: 'embedded'
             },
             description: 'Пакет "12 фотографий" для photo-click-ai.ru',
             metadata: {
@@ -181,19 +179,9 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             capture: true
         };
         
-        // В соответствии с документацией YooKassa, добавляем `payment_method_data`
-        // только когда пользователь явно выбрал СБП.
-        if (paymentMethod === 'sberpay') {
-             paymentPayload.payment_method_data = {
-                type: 'sbp'
-            };
-        }
-        // Если paymentMethod === 'card' или не указан, мы НЕ добавляем `payment_method_data`,
-        // чтобы YooKassa показала универсальную страницу выбора.
-
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
-        res.json({ confirmationUrl: payment.confirmation.confirmation_url });
+        res.json({ confirmationToken: payment.confirmation.confirmation_token });
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
         res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
