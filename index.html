@@ -14,7 +14,6 @@
     />
     <link rel="stylesheet" href="/index.css" />
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://yookassa.ru/checkout-widget/v1/checkout-widget.js"></script>
 
   <script type="importmap">
 {
@@ -348,16 +347,66 @@
             <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
         
-        <!-- YooKassa Widget View -->
-        <div id="payment-widget-view">
+        <!-- Step 1: Selection -->
+        <div id="payment-selection-view">
             <div class="text-center">
-                <h2 id="payment-modal-title" class="text-2xl font-bold mb-2">Пополнение баланса</h2>
-                <p id="payment-modal-description" class="mb-6">Пакет '12 фотографий' за <strong>79 ₽</strong>. Выберите удобный способ оплаты ниже.</p>
+                <h2 id="payment-modal-title" class="text-2xl font-bold mb-2">Разблокируйте больше фотографий!</h2>
+                <p id="payment-modal-description" class="mb-6">Чтобы получить <strong>пакет '12 фотографий'</strong>, пожалуйста, произведите оплату.</p>
             </div>
-            <div id="payment-widget-container" class="min-h-[350px] flex flex-col items-center justify-center">
-                <!-- YooKassa Widget will render here -->
-                <div class="loading-spinner large"></div>
-                <p class="mt-4 text-center">Загрузка формы оплаты...</p>
+            
+            <div class="bg-gray-800/50 border border-[var(--border-color)] rounded-lg p-6 flex flex-col items-center gap-4">
+                 <div class="w-full text-center">
+                     <p class="text-sm">Сумма к оплате</p>
+                     <p class="text-3xl font-bold">79 ₽</p>
+                 </div>
+                 
+                 <div class="w-full h-px bg-[var(--border-color)] my-2"></div>
+
+                 <p class="font-semibold mb-2">Выберите способ оплаты:</p>
+                 <div id="payment-methods" class="w-full space-y-3">
+                     <div class="payment-method selected" data-method="card">
+                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+                         <span>Банковская карта</span>
+                     </div>
+                      <div class="payment-method" data-method="sberpay">
+                         <svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M15.429 4.922a.998.998 0 00-1.14.072l-7.462 6.551a1 1 0 00-.28 1.103l4.634 10.354a1 1 0 001.768-.103l2.844-6.354a1 1 0 00-.737-1.28l-5.6-2.126 6.33-5.545a1 1 0 00-.357-1.672z" fill="#4CAF50"/><path d="M11.66 12.03a1 1 0 00-1.102-.28L.963 16.384a1 1 0 00-.103 1.768l6.354 2.844a1 1 0 001.28-.737l2.126-5.6a1 1 0 00-1.06-1.63z" fill="#2E7D32"/></svg>
+                         <span>SberPay</span>
+                     </div>
+                 </div>
+
+                 <button id="payment-proceed-button" class="btn-primary w-full mt-4">
+                     Перейти к оплате
+                 </button>
+            </div>
+        </div>
+
+        <!-- Step 2: Processing -->
+        <div id="payment-processing-view" class="hidden text-center py-12">
+            <div class="loading-spinner large mx-auto"></div>
+            <p class="mt-4 font-semibold">Перенаправляем на страницу оплаты...</p>
+            <p class="text-sm mt-1">Это может занять несколько секунд.</p>
+        </div>
+
+        <!-- Step 2b: QR Code Display -->
+        <div id="payment-qr-view" class="hidden text-center py-4">
+            <h2 class="text-xl font-bold mb-2">Оплата через SberPay</h2>
+            <p class="mb-4">Отсканируйте QR-код в приложении СберБанк Онлайн</p>
+            <div class="bg-white p-2 rounded-lg inline-block">
+                <img id="payment-qr-image" src="" alt="QR-код для оплаты" class="w-48 h-48 mx-auto" />
+            </div>
+            <p class="text-2xl font-bold mt-4">79 ₽</p>
+            <button id="payment-back-button" class="btn-secondary w-full mt-6">Выбрать другой способ</button>
+        </div>
+
+        <!-- Step 3: Final Confirmation -->
+        <div id="payment-final-view" class="hidden text-center">
+            <h2 class="text-2xl font-bold mb-4">Подтверждение оплаты</h2>
+            <div class="bg-gray-800/50 border border-[var(--border-color)] rounded-lg p-6 flex flex-col items-center gap-4">
+                <p>Вы собираетесь оплатить <strong>79 ₽</strong> за пакет <strong>"12 фотографий"</strong>.</p>
+                <p class="text-xs text-gray-500">Это симуляция. Нажмите "Оплатить" для получения кредитов.</p>
+                <button id="payment-confirm-button" class="btn-primary w-full mt-4" style="background: linear-gradient(45deg, #10B981, #34D399);">
+                    Оплатить 79 ₽
+                </button>
             </div>
         </div>
       </div>

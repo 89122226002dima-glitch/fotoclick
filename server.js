@@ -8,9 +8,9 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
-import { createRequire } from 'module';
 
-// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CJS-пакета в ES-модуле ---
+// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
+import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const Yookassa = require('yookassa');
 // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
@@ -158,20 +158,21 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
     res.json({ newCredits: userCredits[userEmail] });
 });
 
-// --- YooKassa Integration with Embedded Widget ---
+// --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
+        const { paymentMethod } = req.body;
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
 
-        // Создаем платеж для встраиваемого виджета
         const paymentPayload = {
             amount: {
                 value: '79.00',
                 currency: 'RUB'
             },
             confirmation: {
-                type: 'embedded' // Ключевое изменение: используем embedded вместо redirect
+                type: 'redirect',
+                return_url: 'https://photo-click-ai.ru/?payment_status=success'
             },
             description: 'Пакет "12 фотографий" для photo-click-ai.ru',
             metadata: {
@@ -180,10 +181,19 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             capture: true
         };
         
+        // В соответствии с документацией YooKassa, добавляем `payment_method_data`
+        // только когда пользователь явно выбрал СБП.
+        if (paymentMethod === 'sberpay') {
+             paymentPayload.payment_method_data = {
+                type: 'sbp'
+            };
+        }
+        // Если paymentMethod === 'card' или не указан, мы НЕ добавляем `payment_method_data`,
+        // чтобы YooKassa показала универсальную страницу выбора.
+
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
 
-        // Отправляем на фронтенд confirmation_token вместо URL
-        res.json({ confirmationToken: payment.confirmation.confirmation_token });
+        res.json({ confirmationUrl: payment.confirmation.confirmation_url });
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
         res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
