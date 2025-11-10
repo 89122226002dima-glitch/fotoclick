@@ -44,7 +44,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const userCredits = {};
+const userUsedPromoCodes = {}; // Хранилище использованных кодов: { "user@email.com": ["CODE1"] }
 const INITIAL_CREDITS = 1;
+
+const PROMO_CODES = {
+    "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
+    "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
+    "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
+    "521379": { type: 'credits', value: 12, message: "Владелец активировал 12 тестовых кредитов." }
+};
+
 
 // --- Middleware ---
 // Raw body is needed for YooKassa webhook
@@ -156,6 +165,45 @@ app.post('/api/addCredits', verifyToken, (req, res) => {
     }
     userCredits[userEmail] += 12;
     res.json({ newCredits: userCredits[userEmail] });
+});
+
+app.post('/api/apply-promo', verifyToken, (req, res) => {
+    const { code } = req.body;
+    const userEmail = req.userEmail;
+
+    if (!code) {
+        return res.status(400).json({ error: 'Промокод не предоставлен.' });
+    }
+
+    const promo = PROMO_CODES[code.toUpperCase()];
+    if (!promo) {
+        return res.status(404).json({ error: 'Неверный промокод.' });
+    }
+
+    if (!userUsedPromoCodes[userEmail]) {
+        userUsedPromoCodes[userEmail] = [];
+    }
+
+    if (userUsedPromoCodes[userEmail].includes(code.toUpperCase())) {
+        return res.status(409).json({ error: 'Этот промокод уже был использован.' });
+    }
+    
+    if (promo.type === 'credits') {
+        if (userCredits[userEmail] === undefined) {
+            userCredits[userEmail] = 0;
+        }
+        userCredits[userEmail] += promo.value;
+        userUsedPromoCodes[userEmail].push(code.toUpperCase());
+        
+        console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${userCredits[userEmail]}`);
+        
+        res.json({
+            newCredits: userCredits[userEmail],
+            message: promo.message
+        });
+    } else {
+        res.status(400).json({ error: 'Неподдерживаемый тип промокода.' });
+    }
 });
 
 // --- YooKassa Integration ---

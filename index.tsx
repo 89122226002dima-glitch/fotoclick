@@ -79,12 +79,6 @@ let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
 let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
-const PROMO_CODES: { [key: string]: { type: string; value: number; message: string } } = {
-    "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
-    "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
-    "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
-    "521379": { type: 'credits', value: 12, message: "Владелец активировал 12 тестовых кредитов." }
-};
 
 let poseSequences: {
     female: string[]; femaleGlamour: string[]; male: string[]; femaleCloseUp: string[]; maleCloseUp: string[];
@@ -1309,28 +1303,32 @@ function getUploaderPlaceholderHtml(): string {
   </div>`;
 }
 
-function applyPromoCode() {
-    if (!promoCodeInput) return;
-    const code = promoCodeInput.value.trim().toUpperCase();
-    if (!code) { showStatusError("Пожалуйста, введите промокод."); return; }
-    const usedCodes: string[] = JSON.parse(localStorage.getItem('usedPromoCodes') || '[]');
-    if (usedCodes.includes(code)) {
-        showStatusError("Этот промокод уже был использован.");
-        promoCodeInput.value = '';
+async function applyPromoCode() {
+    if (!promoCodeInput || !applyPromoButton) return;
+    const code = promoCodeInput.value.trim();
+    if (!code) {
+        showStatusError("Пожалуйста, введите промокод.");
         return;
     }
-    const promo = PROMO_CODES[code];
-    if (promo?.type === 'credits') {
-        generationCredits += promo.value;
+
+    const originalButtonText = applyPromoButton.innerHTML;
+    applyPromoButton.disabled = true;
+    applyPromoButton.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+    try {
+        const response = await callApi('/api/apply-promo', { code });
+        generationCredits = response.newCredits;
         updateCreditCounterUI();
         updateAllGenerateButtons();
         updatePage1WizardState();
-        usedCodes.push(code);
-        localStorage.setItem('usedPromoCodes', JSON.stringify(usedCodes));
-        statusEl.innerHTML = `<span class="text-green-400">${promo.message}</span>`;
+        statusEl.innerHTML = `<span class="text-green-400">${response.message}</span>`;
         promoCodeInput.value = '';
-    } else {
-        showStatusError("Неверный промокод.");
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        showStatusError(message);
+    } finally {
+        applyPromoButton.disabled = false;
+        applyPromoButton.innerHTML = originalButtonText;
     }
 }
 
