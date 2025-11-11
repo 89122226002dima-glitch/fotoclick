@@ -68,7 +68,6 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
-let faceReferenceImage: ImageState | null = null; // NEW: For digital identity
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let malePoseIndex = 0;
@@ -326,15 +325,11 @@ function initializePoseSequences() {
     poseSequences.female = shuffle(prompts.femalePosePrompts);
     poseSequences.femaleGlamour = shuffle(prompts.femaleGlamourPosePrompts);
     poseSequences.male = shuffle(prompts.malePosePrompts);
-    // FIX: Corrected property name from femaleCloseUpPrompts to femaleCloseUpPosePrompts
     poseSequences.femaleCloseUp = shuffle(prompts.femaleCloseUpPosePrompts);
-    // FIX: Corrected property name from maleCloseUpPrompts to maleCloseUpPosePrompts
     poseSequences.maleCloseUp = shuffle(prompts.maleCloseUpPosePrompts);
     poseSequences.elderlyFemale = shuffle(prompts.elderlyFemalePosePrompts);
-    // FIX: Corrected property name from elderlyFemaleCloseUpPrompts to elderlyFemaleCloseUpPosePrompts
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
-    // FIX: Corrected property name from elderlyMaleCloseUpPrompts to elderlyMaleCloseUpPosePrompts
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
     malePoseIndex = 0;
     femalePoseIndex = 0;
@@ -362,7 +357,6 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
-  faceReferenceImage = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
@@ -505,8 +499,8 @@ async function generate() {
       return;
   }
   
-  if (!referenceImage || !faceReferenceImage || !detectedSubjectCategory || !prompts) {
-    showStatusError('Пожалуйста, загрузите изображение-референс человека. Эталон лица не был создан.');
+  if (!referenceImage || !detectedSubjectCategory || !prompts) {
+    showStatusError('Пожалуйста, загрузите изображение-референс человека.');
     return;
   }
 
@@ -608,22 +602,7 @@ async function generate() {
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        const finalPrompt = `Твоя задача — сгенерировать новое фотореалистичное изображение. Ты должен выполнить ОДНО творческое изменение и соблюсти ТРИ строгих правила.
-
-**ТВОРЧЕСКОЕ ИЗМЕНЕНИЕ (ОБЯЗАТЕЛЬНО К ВЫПОЛНЕНИЮ):**
-Полностью измени позу и ракурс человека. Это самое главное. Примени следующие инструкции: "${changesDescription}". Результат должен кардинально отличаться от позы на исходном фото.
-
-**СТРОГИЕ ПРАВИЛА (ЧТО НЕЛЬЗЯ МЕНЯТЬ):**
-
-1.  **ЛИЦО:** Лицо человека должно быть АБСОЛЮТНО УЗНАВАЕМЫМ. Используй **Изображение 2 (Эталон Лица)** как нерушимый источник его уникальных черт. Воссоздай это лицо в новой позе, адаптировав под новое освещение и угол, но не меняя его идентичность.
-2.  **ОДЕЖДА:** Одежда должна быть в точности как на **Изображении 1 (Основной референс)**. Не меняй ее цвет, фасон или детали.
-3.  **ФОН:** Сохрани стиль и атмосферу фона с **Изображения 1**. Фон нужно достроить и адаптировать под новый ракурс, но он должен оставаться узнаваемым.
-
-**ИСХОДНЫЕ ДАННЫЕ:**
-*   **Изображение 1:** Основной референс (для одежды и фона).
-*   **Изображение 2:** Эталон Лица (для идентичности).
-
-Результат — только одно изображение без текста.`;
+        const finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
@@ -631,8 +610,7 @@ async function generate() {
 
     const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
-        image: referenceImage,
-        faceImage: faceReferenceImage
+        image: referenceImage!
     });
     
     if (progressBar && progressText) {
@@ -669,8 +647,7 @@ async function generate() {
         const setAsReference = () => {
             const [header, base64] = img.src.split(',');
             const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-            referenceImage = { base64, mimeType }; // Only update the main reference
-            // faceReferenceImage remains unchanged
+            referenceImage = { base64, mimeType };
             referenceImagePreview.src = img.src;
             referenceDownloadButton.href = img.src;
             referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
@@ -679,7 +656,7 @@ async function generate() {
             uploadContainer.classList.remove('aspect-square');
             outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
             imgContainer.classList.add('is-reference');
-            statusEl.innerText = 'Новый референс выбран. Эталон лица остался прежним. Создайте новые вариации.';
+            statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
         };
 
         imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
@@ -1016,7 +993,6 @@ function initializePage1Wizard() {
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
-                // faceReferenceImage remains the original one
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1139,7 +1115,6 @@ function initializePage1Wizard() {
             displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput);
             displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
             clothingLocationContainer.classList.remove('hidden');
-            await extractAndStoreFaceReference(imageState);
             updatePage1WizardState();
         } catch (e) {
             const message = e instanceof Error ? e.message : 'Неизвестная ошибка анализа.';
@@ -1444,60 +1419,6 @@ async function setupGoogleAuth() {
 }
 
 
-async function extractAndStoreFaceReference(sourceImage: ImageState) {
-    try {
-        const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: sourceImage });
-        if (!boundingBox) {
-            console.warn("Не удалось найти лицо для создания эталона.");
-            faceReferenceImage = null; // Ensure it's cleared if detection fails
-            return;
-        }
-
-        const img = new Image();
-        await new Promise<void>((resolve, reject) => {
-            img.onload = () => resolve();
-            img.onerror = reject;
-            img.src = `data:${sourceImage.mimeType};base64,${sourceImage.base64}`;
-        });
-
-        const { width: imgWidth, height: imgHeight } = img;
-        const padding = 0.15; // 15% padding around the face
-
-        let x = boundingBox.x_min * imgWidth;
-        let y = boundingBox.y_min * imgHeight;
-        let width = (boundingBox.x_max - boundingBox.x_min) * imgWidth;
-        let height = (boundingBox.y_max - boundingBox.y_min) * imgHeight;
-        
-        const padX = width * padding;
-        const padY = height * padding;
-
-        x = Math.max(0, x - padX);
-        y = Math.max(0, y - padY);
-        width = Math.min(imgWidth - x, width + (padX * 2));
-        height = Math.min(imgHeight - y, height + (padY * 2));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-            throw new Error("Не удалось получить контекст для обрезки лица.");
-        }
-
-        ctx.drawImage(img, x, y, width, height, 0, 0, width, height);
-        
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-        const [, base64] = dataUrl.split(',');
-        faceReferenceImage = { base64, mimeType: 'image/jpeg' };
-        console.log("Эталон лица успешно создан и сохранен.");
-
-    } catch (error) {
-        console.error("Ошибка при создании эталона лица:", error);
-        showStatusError("Не удалось выделить эталон лица, похожесть может быть снижена.");
-        faceReferenceImage = null; // Clear on error
-    }
-}
-
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
   // --- DOM Element Selection (Safe Zone) ---
@@ -1697,21 +1618,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             outputGallery.innerHTML = '';
             
             if (overlayText) overlayText.textContent = 'Анализ фото...';
+
             statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
             
             const { category, smile } = await checkImageSubject(imageState);
             detectedSubjectCategory = category;
             detectedSmileType = smile;
             initializePoseSequences();
-            
-            if (category === 'other') { 
-                showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); 
-                resetApp(); 
-                return; 
-            }
-
-            await extractAndStoreFaceReference(imageState);
-
+            if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
             const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
             statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
             setWizardStep('PAGE2_PLAN');

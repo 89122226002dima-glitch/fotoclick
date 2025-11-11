@@ -1,4 +1,4 @@
-// server.js - Версия с откатом к in-memory хранилищу для исправления ошибки запуска.
+// server.js - Версия с интеграцией базы данных SQLite для надежного хранения кредитов.
 
 import express from 'express';
 import cors from 'cors';
@@ -8,31 +8,34 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
+import sqlite3 from 'sqlite3';
 
-// Используем createRequire для надежного импорта CommonJS модуля yookassa
+// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const Yookassa = require('yookassa');
+// --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 dotenv.config();
 
-// Проверка наличия ключевых переменных окружения
-if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID) {
-  console.error('КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют API_KEY или GOOGLE_CLIENT_ID. Сервер не может запуститься.');
+// --- Диагностика .env ---
+console.log('DIAGNOSTICS: Загрузка конфигурации из .env');
+if (!process.env.API_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная API_KEY не найдена.');
+if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная GOOGLE_CLIENT_ID не найдена.');
+if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
+if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
+if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKASSA_SHOP_ID || !process.env.YOOKASSA_SECRET_KEY) {
+  console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Одна или несколько переменных окружения отсутствуют. Сервер не может запуститься.');
   process.exit(1);
+} else {
+  console.log('DIAGNOSTICS: Все переменные окружения успешно загружены.');
 }
-// Нестрогая проверка для YooKassa, чтобы разрешить запуск без них
-if (!process.env.YOOKASSA_SHOP_ID || !process.env.YOOKASSA_SECRET_KEY) {
-    console.warn('ВНИМАНИЕ: Ключи YooKassa не найдены. Функционал оплаты будет недоступен.');
-}
-
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-const yookassa = (process.env.YOOKASSA_SHOP_ID && process.env.YOOKASSA_SECRET_KEY) ? new Yookassa({
+const yookassa = new Yookassa({
     shopId: process.env.YOOKASSA_SHOP_ID,
     secretKey: process.env.YOOKASSA_SECRET_KEY
-}) : null;
-
+});
 
 const app = express();
 const port = 3001;
@@ -40,9 +43,47 @@ const port = 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- Хранилище кредитов в памяти ---
-let userCredits = {}; // { "user@email.com": 10 }
-let usedPromoCodes = {}; // { "user@email.com": ["CODE1", "CODE2"] }
+// --- Настройка базы данных SQLite ---
+const db = new sqlite3.Database('./fotoclick.db', (err) => {
+    if (err) {
+        console.error("Критическая ошибка: не удалось подключиться к базе данных SQLite.", err.message);
+        process.exit(1);
+    }
+    console.log('Успешное подключение к базе данных SQLite.');
+});
+
+// Создаем таблицы, если они не существуют
+db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS users (
+        email TEXT PRIMARY KEY,
+        credits INTEGER NOT NULL DEFAULT 0
+    )`);
+    db.run(`CREATE TABLE IF NOT EXISTS used_promo_codes (
+        email TEXT NOT NULL,
+        code TEXT NOT NULL,
+        PRIMARY KEY (email, code)
+    )`);
+});
+
+// --- Промисификация методов DB ---
+function dbGet(query, params) {
+    return new Promise((resolve, reject) => {
+        db.get(query, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+function dbRun(query, params) {
+    return new Promise((resolve, reject) => {
+        db.run(query, params, function(err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
 
 const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
@@ -88,16 +129,25 @@ const verifyToken = async (req, res, next) => {
 };
 
 const authenticateAndCharge = (cost) => async (req, res, next) => {
-    const userEmail = req.userEmail;
-    if (userCredits[userEmail] === undefined) {
-        return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
+    // This now runs after verifyToken, so req.userEmail is guaranteed to be present
+    try {
+        const userEmail = req.userEmail;
+        const user = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
+        
+        if (!user) {
+            return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
+        }
+        
+        if (user.credits < cost) {
+            return res.status(402).json({ error: 'Недостаточно кредитов.' });
+        }
+        
+        await dbRun('UPDATE users SET credits = credits - ? WHERE email = ?', [cost, userEmail]);
+        next();
+    } catch (dbError) {
+        console.error('Ошибка базы данных при списании кредитов:', dbError);
+        return res.status(500).json({ error: 'Ошибка сервера при списании кредитов.' });
     }
-    if (userCredits[userEmail] < cost) {
-        return res.status(402).json({ error: 'Недостаточно кредитов.' });
-    }
-    userCredits[userEmail] -= cost;
-    console.log(`Списано ${cost} кредитов у ${userEmail}. Остаток: ${userCredits[userEmail]}`);
-    next();
 };
 
 const handleGeminiError = (error, defaultMessage) => {
@@ -130,14 +180,19 @@ app.post('/api/login', async (req, res) => {
         }
         const { email, name, picture } = payload;
         
-        if (userCredits[email] === undefined) {
-            userCredits[email] = INITIAL_CREDITS;
-            console.log(`Новый пользователь ${email} зарегистрирован. Начислен ${INITIAL_CREDITS} кредит.`);
+        let user = await dbGet('SELECT credits FROM users WHERE email = ?', [email]);
+        let currentCredits;
+
+        if (!user) {
+            await dbRun('INSERT INTO users (email, credits) VALUES (?, ?)', [email, INITIAL_CREDITS]);
+            currentCredits = INITIAL_CREDITS;
+        } else {
+            currentCredits = user.credits;
         }
 
         res.json({
             userProfile: { name, email, picture },
-            credits: userCredits[email],
+            credits: currentCredits,
         });
     } catch (error) {
         console.error('Ошибка входа:', error);
@@ -155,33 +210,35 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
     const promo = PROMO_CODES[code.toUpperCase()];
     if (!promo) return res.status(404).json({ error: 'Неверный промокод.' });
 
-    if (usedPromoCodes[userEmail] && usedPromoCodes[userEmail].includes(code.toUpperCase())) {
-        return res.status(409).json({ error: 'Этот промокод уже был использован.' });
-    }
-    
-    if (promo.type === 'credits') {
-        userCredits[userEmail] = (userCredits[userEmail] || 0) + promo.value;
-        if (!usedPromoCodes[userEmail]) {
-            usedPromoCodes[userEmail] = [];
+    try {
+        const alreadyUsed = await dbGet('SELECT 1 FROM used_promo_codes WHERE email = ? AND code = ?', [userEmail, code.toUpperCase()]);
+        if (alreadyUsed) {
+            return res.status(409).json({ error: 'Этот промокод уже был использован.' });
         }
-        usedPromoCodes[userEmail].push(code.toUpperCase());
-
-        console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${userCredits[userEmail]}`);
         
-        res.json({
-            newCredits: userCredits[userEmail],
-            message: promo.message
-        });
-    } else {
-        res.status(400).json({ error: 'Неподдерживаемый тип промокода.' });
+        if (promo.type === 'credits') {
+            await dbRun('UPDATE users SET credits = credits + ? WHERE email = ?', [promo.value, userEmail]);
+            await dbRun('INSERT INTO used_promo_codes (email, code) VALUES (?, ?)', [userEmail, code.toUpperCase()]);
+            
+            const updatedUser = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
+            
+            console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${updatedUser.credits}`);
+            
+            res.json({
+                newCredits: updatedUser.credits,
+                message: promo.message
+            });
+        } else {
+            res.status(400).json({ error: 'Неподдерживаемый тип промокода.' });
+        }
+    } catch (dbError) {
+        console.error('Ошибка базы данных при применении промокода:', dbError);
+        res.status(500).json({ error: 'Ошибка сервера при применении промокода.' });
     }
 });
 
 // --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
-    if (!yookassa) {
-        return res.status(500).json({ error: 'Сервис оплаты не настроен на сервере.' });
-    }
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
@@ -210,8 +267,16 @@ app.post('/api/payment-webhook', async (req, res) => {
             const payment = notification.object;
             const userEmail = payment.metadata.userEmail;
             if (userEmail) {
-                userCredits[userEmail] = (userCredits[userEmail] || 0) + 12;
-                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${userCredits[userEmail]}`);
+                // UPSERT: Вставить пользователя, если его нет, или обновить кредиты, если он есть
+                const query = `
+                    INSERT INTO users (email, credits) 
+                    VALUES (?, 12) 
+                    ON CONFLICT(email) 
+                    DO UPDATE SET credits = credits + 12;
+                `;
+                await dbRun(query, [userEmail]);
+                const updatedUser = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
+                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${updatedUser.credits}`);
             } else {
                 console.error('Webhook: userEmail не найден в метаданных платежа.');
             }
@@ -225,7 +290,7 @@ app.post('/api/payment-webhook', async (req, res) => {
 
 
 // Check image subject endpoint
-app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No charge
+app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No charge, so no authenticateAndCharge
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
@@ -249,14 +314,12 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No char
     }
 });
 
-const callGeminiForVariation = async (prompt, image, faceImage) => {
-    const mainImagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-    const faceImagePart = { inlineData: { data: faceImage.base64, mimeType: faceImage.mimeType } };
+const callGeminiForVariation = async (prompt, image) => {
+    const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
     const textPart = { text: prompt };
-
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { parts: [mainImagePart, faceImagePart, textPart] },
+        contents: { parts: [imagePart, textPart] },
         config: { responseModalities: [Modality.IMAGE] },
     });
     const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
@@ -268,29 +331,25 @@ const callGeminiForVariation = async (prompt, image, faceImage) => {
 
 // New atomic endpoint for generating 4 variations
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, faceImage } = req.body;
+    const { prompts, image } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
-        userCredits[userEmail] += 4; // Refund
+        await dbRun('UPDATE users SET credits = credits + 4 WHERE email = ?', [userEmail]); // Refund
         return res.status(400).json({ error: 'Некорректные данные для генерации.' });
-    }
-    if (!faceImage) {
-        userCredits[userEmail] += 4; // Refund
-        return res.status(400).json({ error: 'Для генерации требуется эталон лица.' });
     }
 
     try {
-        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image, faceImage));
+        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
         const imageUrls = await Promise.all(generationPromises);
-        res.json({ imageUrls, newCredits: userCredits[userEmail] });
+        const updatedUser = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
+        res.json({ imageUrls, newCredits: updatedUser.credits });
     } catch (error) {
-        userCredits[userEmail] += 4; // Refund
+        await dbRun('UPDATE users SET credits = credits + 4 WHERE email = ?', [userEmail]); // Refund
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариации.');
         res.status(500).json({ error: userMessage });
     }
 });
-
 
 // Endpoint to get the bounding box of a person
 app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
@@ -322,7 +381,7 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
     const userEmail = req.userEmail;
 
     if (!parts || !Array.isArray(parts) || parts.length < 2) {
-         userCredits[userEmail] += 1; // Refund
+         await dbRun('UPDATE users SET credits = credits + 1 WHERE email = ?', [userEmail]); // Refund
          return res.status(400).json({ error: 'Некорректные данные для фотосессии.' });
     }
 
@@ -338,9 +397,10 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
         }
         const generatedPhotoshootResult = { base64: generatedImagePart.inlineData.data, mimeType: generatedImagePart.inlineData.mimeType };
         const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
-        res.json({ resultUrl, generatedPhotoshootResult, newCredits: userCredits[userEmail] });
+        const updatedUser = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
+        res.json({ resultUrl, generatedPhotoshootResult, newCredits: updatedUser.credits });
     } catch (error) {
-        userCredits[userEmail] += 1; // Refund
+        await dbRun('UPDATE users SET credits = credits + 1 WHERE email = ?', [userEmail]); // Refund
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать фотосессию.');
         res.status(500).json({ error: userMessage });
     }
