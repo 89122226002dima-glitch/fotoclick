@@ -314,12 +314,14 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No char
     }
 });
 
-const callGeminiForVariation = async (prompt, image) => {
-    const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+const callGeminiForVariation = async (prompt, image, faceImage) => {
+    const mainImagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+    const faceImagePart = { inlineData: { data: faceImage.base64, mimeType: faceImage.mimeType } };
     const textPart = { text: prompt };
+
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
-        contents: { parts: [imagePart, textPart] },
+        contents: { parts: [mainImagePart, faceImagePart, textPart] },
         config: { responseModalities: [Modality.IMAGE] },
     });
     const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
@@ -331,16 +333,16 @@ const callGeminiForVariation = async (prompt, image) => {
 
 // New atomic endpoint for generating 4 variations
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image } = req.body;
+    const { prompts, image, faceImage } = req.body;
     const userEmail = req.userEmail;
 
-    if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
+    if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image || !faceImage) {
         await dbRun('UPDATE users SET credits = credits + 4 WHERE email = ?', [userEmail]); // Refund
         return res.status(400).json({ error: 'Некорректные данные для генерации.' });
     }
 
     try {
-        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
+        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image, faceImage));
         const imageUrls = await Promise.all(generationPromises);
         const updatedUser = await dbGet('SELECT credits FROM users WHERE email = ?', [userEmail]);
         res.json({ imageUrls, newCredits: updatedUser.credits });
@@ -350,6 +352,7 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
         res.status(500).json({ error: userMessage });
     }
 });
+
 
 // Endpoint to get the bounding box of a person
 app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
