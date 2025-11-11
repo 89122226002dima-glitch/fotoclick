@@ -326,11 +326,15 @@ function initializePoseSequences() {
     poseSequences.female = shuffle(prompts.femalePosePrompts);
     poseSequences.femaleGlamour = shuffle(prompts.femaleGlamourPosePrompts);
     poseSequences.male = shuffle(prompts.malePosePrompts);
+    // FIX: Corrected property name from femaleCloseUpPrompts to femaleCloseUpPosePrompts
     poseSequences.femaleCloseUp = shuffle(prompts.femaleCloseUpPosePrompts);
+    // FIX: Corrected property name from maleCloseUpPrompts to maleCloseUpPosePrompts
     poseSequences.maleCloseUp = shuffle(prompts.maleCloseUpPosePrompts);
     poseSequences.elderlyFemale = shuffle(prompts.elderlyFemalePosePrompts);
+    // FIX: Corrected property name from elderlyFemaleCloseUpPrompts to elderlyFemaleCloseUpPosePrompts
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
+    // FIX: Corrected property name from elderlyMaleCloseUpPrompts to elderlyMaleCloseUpPosePrompts
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
     malePoseIndex = 0;
     femalePoseIndex = 0;
@@ -604,21 +608,20 @@ async function generate() {
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        const finalPrompt = `У тебя есть два визуальных референса:
-*   Изображение 1: Основной референс (человек, одежда, фон, атмосфера).
-*   Изображение 2: Эталон Лица (нерушимый источник черт лица).
+        const finalPrompt = `Твоя задача — сгенерировать новое фотореалистичное изображение. Ты должен выполнить ОДНО творческое изменение и соблюсти ТРИ строгих правила.
 
-Твоя главная задача — создать новое фотореалистичное изображение, полностью изменив позу и ракурс человека согласно инструкции ниже, но сохранив его абсолютную узнаваемость, одежду и стиль фона.
+**ТВОРЧЕСКОЕ ИЗМЕНЕНИЕ (ОБЯЗАТЕЛЬНО К ВЫПОЛНЕНИЮ):**
+Полностью измени позу и ракурс человека. Это самое главное. Примени следующие инструкции: "${changesDescription}". Результат должен кардинально отличаться от позы на исходном фото.
 
-ДЕЙСТВУЙ ПО СЛЕДУЮЩИМ ПРАВИЛАМ:
+**СТРОГИЕ ПРАВИЛА (ЧТО НЕЛЬЗЯ МЕНЯТЬ):**
 
-1.  **ГЛАВНАЯ ЗАДАЧА - НОВАЯ ПОЗА И РАКУРС:** Это основное изменение, которое ты должен сделать. Примени следующие творческие инструкции: "${changesDescription}".
+1.  **ЛИЦО:** Лицо человека должно быть АБСОЛЮТНО УЗНАВАЕМЫМ. Используй **Изображение 2 (Эталон Лица)** как нерушимый источник его уникальных черт. Воссоздай это лицо в новой позе, адаптировав под новое освещение и угол, но не меняя его идентичность.
+2.  **ОДЕЖДА:** Одежда должна быть в точности как на **Изображении 1 (Основной референс)**. Не меняй ее цвет, фасон или детали.
+3.  **ФОН:** Сохрани стиль и атмосферу фона с **Изображения 1**. Фон нужно достроить и адаптировать под новый ракурс, но он должен оставаться узнаваемым.
 
-2.  **ОГРАНИЧЕНИЕ 1 - ЦИФРОВАЯ ИДЕНТИЧНОСТЬ ЛИЦА:** Выполняя пункт 1, ты ОБЯЗАН использовать Изображение 2 как нерушимый эталон для воссоздания лица. Воссоздай лицо с его уникальными чертами в новой позе, адаптировав под новое освещение и угол, но сохранив АБСОЛЮТНУЮ УЗНАВАЕМОСТЬ.
-
-3.  **ОГРАНИЧЕНИЕ 2 - ОДЕЖДА И ФОН:** Одежда человека должна быть в точности как на Изображении 1. Стиль и атмосфера фона также должны быть сохранены с Изображения 1, но фон нужно достроить и адаптировать под новый ракурс из пункта 1.
-
-КАЧЕСТВО: стандартное разрешение, оптимизировано для веб.
+**ИСХОДНЫЕ ДАННЫЕ:**
+*   **Изображение 1:** Основной референс (для одежды и фона).
+*   **Изображение 2:** Эталон Лица (для идентичности).
 
 Результат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
