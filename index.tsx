@@ -901,22 +901,6 @@ function initializePage1Wizard() {
     const doGeneratePhotoshoot = async () => {
         if (!page1ReferenceImage) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, загрузите ваше фото.'); return; }
         
-        const creditsNeeded = 1;
-
-        if (!isLoggedIn) {
-            setWizardStep('AUTH');
-            showStatusError('Пожалуйста, войдите, чтобы получить кредиты для фотосессии.');
-            return;
-        }
-
-        if (generationCredits < creditsNeeded) {
-            const modalTitle = document.querySelector('#payment-modal-title');
-            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
-            setWizardStep('CREDITS');
-            showPaymentModal();
-            return;
-        }
-
         const clothingText = clothingPromptInput.value.trim();
         let locationText = locationPromptInput.value.trim();
         if (!page1ClothingImage && !clothingText) { displayErrorInContainer(photoshootResultContainer, 'Пожалуйста, опишите одежду текстом или загрузите ее фото.'); return; }
@@ -1033,6 +1017,28 @@ function initializePage1Wizard() {
             updatePage1WizardState();
         }
     }
+
+    const handlePhotoshootButtonClick = async () => {
+        const creditsNeeded = 1;
+
+        if (!isLoggedIn) {
+            setWizardStep('AUTH');
+            showStatusError('Пожалуйста, войдите, чтобы начать фотосессию.');
+            return;
+        }
+
+        if (generationCredits < creditsNeeded) {
+            const modalTitle = document.querySelector('#payment-modal-title');
+            if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
+            const modalDescription = document.querySelector('#payment-modal-description');
+            if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для фотосессии требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 79 ₽.`;
+
+            setWizardStep('CREDITS');
+            showPaymentModal();
+            return;
+        }
+        await doGeneratePhotoshoot();
+    };
 
     updatePage1WizardState = () => {
         const generatePhotoshootButton = document.getElementById('generate-photoshoot-button') as HTMLButtonElement;
@@ -1224,7 +1230,7 @@ function initializePage1Wizard() {
         }
     });
 
-    generatePhotoshootButton.addEventListener('click', doGeneratePhotoshoot);
+    generatePhotoshootButton.addEventListener('click', handlePhotoshootButtonClick);
     clothingPromptInput.addEventListener('input', updatePage1WizardState);
     locationPromptInput.addEventListener('input', updatePage1WizardState);
     refreshClothingBtn.addEventListener('mousedown', (e) => { e.preventDefault(); displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput) });
