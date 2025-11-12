@@ -1,13 +1,17 @@
-// server.js - Финальная, стабильная версия с корректной архитектурой и YooKassa.
+// server.js - Версия с интеграцией LowDB для надежного хранения кредитов.
 
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI, Type, Modality } from '@google/genai';
+import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
+
+// --- LowDB Imports ---
+import { Low } from 'lowdb';
+import { JSONFile } from 'lowdb/node';
 
 // --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
 import { createRequire } from 'module';
@@ -42,10 +46,24 @@ const port = 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const userCredits = {};
-const userUsedPromoCodes = {}; // Хранилище использованных кодов: { "user@email.com": ["CODE1"] }
-const INITIAL_CREDITS = 1;
+// --- Настройка базы данных LowDB ---
+const dbFile = path.join(__dirname, 'fotoclick_db.json');
+const adapter = new JSONFile(dbFile);
+// Структура данных по умолчанию:
+// users: { "email@example.com": { credits: 10 } }
+// used_promo_codes: { "email@example.com": ["CODE1", "CODE2"] }
+const defaultData = { users: {}, used_promo_codes: {} };
+const db = new Low(adapter, defaultData);
+// Прочитать данные из файла, инициализировав его, если он не существует.
+// Это асинхронная операция, которую мы выполняем один раз при старте.
+db.read().then(() => {
+    console.log('Успешное подключение и чтение базы данных LowDB (fotoclick_db.json).');
+}).catch(error => {
+    console.error("Критическая ошибка: не удалось прочитать файл базы данных LowDB.", error);
+    process.exit(1);
+});
 
+const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
@@ -55,7 +73,6 @@ const PROMO_CODES = {
 
 
 // --- Middleware ---
-// Raw body is needed for YooKassa webhook
 app.use((req, res, next) => {
     if (req.path === '/api/payment-webhook') {
         express.raw({ type: 'application/json' })(req, res, next);
@@ -72,7 +89,6 @@ const verifyToken = async (req, res, next) => {
     }
     const token = authHeader.split(' ')[1];
     try {
-        // FIX: Create a new client on each request to avoid stale state/caching issues.
         const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
             idToken: token,
@@ -91,35 +107,35 @@ const verifyToken = async (req, res, next) => {
 };
 
 const authenticateAndCharge = (cost) => async (req, res, next) => {
-    await verifyToken(req, res, async () => {
+    try {
         const userEmail = req.userEmail;
-        if (!userEmail) {
-            return res.status(401).json({ error: 'Не удалось определить пользователя.' });
+        
+        await db.read(); // Всегда читаем свежие данные перед операцией
+        
+        const user = db.data.users[userEmail];
+        
+        if (!user) {
+            return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
         }
-        if (userCredits[userEmail] === undefined) {
-             return res.status(403).json({ error: 'Пользователь не найден в системе кредитов.' });
-        }
-        if (userCredits[userEmail] < cost) {
+        
+        if (user.credits < cost) {
             return res.status(402).json({ error: 'Недостаточно кредитов.' });
         }
-        userCredits[userEmail] -= cost;
+        
+        user.credits -= cost;
+        await db.write(); // Сохраняем изменения на диск
         next();
-    });
+    } catch (dbError) {
+        console.error('Ошибка LowDB при списании кредитов:', dbError);
+        return res.status(500).json({ error: 'Ошибка сервера при списании кредитов.' });
+    }
 };
 
-/**
- * Enhanced error handler for Gemini API calls.
- * @param {Error} error The error object caught.
- * @param {string} defaultMessage A default message for the user.
- * @returns {string} A user-friendly error message.
- */
 const handleGeminiError = (error, defaultMessage) => {
     console.error(`Ошибка Gemini: ${error.message}`);
-    // Check for specific API key error message from Google
     if (error.message && (error.message.includes('API key not valid') || error.message.includes('API_KEY_INVALID'))) {
         return 'Ошибка: API-ключ Google недействителен. Пожалуйста, проверьте ключ в Google AI Studio и в файле .env на сервере.';
     }
-    // Check for permission denied errors
     if (error.message && error.message.toLowerCase().includes('permission denied')) {
         return 'Ошибка: У API-ключа Google нет необходимых разрешений. Проверьте настройки в Google Cloud.';
     }
@@ -131,11 +147,9 @@ const handleGeminiError = (error, defaultMessage) => {
 
 app.post('/api/login', async (req, res) => {
     const { token } = req.body;
-    if (!token) {
-        return res.status(400).json({ error: 'Токен не предоставлен.' });
-    }
+    if (!token) return res.status(400).json({ error: 'Токен не предоставлен.' });
+    
     try {
-        // FIX: Create a new client to ensure fresh validation.
         const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
             idToken: token,
@@ -147,13 +161,16 @@ app.post('/api/login', async (req, res) => {
         }
         const { email, name, picture } = payload;
         
-        if (userCredits[email] === undefined) {
-            userCredits[email] = INITIAL_CREDITS;
+        await db.read();
+        
+        if (!db.data.users[email]) {
+            db.data.users[email] = { credits: INITIAL_CREDITS };
+            await db.write();
         }
 
         res.json({
             userProfile: { name, email, picture },
-            credits: userCredits[email],
+            credits: db.data.users[email].credits,
         });
     } catch (error) {
         console.error('Ошибка входа:', error);
@@ -161,51 +178,46 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-app.post('/api/addCredits', verifyToken, (req, res) => {
-    const userEmail = req.userEmail;
-    if (userCredits[userEmail] === undefined) {
-        userCredits[userEmail] = 0;
-    }
-    userCredits[userEmail] += 12;
-    res.json({ newCredits: userCredits[userEmail] });
-});
 
-app.post('/api/apply-promo', verifyToken, (req, res) => {
+app.post('/api/apply-promo', verifyToken, async (req, res) => {
     const { code } = req.body;
     const userEmail = req.userEmail;
 
-    if (!code) {
-        return res.status(400).json({ error: 'Промокод не предоставлен.' });
-    }
+    if (!code) return res.status(400).json({ error: 'Промокод не предоставлен.' });
 
     const promo = PROMO_CODES[code.toUpperCase()];
-    if (!promo) {
-        return res.status(404).json({ error: 'Неверный промокод.' });
-    }
+    if (!promo) return res.status(404).json({ error: 'Неверный промокод.' });
 
-    if (!userUsedPromoCodes[userEmail]) {
-        userUsedPromoCodes[userEmail] = [];
-    }
-
-    if (userUsedPromoCodes[userEmail].includes(code.toUpperCase())) {
-        return res.status(409).json({ error: 'Этот промокод уже был использован.' });
-    }
-    
-    if (promo.type === 'credits') {
-        if (userCredits[userEmail] === undefined) {
-            userCredits[userEmail] = 0;
+    try {
+        await db.read();
+        
+        const userPromoCodes = db.data.used_promo_codes[userEmail] || [];
+        if (userPromoCodes.includes(code.toUpperCase())) {
+            return res.status(409).json({ error: 'Этот промокод уже был использован.' });
         }
-        userCredits[userEmail] += promo.value;
-        userUsedPromoCodes[userEmail].push(code.toUpperCase());
         
-        console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${userCredits[userEmail]}`);
-        
-        res.json({
-            newCredits: userCredits[userEmail],
-            message: promo.message
-        });
-    } else {
-        res.status(400).json({ error: 'Неподдерживаемый тип промокода.' });
+        if (promo.type === 'credits') {
+            if (!db.data.users[userEmail]) {
+                 return res.status(404).json({ error: 'Пользователь не найден для начисления промокода.' });
+            }
+            db.data.users[userEmail].credits += promo.value;
+            userPromoCodes.push(code.toUpperCase());
+            db.data.used_promo_codes[userEmail] = userPromoCodes;
+
+            await db.write();
+            
+            console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${db.data.users[userEmail].credits}`);
+            
+            res.json({
+                newCredits: db.data.users[userEmail].credits,
+                message: promo.message
+            });
+        } else {
+            res.status(400).json({ error: 'Неподдерживаемый тип промокода.' });
+        }
+    } catch (dbError) {
+        console.error('Ошибка LowDB при применении промокода:', dbError);
+        res.status(500).json({ error: 'Ошибка сервера при применении промокода.' });
     }
 });
 
@@ -214,25 +226,14 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
-
         const paymentPayload = {
-            amount: {
-                value: '79.00',
-                currency: 'RUB'
-            },
-            confirmation: {
-                type: 'redirect',
-                return_url: 'https://photo-click-ai.ru?payment_status=success'
-            },
+            amount: { value: '79.00', currency: 'RUB' },
+            confirmation: { type: 'redirect', return_url: 'https://photo-click-ai.ru?payment_status=success' },
             description: 'Пакет "12 фотографий" для photo-click-ai.ru',
-            metadata: {
-                userEmail: userEmail
-            },
+            metadata: { userEmail: userEmail },
             capture: true
         };
-        
         const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
-
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
@@ -241,20 +242,25 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
 });
 
 
-app.post('/api/payment-webhook', (req, res) => {
+app.post('/api/payment-webhook', async (req, res) => {
     try {
-        const notification = JSON.parse(req.body); // YooKassa sends raw JSON
+        const notification = JSON.parse(req.body);
         console.log('Получено уведомление от YooKassa:', notification);
 
         if (notification.event === 'payment.succeeded') {
             const payment = notification.object;
             const userEmail = payment.metadata.userEmail;
             if (userEmail) {
-                if (userCredits[userEmail] === undefined) {
-                    userCredits[userEmail] = 0;
+                await db.read();
+                
+                if (!db.data.users[userEmail]) {
+                     db.data.users[userEmail] = { credits: 0 };
                 }
-                userCredits[userEmail] += 12;
-                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${userCredits[userEmail]}`);
+                db.data.users[userEmail].credits += 12;
+                
+                await db.write();
+                
+                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${db.data.users[userEmail].credits}`);
             } else {
                 console.error('Webhook: userEmail не найден в метаданных платежа.');
             }
@@ -268,7 +274,7 @@ app.post('/api/payment-webhook', (req, res) => {
 
 
 // Check image subject endpoint
-app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) => { // 0 cost for analysis
+app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No charge, so no authenticateAndCharge
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
@@ -280,123 +286,81 @@ app.post('/api/checkImageSubject', authenticateAndCharge(0), async (req, res) =>
         Возможные значения для "category": "мужчина", "женщина", "подросток", "пожилой мужчина", "пожилая женщина", "ребенок", "другое" (если не человек или неясно).
         Возможные значения для "smile": "зубы" (если видна улыбка с зубами), "закрытая" (если улыбка без зубов), "нет улыбки".
         Если на фото несколько людей, анализируй главного, кто в фокусе.`;
-
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [imagePart, textPart] },
-        });
-        
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
         const jsonStringMatch = response.text.match(/\{.*\}/s);
-        if (!jsonStringMatch) {
-            throw new Error("Gemini не вернул корректный JSON.");
-        }
-        const subjectDetails = JSON.parse(jsonStringMatch[0]);
-
-        res.json({ subjectDetails });
-
+        if (!jsonStringMatch) throw new Error("Gemini не вернул корректный JSON.");
+        res.json({ subjectDetails: JSON.parse(jsonStringMatch[0]) });
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
         res.status(500).json({ error: userMessage });
     }
 });
 
-// Helper function to call Gemini for a single variation
 const callGeminiForVariation = async (prompt, image) => {
     const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
     const textPart = { text: prompt };
-
     const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: { parts: [imagePart, textPart] },
         config: { responseModalities: [Modality.IMAGE] },
     });
-    
     const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-
     if (!generatedImagePart || !generatedImagePart.inlineData) {
         throw new Error('Gemini не вернул изображение.');
     }
-
     return `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
 };
 
 // New atomic endpoint for generating 4 variations
-app.post('/api/generateFourVariations', authenticateAndCharge(4), async (req, res) => {
+app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
     const { prompts, image } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
-        userCredits[userEmail] += 4; // Refund if input is invalid
+        await db.read();
+        if(db.data.users[userEmail]) {
+            db.data.users[userEmail].credits += 4;
+            await db.write();
+        }
         return res.status(400).json({ error: 'Некорректные данные для генерации.' });
     }
 
     try {
         const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
         const imageUrls = await Promise.all(generationPromises);
-        
-        res.json({ imageUrls, newCredits: userCredits[userEmail] });
+        await db.read();
+        res.json({ imageUrls, newCredits: db.data.users[userEmail].credits });
     } catch (error) {
-        userCredits[userEmail] += 4; // Refund on failure
+        await db.read();
+        if(db.data.users[userEmail]) {
+            db.data.users[userEmail].credits += 4;
+            await db.write();
+        }
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариации.');
         res.status(500).json({ error: userMessage });
     }
 });
 
-
-// Endpoint for generating a single variation (legacy, can be removed later)
-app.post('/api/generateVariation', authenticateAndCharge(1), async (req, res) => {
-    const { prompt, image } = req.body;
-    const userEmail = req.userEmail;
-
-    if (!prompt || !image || !image.base64 || !image.mimeType) {
-        userCredits[userEmail] += 1;
-        return res.status(400).json({ error: 'Отсутствует промпт или изображение.' });
-    }
-
-    try {
-        const imageUrl = await callGeminiForVariation(prompt, image);
-        res.json({ imageUrl, newCredits: userCredits[userEmail] });
-    } catch (error) {
-        userCredits[userEmail] += 1; // Refund credits on failure
-        const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариацию.');
-        res.status(500).json({ error: userMessage });
-    }
-});
-
 // Endpoint to get the bounding box of a person
-app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, res) => {
+app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
     }
-
     try {
         const prompt = `Найди главного человека на этом изображении и верни координаты его ограничивающей рамки (bounding box). Ответ должен быть СТРОГО в формате JSON: {"x_min": float, "y_min": float, "x_max": float, "y_max": float}, где координаты нормализованы от 0.0 до 1.0. Не добавляй никакого другого текста или форматирования, только JSON.`;
-
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [imagePart, textPart] },
-        });
-
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
         const jsonStringMatch = response.text.match(/\{.*\}/s);
-        if (!jsonStringMatch) {
-            throw new Error('Gemini did not return valid JSON for bounding box.');
-        }
+        if (!jsonStringMatch) throw new Error('Gemini did not return valid JSON for bounding box.');
         const boundingBox = JSON.parse(jsonStringMatch[0]);
-        
-        if (typeof boundingBox.x_min !== 'number' || typeof boundingBox.y_min !== 'number' ||
-            typeof boundingBox.x_max !== 'number' || typeof boundingBox.y_max !== 'number') {
+        if (typeof boundingBox.x_min !== 'number' || typeof boundingBox.y_min !== 'number' || typeof boundingBox.x_max !== 'number' || typeof boundingBox.y_max !== 'number') {
             throw new Error('Полученные данные ограничивающей рамки недействительны.');
         }
-
         res.json({ boundingBox });
-
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось определить положение человека на фото.');
         res.status(500).json({ error: userMessage });
@@ -404,12 +368,16 @@ app.post('/api/detectPersonBoundingBox', authenticateAndCharge(0), async (req, r
 });
 
 // Endpoint for generating the main photoshoot
-app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) => {
+app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async (req, res) => {
     const { parts } = req.body;
     const userEmail = req.userEmail;
 
     if (!parts || !Array.isArray(parts) || parts.length < 2) {
-         userCredits[userEmail] += 1; // Refund
+         await db.read();
+         if(db.data.users[userEmail]) {
+            db.data.users[userEmail].credits += 1;
+            await db.write();
+         }
          return res.status(400).json({ error: 'Некорректные данные для фотосессии.' });
     }
 
@@ -417,48 +385,36 @@ app.post('/api/generatePhotoshoot', authenticateAndCharge(1), async (req, res) =
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: { parts: parts },
-            config: {
-                responseModalities: [Modality.IMAGE],
-            },
+            config: { responseModalities: [Modality.IMAGE] },
         });
-
         const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-
         if (!generatedImagePart || !generatedImagePart.inlineData) {
             throw new Error('Gemini не вернул изображение фотосессии.');
         }
-        
-        const generatedPhotoshootResult = {
-            base64: generatedImagePart.inlineData.data,
-            mimeType: generatedImagePart.inlineData.mimeType
-        };
+        const generatedPhotoshootResult = { base64: generatedImagePart.inlineData.data, mimeType: generatedImagePart.inlineData.mimeType };
         const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
-
-        res.json({ resultUrl, generatedPhotoshootResult, newCredits: userCredits[userEmail] });
-
+        await db.read();
+        res.json({ resultUrl, generatedPhotoshootResult, newCredits: db.data.users[userEmail].credits });
     } catch (error) {
-        userCredits[userEmail] += 1; // Refund
+        await db.read();
+        if(db.data.users[userEmail]) {
+            db.data.users[userEmail].credits += 1;
+            await db.write();
+        }
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать фотосессию.');
         res.status(500).json({ error: userMessage });
     }
 });
 
 // Endpoint for analyzing image for text description
-app.post('/api/analyzeImageForText', authenticateAndCharge(0), async (req, res) => {
+app.post('/api/analyzeImageForText', verifyToken, async (req, res) => {
     const { image, analysisPrompt } = req.body;
-    if (!image || !analysisPrompt) {
-        return res.status(400).json({ error: 'Отсутствует изображение или промпт для анализа.' });
-    }
+    if (!image || !analysisPrompt) return res.status(400).json({ error: 'Отсутствует изображение или промпт для анализа.' });
     
     try {
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: analysisPrompt };
-        
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: { parts: [imagePart, textPart] },
-        });
-
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
         res.json({ text: response.text });
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
