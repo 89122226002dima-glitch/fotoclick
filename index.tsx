@@ -1419,9 +1419,25 @@ async function setupGoogleAuth() {
     } catch (error) {
         console.error("Google Auth Setup Error:", error);
         showStatusError("Не удалось инициализировать вход через Google.");
+        // Provide a fallback UI if initialization fails
+        if (googleSignInContainer) {
+            googleSignInContainer.innerHTML = '<p class="text-xs text-red-400">Ошибка загрузки сервиса входа.</p>';
+        }
     }
 }
 
+// --- NEW: Official Google Auth Loader ---
+// This function is attached to the window object and called by the Google script via the `onload` parameter.
+(window as any).onGoogleScriptLoad = () => {
+    // Google's script is loaded. Now we ensure the DOM is ready before manipulating it.
+    if (document.readyState === 'loading') {
+        // The DOM is still parsing, wait for the DOMContentLoaded event to fire.
+        document.addEventListener('DOMContentLoaded', setupGoogleAuth);
+    } else {
+        // The DOM is already fully loaded, we can call setup immediately.
+        setupGoogleAuth();
+    }
+};
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1461,43 +1477,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     generationCredits = 0;
     updateCreditCounterUI(); 
 
-    // --- Robust Google Auth Loader ---
-    const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
-    let authCheckInterval: number | null = null;
-    let authLoadTimer: number | null = null;
-
-    const attemptGoogleAuthSetup = async () => {
-        // This function is called repeatedly by the interval
-        if ((window as any).google && (window as any).google.accounts) {
-            // Success! The script is loaded.
-            if (authCheckInterval) clearInterval(authCheckInterval);
-            if (authLoadTimer) clearTimeout(authLoadTimer);
-            googleSignInContainer.innerHTML = ''; // Clear any retry button
-            await setupGoogleAuth();
-        }
-    };
-
-    // This timer doesn't stop the process, it just shows a fallback UI
-    authLoadTimer = window.setTimeout(() => {
-        if (!isLoggedIn && !(window as any).google?.accounts?.id) {
-            if (googleSignInContainer) {
-                googleSignInContainer.innerHTML = `
-                    <button id="retry-auth-button" class="btn-secondary">
-                        Войти через Google
-                    </button>
-                `;
-                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
-                    if(statusEl) statusEl.innerText = "Повторная попытка авторизации...";
-                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>'; // Show loading spinner
-                    attemptGoogleAuthSetup(); // Manually retry
-                });
-            }
-            if(statusEl) statusEl.innerText = "Сервис авторизации загружается медленно...";
-        }
-    }, AUTH_LOAD_TIMEOUT);
-
-    // Start polling to check if the script has loaded
-    authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
+    // The old, unreliable timer-based auth loader has been completely removed.
+    // The new `onGoogleScriptLoad` callback handles everything reliably.
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
