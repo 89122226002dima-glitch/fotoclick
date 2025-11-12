@@ -1395,6 +1395,15 @@ function updateAuthUI() {
 
 async function setupGoogleAuth() {
     if (!googleSignInContainer) return;
+
+    if (!(window as any).google || !(window as any).google.accounts) {
+        console.error("Объект Google GSI не найден. Скрипт не был загружен.");
+        if (googleSignInContainer) {
+            googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
+        }
+        return;
+    }
+
     try {
         (window as any).google.accounts.id.initialize({
             client_id: GOOGLE_CLIENT_ID,
@@ -1419,22 +1428,23 @@ async function setupGoogleAuth() {
     } catch (error) {
         console.error("Google Auth Setup Error:", error);
         showStatusError("Не удалось инициализировать вход через Google.");
-        // Provide a fallback UI if initialization fails
         if (googleSignInContainer) {
             googleSignInContainer.innerHTML = '<p class="text-xs text-red-400">Ошибка загрузки сервиса входа.</p>';
         }
     }
 }
 
-// --- NEW: Official Google Auth Loader ---
+// --- NEW: Official Google Auth Loader with Timeout ---
+let googleScriptLoaded = false;
+
 // This function is attached to the window object and called by the Google script via the `onload` parameter.
 (window as any).onGoogleScriptLoad = () => {
+    googleScriptLoaded = true;
+    console.log("Скрипт Google GSI успешно загружен.");
     // Google's script is loaded. Now we ensure the DOM is ready before manipulating it.
     if (document.readyState === 'loading') {
-        // The DOM is still parsing, wait for the DOMContentLoaded event to fire.
         document.addEventListener('DOMContentLoaded', setupGoogleAuth);
     } else {
-        // The DOM is already fully loaded, we can call setup immediately.
         setupGoogleAuth();
     }
 };
@@ -1477,8 +1487,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     generationCredits = 0;
     updateCreditCounterUI(); 
 
-    // The old, unreliable timer-based auth loader has been completely removed.
-    // The new `onGoogleScriptLoad` callback handles everything reliably.
+    // --- Fallback Timer for Google Auth ---
+    setTimeout(() => {
+        if (!googleScriptLoaded) {
+            console.warn("Тайм-аут: скрипт Google GSI не загрузился за 10 секунд.");
+            if (googleSignInContainer) {
+                googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
+            }
+        }
+    }, 10000); // 10 seconds
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
