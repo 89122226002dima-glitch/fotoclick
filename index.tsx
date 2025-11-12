@@ -1462,25 +1462,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateCreditCounterUI(); 
 
     // --- Robust Google Auth Loader ---
-    const authTimeout = 10000; // 10 seconds
-    let authTimer: number | null = null;
+    const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
     let authCheckInterval: number | null = null;
-    
-    authTimer = window.setTimeout(() => {
-        if (authCheckInterval) clearInterval(authCheckInterval);
-        if (!isLoggedIn) { // Only show error if not already logged in
-            showStatusError("Не удалось загрузить сервис авторизации. Попробуйте обновить страницу.");
-            if (googleSignInContainer) googleSignInContainer.innerText = "Ошибка загрузки";
-        }
-    }, authTimeout);
+    let authLoadTimer: number | null = null;
 
-    authCheckInterval = window.setInterval(async () => {
+    const attemptGoogleAuthSetup = async () => {
+        // This function is called repeatedly by the interval
         if ((window as any).google && (window as any).google.accounts) {
-            if(authCheckInterval) clearInterval(authCheckInterval);
-            if (authTimer) clearTimeout(authTimer);
+            // Success! The script is loaded.
+            if (authCheckInterval) clearInterval(authCheckInterval);
+            if (authLoadTimer) clearTimeout(authLoadTimer);
+            googleSignInContainer.innerHTML = ''; // Clear any retry button
             await setupGoogleAuth();
         }
-    }, 100); // Check every 100ms
+    };
+
+    // This timer doesn't stop the process, it just shows a fallback UI
+    authLoadTimer = window.setTimeout(() => {
+        if (!isLoggedIn && !(window as any).google?.accounts?.id) {
+            if (googleSignInContainer) {
+                googleSignInContainer.innerHTML = `
+                    <button id="retry-auth-button" class="btn-secondary">
+                        Войти через Google
+                    </button>
+                `;
+                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
+                    if(statusEl) statusEl.innerText = "Повторная попытка авторизации...";
+                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>'; // Show loading spinner
+                    attemptGoogleAuthSetup(); // Manually retry
+                });
+            }
+            if(statusEl) statusEl.innerText = "Сервис авторизации загружается медленно...";
+        }
+    }, AUTH_LOAD_TIMEOUT);
+
+    // Start polling to check if the script has loaded
+    authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);

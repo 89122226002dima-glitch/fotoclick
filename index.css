@@ -765,3 +765,14 @@ body {
   color: var(--font-color);
   text-decoration: underline;
 }
+
+/* Small spinner for retry button */
+.small-spinner {
+    width: 1.5rem; 
+    height: 1.5rem;
+    color: var(--secondary-color);
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--secondary-color);
+    animation: spin 1s linear infinite;
+}
