@@ -1395,15 +1395,6 @@ function updateAuthUI() {
 
 async function setupGoogleAuth() {
     if (!googleSignInContainer) return;
-
-    if (!(window as any).google || !(window as any).google.accounts) {
-        console.error("Объект Google GSI не найден. Скрипт не был загружен.");
-        if (googleSignInContainer) {
-            googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
-        }
-        return;
-    }
-
     try {
         (window as any).google.accounts.id.initialize({
             client_id: GOOGLE_CLIENT_ID,
@@ -1428,11 +1419,9 @@ async function setupGoogleAuth() {
     } catch (error) {
         console.error("Google Auth Setup Error:", error);
         showStatusError("Не удалось инициализировать вход через Google.");
-        if (googleSignInContainer) {
-            googleSignInContainer.innerHTML = '<p class="text-xs text-red-400">Ошибка загрузки сервиса входа.</p>';
-        }
     }
 }
+
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1466,32 +1455,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
 
-  // This new function takes full control of loading the Google script
-  function initializeGoogleAuth() {
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      console.log("Google GSI script loaded programmatically.");
-      setupGoogleAuth(); // Call the existing setup function on successful load
-    };
-    script.onerror = () => {
-      console.error("Failed to load Google GSI script.");
-      if (googleSignInContainer) {
-        googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
-      }
-    };
-    document.head.appendChild(script);
-  }
 
   try {
     // User starts with 0 and receives them from the server upon login.
     generationCredits = 0;
     updateCreditCounterUI(); 
 
-    // --- Programmatically load and initialize Google Auth ---
-    initializeGoogleAuth();
+    // --- Robust Google Auth Loader ---
+    const authTimeout = 10000; // 10 seconds
+    let authTimer: number | null = null;
+    let authCheckInterval: number | null = null;
+    
+    authTimer = window.setTimeout(() => {
+        if (authCheckInterval) clearInterval(authCheckInterval);
+        if (!isLoggedIn) { // Only show error if not already logged in
+            showStatusError("Не удалось загрузить сервис авторизации. Попробуйте обновить страницу.");
+            if (googleSignInContainer) googleSignInContainer.innerText = "Ошибка загрузки";
+        }
+    }, authTimeout);
+
+    authCheckInterval = window.setInterval(async () => {
+        if ((window as any).google && (window as any).google.accounts) {
+            if(authCheckInterval) clearInterval(authCheckInterval);
+            if (authTimer) clearTimeout(authTimer);
+            await setupGoogleAuth();
+        }
+    }, 100); // Check every 100ms
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
