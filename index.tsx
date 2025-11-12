@@ -1434,21 +1434,6 @@ async function setupGoogleAuth() {
     }
 }
 
-// --- NEW: Official Google Auth Loader with Timeout ---
-let googleScriptLoaded = false;
-
-// This function is attached to the window object and called by the Google script via the `onload` parameter.
-(window as any).onGoogleScriptLoad = () => {
-    googleScriptLoaded = true;
-    console.log("Скрипт Google GSI успешно загружен.");
-    // Google's script is loaded. Now we ensure the DOM is ready before manipulating it.
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', setupGoogleAuth);
-    } else {
-        setupGoogleAuth();
-    }
-};
-
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
   // --- DOM Element Selection (Safe Zone) ---
@@ -1481,21 +1466,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
 
+  // This new function takes full control of loading the Google script
+  function initializeGoogleAuth() {
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      console.log("Google GSI script loaded programmatically.");
+      setupGoogleAuth(); // Call the existing setup function on successful load
+    };
+    script.onerror = () => {
+      console.error("Failed to load Google GSI script.");
+      if (googleSignInContainer) {
+        googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
+      }
+    };
+    document.head.appendChild(script);
+  }
 
   try {
     // User starts with 0 and receives them from the server upon login.
     generationCredits = 0;
     updateCreditCounterUI(); 
 
-    // --- Fallback Timer for Google Auth ---
-    setTimeout(() => {
-        if (!googleScriptLoaded) {
-            console.warn("Тайм-аут: скрипт Google GSI не загрузился за 10 секунд.");
-            if (googleSignInContainer) {
-                googleSignInContainer.innerHTML = '<p class="text-xs text-red-400 text-center">Не удалось загрузить сервис входа.<br>Попробуйте обновить страницу или отключить блокировщики рекламы.</p>';
-            }
-        }
-    }, 10000); // 10 seconds
+    // --- Programmatically load and initialize Google Auth ---
+    initializeGoogleAuth();
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
