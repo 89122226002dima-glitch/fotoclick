@@ -26,13 +26,31 @@
 
 body {
   font-family: 'Manrope', sans-serif;
-  background-image: url('https://i.pinimg.com/1200x/06/8f/76/068f762581a53ab6212f75a944904595.jpg');
-  background-size: cover;
-  background-position: center center;
-  background-repeat: no-repeat;
+  /* A beautiful, lightweight gradient that matches the feminine theme */
+  background: radial-gradient(circle at 10% 20%, rgb(255, 225, 238) 0%, rgb(255, 245, 250) 90%);
   background-attachment: fixed;
-  background-color: #0a0c14;
   color: var(--font-color);
+}
+
+.initial-loading-spinner {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: var(--font-color-dark);
+    width: 100%;
+}
+
+.initial-loading-spinner .spinner {
+    width: 3rem;
+    height: 3rem;
+    margin: 0 auto 1rem;
+    color: var(--secondary-color);
+    border-radius: 50%;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--secondary-color);
+    animation: spin 1s linear infinite;
 }
 
 .app-container {
@@ -764,4 +782,15 @@ body {
 .footer-links a:hover {
   color: var(--font-color);
   text-decoration: underline;
+}
+
+/* Small spinner for retry button */
+.small-spinner {
+    width: 1.5rem; 
+    height: 1.5rem;
+    color: var(--secondary-color);
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--secondary-color);
+    animation: spin 1s linear infinite;
 }

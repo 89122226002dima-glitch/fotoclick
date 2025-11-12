@@ -1,3 +1,32 @@
+// --- Aggressive Cache and Service Worker Cleanup ---
+// This function runs immediately to prevent issues with outdated caches or service workers,
+// which can cause problems on mobile devices.
+async function clearCacheAndServiceWorkers() {
+    try {
+        if (window.caches) {
+            const cacheNames = await window.caches.keys();
+            await Promise.all(cacheNames.map(name => window.caches.delete(name)));
+            console.log('All caches cleared successfully.');
+        }
+
+        if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            if (registrations.length > 0) {
+                await Promise.all(registrations.map(reg => reg.unregister()));
+                console.log('All service workers unregistered successfully. Reloading page.');
+                // Force a reload if a service worker was controlling the page,
+                // to ensure the page is loaded fresh from the network.
+                window.location.reload();
+            }
+        }
+    } catch (error) {
+        console.error('Error during cache/service worker cleanup:', error);
+    }
+}
+
+// Run the cleanup. It will only reload if a service worker was found and unregistered.
+clearCacheAndServiceWorkers();
+
 /* tslint:disable */
 /**
  * @license
@@ -1425,7 +1454,7 @@ async function setupGoogleAuth() {
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
-  // --- DOM Element Selection (Safe Zone) ---
+  // --- 1. DOM Element Selection (Safe Zone) ---
   lightboxOverlay = document.querySelector('#lightbox-overlay')!;
   lightboxImage = document.querySelector('#lightbox-image')!;
   lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
@@ -1454,228 +1483,224 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+  
+  // --- 2. Immediate UI & State Setup ---
+  // Remove static loaders and reveal the app structure.
+  document.querySelectorAll('.initial-loading-spinner').forEach(spinner => (spinner as HTMLElement).remove());
+  document.querySelectorAll('.page-content-wrapper').forEach(wrapper => ((wrapper as HTMLElement).style.visibility = 'visible'));
 
+  // Set initial state. Credits will be updated upon login.
+  generationCredits = 0;
+  updateCreditCounterUI();
+  
+  // Initialize UI components that don't depend on async data.
+  setupNavigation();
+  selectPlan(selectedPlan);
 
-  try {
-    // User starts with 0 and receives them from the server upon login.
-    generationCredits = 0;
-    updateCreditCounterUI(); 
+  // Attach all event listeners immediately.
+  lightboxOverlay.addEventListener('click', (e) => {
+      if (e.target === lightboxOverlay) hideLightbox();
+  });
+  lightboxCloseButton.addEventListener('click', hideLightbox);
 
-    // --- Robust Google Auth Loader ---
-    const authTimeout = 10000; // 10 seconds
-    let authTimer: number | null = null;
-    let authCheckInterval: number | null = null;
-    
-    authTimer = window.setTimeout(() => {
-        if (authCheckInterval) clearInterval(authCheckInterval);
-        if (!isLoggedIn) { // Only show error if not already logged in
-            showStatusError("Не удалось загрузить сервис авторизации. Попробуйте обновить страницу.");
-            if (googleSignInContainer) googleSignInContainer.innerText = "Ошибка загрузки";
+  generateButton.addEventListener('click', generate);
+  resetButton.addEventListener('click', resetApp);
+  applyPromoButton.addEventListener('click', applyPromoCode);
+  promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
+  
+  paymentCloseButton.addEventListener('click', hidePaymentModal);
+  paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
+  creditCounterEl.addEventListener('click', showPaymentModal);
+  userProfileContainer.addEventListener('click', signOut);
+  
+  paymentProceedButton.addEventListener('click', handlePayment);
+  paymentBackButton.addEventListener('click', () => {
+      paymentQrView.classList.add('hidden');
+      paymentSelectionView.classList.remove('hidden');
+      if(paymentQrImage) paymentQrImage.src = '';
+  });
+
+  referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
+  
+  planButtonsContainer.addEventListener('click', (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-plan]');
+    if (button?.dataset.plan) selectPlan(button.dataset.plan);
+  });
+  
+  const handlePage2Upload = (file: File) => {
+    if (!file || !file.type.startsWith('image/')) { showStatusError('Пожалуйста, выберите файл изображения.'); return; }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string;
+      if (dataUrl) {
+        const [header, base64] = dataUrl.split(',');
+        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        const originalImageState = { base64, mimeType };
+        
+        const overlay = document.createElement('div');
+        overlay.className = 'analysis-overlay';
+        overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
+        uploadContainer.appendChild(overlay);
+        const overlayText = overlay.querySelector('p');
+        setControlsDisabled(true);
+        setWizardStep('NONE');
+
+        try {
+          let imageState = await resizeImage(originalImageState);
+          const processedImageState = await new Promise<ImageState>((resolve) => {
+              const img = new Image();
+              img.onload = async () => {
+                  if (img.width > img.height) {
+                      if (overlayText) overlayText.textContent = 'Анализ композиции...';
+                      try {
+                          const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                          if (boundingBox) {
+                              const originalWidth = img.width;
+                              const originalHeight = img.height;
+                              const targetAspectRatio = 4 / 5;
+                              const newWidth = originalHeight * targetAspectRatio;
+                              
+                              if (newWidth < originalWidth) {
+                                  const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                  let cropX = personCenterX - (newWidth / 2);
+                                  cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+                                  const canvas = document.createElement('canvas');
+                                  canvas.width = newWidth;
+                                  canvas.height = originalHeight;
+                                  const ctx = canvas.getContext('2d');
+                                  if (ctx) {
+                                      ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                      const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                      const [, croppedBase64] = croppedDataUrl.split(',');
+                                      console.log("Изображение успешно обрезано до вертикального формата.");
+                                      resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                      return;
+                                  }
+                              }
+                          }
+                      } catch (cropError) {
+                          console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
+                      }
+                  }
+                  resolve(imageState);
+              };
+              img.onerror = () => {
+                  console.error("Не удалось загрузить изображение для проверки размеров.");
+                  resolve(imageState);
+              };
+              img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+          });
+          
+          imageState = processedImageState;
+          const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+
+          referenceImage = imageState;
+          referenceImagePreview.src = finalDataUrl;
+          referenceImagePreview.classList.remove('hidden');
+          referenceDownloadButton.href = finalDataUrl;
+          referenceDownloadButton.download = `reference-${Date.now()}.png`;
+          referenceDownloadButton.classList.remove('hidden');
+          uploadPlaceholder.classList.add('hidden');
+          uploadContainer.classList.remove('aspect-square');
+          outputGallery.innerHTML = '';
+          
+          if (overlayText) overlayText.textContent = 'Анализ фото...';
+          statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
+          
+          const { category, smile } = await checkImageSubject(imageState);
+          detectedSubjectCategory = category;
+          detectedSmileType = smile;
+          initializePoseSequences();
+          if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
+          const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
+          statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
+          setWizardStep('PAGE2_PLAN');
+
+        } catch (e) { 
+          showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
+          resetApp();
         }
-    }, authTimeout);
-
-    authCheckInterval = window.setInterval(async () => {
-        if ((window as any).google && (window as any).google.accounts) {
-            if(authCheckInterval) clearInterval(authCheckInterval);
-            if (authTimer) clearTimeout(authTimer);
-            await setupGoogleAuth();
+        finally { 
+            overlay.remove();
+            setControlsDisabled(false); 
         }
-    }, 100); // Check every 100ms
-    
-    // --- Handle post-payment redirect ---
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('payment_status') === 'success') {
-      statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
-      // Clean the URL to avoid showing the message on every refresh
-      window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+  
+  imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
+  
+  uploadContainer.addEventListener('click', (e) => {
+    if (referenceImage && e.target === referenceImagePreview) {
+      openLightbox(referenceImagePreview.src);
+    } else if (!(e.target as HTMLElement).closest('a')) {
+      imageUpload.click();
     }
+  });
 
+  ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
+      e.preventDefault(); e.stopPropagation();
+      if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
+      if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
+      if (eventName === 'drop' && (e as DragEvent).dataTransfer?.files?.[0]) {
+          imageUpload.files = (e as DragEvent).dataTransfer.files;
+          imageUpload.dispatchEvent(new Event('change'));
+      }
+  }));
 
+  // --- 3. Start Asynchronous Operations ---
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('payment_status') === 'success') {
+    statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши кредиты будут зачислены в течение минуты.</span>';
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  // Start Google Auth initialization in the background.
+  // The original function with its internal polling/timeout is robust for this.
+  const AUTH_LOAD_TIMEOUT = 8000;
+  let authCheckInterval: number | null = null;
+  let authLoadTimer: number | null = null;
+
+  const attemptGoogleAuthSetup = async () => {
+      if ((window as any).google && (window as any).google.accounts) {
+          if (authCheckInterval) clearInterval(authCheckInterval);
+          if (authLoadTimer) clearTimeout(authLoadTimer);
+          googleSignInContainer.innerHTML = '';
+          await setupGoogleAuth();
+      }
+  };
+
+  authLoadTimer = window.setTimeout(() => {
+      if (!isLoggedIn && !(window as any).google?.accounts?.id) {
+          if(statusEl) statusEl.innerText = "Сервис авторизации загружается медленно...";
+      }
+  }, AUTH_LOAD_TIMEOUT);
+
+  authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
+
+  // --- 4. Fetch Core App Data and Finalize Setup ---
+  try {
+    statusEl.innerText = 'Загрузка конфигурации...';
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     prompts = await response.json();
     
-    // --- Initial UI Setup & Event Listeners ---
+    // Once prompts are loaded, initialize dependent parts.
     const placeholderHtml = getUploaderPlaceholderHtml();
     document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
     uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
-
-
-    setupNavigation();
+    initializePoseSequences();
     initializePage1Wizard();
     
-    selectPlan(selectedPlan);
-    initializePoseSequences();
-
-    // --- Attach all event listeners now that elements are guaranteed to exist ---
-    lightboxOverlay.addEventListener('click', (e) => {
-        // Only close if the dark background itself is clicked, not children like the image or button.
-        if (e.target === lightboxOverlay) {
-          hideLightbox();
-        }
-    });
-    lightboxCloseButton.addEventListener('click', hideLightbox);
-
-    generateButton.addEventListener('click', generate);
-    resetButton.addEventListener('click', resetApp);
-    applyPromoButton.addEventListener('click', applyPromoCode);
-    promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
-    
-    paymentCloseButton.addEventListener('click', hidePaymentModal);
-    paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
-    creditCounterEl.addEventListener('click', showPaymentModal);
-    userProfileContainer.addEventListener('click', signOut);
-    
-    paymentProceedButton.addEventListener('click', handlePayment);
-    paymentBackButton.addEventListener('click', () => {
-        paymentQrView.classList.add('hidden');
-        paymentSelectionView.classList.remove('hidden');
-        if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
-    });
-
-    referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
-    
-    planButtonsContainer.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-plan]');
-      if (button?.dataset.plan) selectPlan(button.dataset.plan);
-    });
-
-    const handlePage2Upload = (file: File) => {
-      if (!file || !file.type.startsWith('image/')) { showStatusError('Пожалуйста, выберите файл изображения.'); return; }
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const dataUrl = e.target?.result as string;
-        if (dataUrl) {
-          const [header, base64] = dataUrl.split(',');
-          const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-          const originalImageState = { base64, mimeType };
-          
-          const overlay = document.createElement('div');
-          overlay.className = 'analysis-overlay';
-          overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
-          uploadContainer.appendChild(overlay);
-          const overlayText = overlay.querySelector('p');
-          setControlsDisabled(true);
-          setWizardStep('NONE');
-
-          try {
-            let imageState = await resizeImage(originalImageState);
-
-            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
-            const processedImageState = await new Promise<ImageState>((resolve) => {
-                const img = new Image();
-                img.onload = async () => {
-                    if (img.width > img.height) { // Only process horizontal images
-                        if (overlayText) overlayText.textContent = 'Анализ композиции...';
-                        try {
-                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
-                            if (boundingBox) {
-                                const originalWidth = img.width;
-                                const originalHeight = img.height;
-                                const targetAspectRatio = 4 / 5;
-                                const newWidth = originalHeight * targetAspectRatio;
-                                
-                                if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
-                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
-                                    let cropX = personCenterX - (newWidth / 2);
-                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
-
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = newWidth;
-                                    canvas.height = originalHeight;
-                                    const ctx = canvas.getContext('2d');
-                                    if (ctx) {
-                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
-                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
-                                        const [, croppedBase64] = croppedDataUrl.split(',');
-                                        console.log("Изображение успешно обрезано до вертикального формата.");
-                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
-                                        return;
-                                    }
-                                }
-                            }
-                        } catch (cropError) {
-                            console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
-                        }
-                    }
-                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
-                };
-                img.onerror = () => {
-                    console.error("Не удалось загрузить изображение для проверки размеров.");
-                    resolve(imageState);
-                };
-                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
-            });
-            // --- END OF AUTO-CROP LOGIC ---
-            
-            imageState = processedImageState;
-            const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
-
-            referenceImage = imageState;
-            referenceImagePreview.src = finalDataUrl;
-            referenceImagePreview.classList.remove('hidden');
-            referenceDownloadButton.href = finalDataUrl;
-            referenceDownloadButton.download = `reference-${Date.now()}.png`;
-            referenceDownloadButton.classList.remove('hidden');
-            uploadPlaceholder.classList.add('hidden');
-            uploadContainer.classList.remove('aspect-square');
-            outputGallery.innerHTML = '';
-            
-            if (overlayText) overlayText.textContent = 'Анализ фото...';
-
-            statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
-            
-            const { category, smile } = await checkImageSubject(imageState);
-            detectedSubjectCategory = category;
-            detectedSmileType = smile;
-            initializePoseSequences();
-            if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
-            const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
-            statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
-            setWizardStep('PAGE2_PLAN');
-
-          } catch (e) { 
-            showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
-            resetApp();
-          }
-          finally { 
-              overlay.remove();
-              setControlsDisabled(false); 
-          }
-        }
-      };
-      reader.readAsDataURL(file);
-    };
-    
-    imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
-    
-    uploadContainer.addEventListener('click', (e) => {
-      // Если изображение загружено и клик происходит именно по нему, открываем лайтбокс
-      if (referenceImage && e.target === referenceImagePreview) {
-        openLightbox(referenceImagePreview.src);
-      } else if (!(e.target as HTMLElement).closest('a')) {
-        // В противном случае (если клик по пустой области или плейсхолдеру и не по ссылке) открываем диалог загрузки файла
-        imageUpload.click();
-      }
-    });
-
-    ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
-        e.preventDefault(); e.stopPropagation();
-        if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
-        if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
-        if (eventName === 'drop' && (e as DragEvent).dataTransfer?.files?.[0]) {
-            imageUpload.files = (e as DragEvent).dataTransfer.files;
-            imageUpload.dispatchEvent(new Event('change'));
-        }
-    }));
-
-    (window as any).navigateToPage('page1');
+    // Final UI state update.
+    statusEl.innerText = 'Приложение готово к работе.';
     updateAllGenerateButtons();
     updatePage1WizardState();
-    updateAuthUI();
+    (window as any).navigateToPage('page1');
 
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);
-    document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
+    document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center p-4 text-center" style="background: radial-gradient(circle at 10% 20%, rgb(255, 225, 238) 0%, rgb(255, 245, 250) 90%);"><div class="bg-white/50 p-8 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-700 mb-4">Ошибка загрузки приложения</h1><p class="text-stone-700">Не удалось загрузить необходимые данные. Пожалуйста, проверьте ваше интернет-соединение и перезагрузите страницу.</p></div></div>`;
   }
 });
