@@ -13,9 +13,9 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "google-auth-library": "^9.11.0",
-    "lowdb": "^7.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "sqlite3": "^5.1.7",
     "yookassa": "^0.1.1"
   },
   "devDependencies": {
