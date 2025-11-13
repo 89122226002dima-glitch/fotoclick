@@ -1424,80 +1424,63 @@ async function setupGoogleAuth() {
 
 
 // --- MAIN APP INITIALIZATION ---
-async function initializeApp() {
+document.addEventListener('DOMContentLoaded', async () => {
+  // --- DOM Element Selection (Safe Zone) ---
+  lightboxOverlay = document.querySelector('#lightbox-overlay')!;
+  lightboxImage = document.querySelector('#lightbox-image')!;
+  lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
+  statusEl = document.querySelector('#status')!;
+  planButtonsContainer = document.querySelector('#plan-buttons')!;
+  generateButton = document.querySelector('#generate-button')!;
+  resetButton = document.querySelector('#reset-button')!;
+  outputGallery = document.querySelector('#output-gallery')!;
+  uploadContainer = document.querySelector('#upload-container')!;
+  imageUpload = document.querySelector('#image-upload')!;
+  referenceImagePreview = document.querySelector('#reference-image-preview')!;
+  uploadPlaceholder = document.querySelector('#upload-placeholder')!;
+  customPromptInput = document.querySelector('#custom-prompt-input')!;
+  referenceDownloadButton = document.querySelector('#reference-download-button')!;
+  paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
+  paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
+  paymentCloseButton = document.querySelector('#payment-close-button')!;
+  creditCounterEl = document.querySelector('#credit-counter')!;
+  promoCodeInput = document.querySelector('#promo-code-input')!;
+  applyPromoButton = document.querySelector('#apply-promo-button')!;
+  authContainer = document.getElementById('auth-container') as HTMLDivElement;
+  googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
+  userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
+  userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
+  userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
+  paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
+  paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
+  paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+
+
   try {
-    // --- DOM Element Selection (Safe Zone) ---
-    lightboxOverlay = document.querySelector('#lightbox-overlay')!;
-    lightboxImage = document.querySelector('#lightbox-image')!;
-    lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
-    statusEl = document.querySelector('#status')!;
-    planButtonsContainer = document.querySelector('#plan-buttons')!;
-    generateButton = document.querySelector('#generate-button')!;
-    resetButton = document.querySelector('#reset-button')!;
-    outputGallery = document.querySelector('#output-gallery')!;
-    uploadContainer = document.querySelector('#upload-container')!;
-    imageUpload = document.querySelector('#image-upload')!;
-    referenceImagePreview = document.querySelector('#reference-image-preview')!;
-    uploadPlaceholder = document.querySelector('#upload-placeholder')!;
-    customPromptInput = document.querySelector('#custom-prompt-input')!;
-    referenceDownloadButton = document.querySelector('#reference-download-button')!;
-    paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
-    paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
-    paymentCloseButton = document.querySelector('#payment-close-button')!;
-    creditCounterEl = document.querySelector('#credit-counter')!;
-    promoCodeInput = document.querySelector('#promo-code-input')!;
-    applyPromoButton = document.querySelector('#apply-promo-button')!;
-    authContainer = document.getElementById('auth-container') as HTMLDivElement;
-    googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
-    userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
-    userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
-    userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
-    paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
-    paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
-    paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
-
-
     // User starts with 0 and receives them from the server upon login.
     generationCredits = 0;
     updateCreditCounterUI(); 
 
     // --- Robust Google Auth Loader ---
-    const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
+    const authTimeout = 10000; // 10 seconds
+    let authTimer: number | null = null;
     let authCheckInterval: number | null = null;
-    let authLoadTimer: number | null = null;
+    
+    authTimer = window.setTimeout(() => {
+        if (authCheckInterval) clearInterval(authCheckInterval);
+        if (!isLoggedIn) { // Only show error if not already logged in
+            showStatusError("Не удалось загрузить сервис авторизации. Попробуйте обновить страницу.");
+            if (googleSignInContainer) googleSignInContainer.innerText = "Ошибка загрузки";
+        }
+    }, authTimeout);
 
-    const attemptGoogleAuthSetup = async () => {
-        // This function is called repeatedly by the interval
+    authCheckInterval = window.setInterval(async () => {
         if ((window as any).google && (window as any).google.accounts) {
-            // Success! The script is loaded.
-            if (authCheckInterval) clearInterval(authCheckInterval);
-            if (authLoadTimer) clearTimeout(authLoadTimer);
-            googleSignInContainer.innerHTML = ''; // Clear any retry button
+            if(authCheckInterval) clearInterval(authCheckInterval);
+            if (authTimer) clearTimeout(authTimer);
             await setupGoogleAuth();
         }
-    };
-
-    // This timer doesn't stop the process, it just shows a fallback UI
-    authLoadTimer = window.setTimeout(() => {
-        if (!isLoggedIn && !(window as any).google?.accounts?.id) {
-            if (googleSignInContainer) {
-                googleSignInContainer.innerHTML = `
-                    <button id="retry-auth-button" class="btn-secondary">
-                        Войти через Google
-                    </button>
-                `;
-                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
-                    if(statusEl) statusEl.innerText = "Повторная попытка авторизации...";
-                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>'; // Show loading spinner
-                    attemptGoogleAuthSetup(); // Manually retry
-                });
-            }
-            if(statusEl) statusEl.innerText = "Сервис авторизации загружается медленно...";
-        }
-    }, AUTH_LOAD_TIMEOUT);
-
-    // Start polling to check if the script has loaded
-    authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
+    }, 100); // Check every 100ms
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -1691,21 +1674,8 @@ async function initializeApp() {
     updatePage1WizardState();
     updateAuthUI();
 
-    const loadingOverlay = document.getElementById('loading-overlay');
-    if (loadingOverlay) {
-        loadingOverlay.classList.add('hidden');
-    }
-
   } catch (error) {
     console.error("Fatal Error: Could not load prompts configuration.", error);
-    const loadingOverlay = document.getElementById('loading-overlay');
-    if (loadingOverlay) {
-        loadingOverlay.innerHTML = `<div class="text-center p-8 rounded-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p class="text-white">Не удалось загрузить необходимые данные.</p><p class="text-white">Пожалуйста, перезагрузите страницу.</p></div>`;
-        loadingOverlay.classList.remove('hidden'); // Ensure it's visible even if hidden was added
-    } else {
-        document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
-    }
+    document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
   }
-}
-
-initializeApp();
+});
