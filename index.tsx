@@ -584,21 +584,20 @@ async function generate() {
         }
         allChanges.push(cameraAnglePrompt);
 
-        // Всегда добавляем позу для разнообразия, если она доступна
-        let currentPose: string;
-        if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Используем гламурные позы для первых 2 фото женщины
-            currentPose = glamourPoses.pop() || poses.pop() || ''; // Берем гламурную, если кончились - обычную
-        } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
-            currentPose = poses.pop() || '';
-        } else { // Для всех остальных
-            currentPose = poses.pop() || '';
-        }
-        if (currentPose) allChanges.push(currentPose);
-
-        // Затем, если есть дополнительный текст от пользователя, добавляем и его
         const customText = customPromptInput.value.trim();
         if (customText) {
             allChanges.push(`дополнительная деталь: ${customText}`);
+        } else {
+            // Если нет своего текста, добавляем позу для разнообразия
+            let currentPose: string;
+            if (detectedSubjectCategory === 'woman' && glamourPoses.length > 0 && i < 2) { // Используем гламурные позы для первых 2 фото женщины
+                currentPose = glamourPoses.pop() || poses.pop() || ''; // Берем гламурную, если кончились - обычную
+            } else if (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') {
+                currentPose = poses.pop() || '';
+            } else { // Для всех остальных
+                currentPose = poses.pop() || '';
+            }
+             if (currentPose) allChanges.push(currentPose);
         }
         
         const changesDescription = allChanges.filter(Boolean).join(', ');
