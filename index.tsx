@@ -4,6 +4,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import { openDB, IDBPDatabase, DBSchema } from 'idb';
 
 // --- Type Definitions ---
 interface ImageState {
@@ -53,14 +54,18 @@ interface Prompts {
 // --- Wizard State ---
 type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'AUTH' | 'NONE';
 
-// --- Session State ---
-interface SessionState {
-    p2_referenceImage: ImageState | null;
-    p2_galleryHTML: string;
-    p2_selectedPlan: string;
-    p2_customPrompt: string;
-    p2_detectedSubjectCategory: SubjectCategory | null;
-    p2_detectedSmileType: SmileType | null;
+// --- IndexedDB Schema ---
+interface HistoryImage {
+    id?: number;
+    timestamp: number;
+    image: ImageState;
+}
+
+interface PhotoClickDB extends DBSchema {
+    historyImages: {
+        key: number;
+        value: HistoryImage;
+    };
 }
 
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
@@ -89,6 +94,8 @@ let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
 let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
+let db: IDBPDatabase<PhotoClickDB>;
+
 
 let poseSequences: {
     female: string[]; femaleGlamour: string[]; male: string[]; femaleCloseUp: string[]; maleCloseUp: string[];
@@ -100,35 +107,49 @@ let poseSequences: {
 
 const MAX_DIMENSION = 1024;
 const MAX_PRE_RESIZE_DIMENSION = 2048; // A safe dimension for pre-processing large uploads
-const SESSION_STORAGE_KEY = 'photoClickSessionState';
+const HISTORY_LIMIT = 50;
 
-// --- Session Management Functions ---
-function saveSessionState() {
-    // If there's no reference image, the state is effectively reset, so clear session.
-    if (!referenceImage) {
-        clearSessionState();
-        return;
-    }
+// --- History (IndexedDB) Management Functions ---
+async function initDB() {
+    db = await openDB<PhotoClickDB>('photoClickDB', 1, {
+        upgrade(db) {
+            if (!db.objectStoreNames.contains('historyImages')) {
+                db.createObjectStore('historyImages', {
+                    keyPath: 'id',
+                    autoIncrement: true,
+                });
+            }
+        },
+    });
+    console.log("База данных истории (IndexedDB) успешно инициализирована.");
+}
 
-    const state: SessionState = {
-        p2_referenceImage: referenceImage,
-        p2_galleryHTML: outputGallery.innerHTML,
-        p2_selectedPlan: selectedPlan,
-        p2_customPrompt: customPromptInput.value,
-        p2_detectedSubjectCategory: detectedSubjectCategory,
-        p2_detectedSmileType: detectedSmileType,
-    };
-
+async function addToHistory(images: ImageState[]) {
+    if (!db) return;
     try {
-        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state));
-    } catch (e) {
-        console.error("Не удалось сохранить состояние сессии:", e);
+        const tx = db.transaction('historyImages', 'readwrite');
+        const store = tx.objectStore('historyImages');
+        // Add new images
+        for (const image of images) {
+            await store.add({ image, timestamp: Date.now() });
+        }
+        // Enforce limit
+        const count = await store.count();
+        if (count > HISTORY_LIMIT) {
+            let cursor = await store.openCursor();
+            let toDelete = count - HISTORY_LIMIT;
+            while (cursor && toDelete > 0) {
+                await cursor.delete();
+                cursor = await cursor.continue();
+                toDelete--;
+            }
+        }
+        await tx.done;
+    } catch (error) {
+        console.error("Не удалось сохранить генерации в историю:", error);
     }
 }
 
-function clearSessionState() {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-}
 
 /**
  * Sets the current step for the user guidance wizard, highlighting the active element.
@@ -468,7 +489,6 @@ function resetApp() {
   setControlsDisabled(false);
   updateAllGenerateButtons();
   setWizardStep('NONE');
-  clearSessionState();
 }
 
 function showStatusError(message: string) {
@@ -492,7 +512,7 @@ function displayErrorInContainer(container: HTMLElement, message: string, clearC
   if (clearContainer) container.innerHTML = '';
   const errorContainer = document.createElement('div');
   errorContainer.className = 'bg-red-900/20 border border-red-500/50 rounded-lg p-6 text-center flex flex-col items-center justify-center w-full';
-  if (container.id === 'output-gallery') errorContainer.classList.add('col-span-1', 'md:col-span-2');
+  if (container.id === 'output-gallery' || container.id === 'history-gallery') errorContainer.classList.add('col-span-1', 'sm:col-span-2');
   errorContainer.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-red-400 mb-4" viewBox="0 0 20 20" fill="currentColor">
       <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
@@ -583,29 +603,7 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
     imgContainer.classList.add('is-reference');
     statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
-    saveSessionState();
 };
-
-function rebindGalleryListeners() {
-    outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(imgContainer => {
-        const img = imgContainer.querySelector('img');
-        if (!img) return;
-
-        imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
-
-        imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => {
-            e.preventDefault();
-            e.stopPropagation();
-            setAsReference(imgContainer, img.src);
-        });
-        
-        imgContainer.addEventListener('click', e => {
-            if (!(e.target as HTMLElement).closest('a, button')) {
-                openLightbox(img.src);
-            }
-        });
-    });
-}
 
 async function generate() {
   const creditsNeeded = 4;
@@ -781,7 +779,13 @@ async function generate() {
         imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
     });
 
-    saveSessionState();
+    const imageStatesToSave: ImageState[] = imageUrls.map((url: string) => {
+        const [header, base64] = url.split(',');
+        const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+        return { base64, mimeType };
+    });
+    await addToHistory(imageStatesToSave);
+
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
     if (referenceImage) setWizardStep('PAGE2_PLAN');
@@ -798,11 +802,102 @@ async function generate() {
   }
 }
 
+async function renderHistoryPage() {
+    const historyGallery = document.getElementById('history-gallery');
+    if (!historyGallery || !db) return;
+
+    historyGallery.innerHTML = `<div class="loading-spinner col-span-full mx-auto"></div>`;
+
+    try {
+        const images = await db.getAll('historyImages');
+        images.sort((a, b) => b.timestamp - a.timestamp); // Show newest first
+
+        if (images.length === 0) {
+            historyGallery.innerHTML = `<p class="text-center col-span-full mt-8">История генераций пуста. Создайте свои первые вариации!</p>`;
+            return;
+        }
+
+        historyGallery.innerHTML = ''; // Clear loader
+        images.forEach(historyItem => {
+            const imageUrl = `data:${historyItem.image.mimeType};base64,${historyItem.image.base64}`;
+            const imgContainer = document.createElement('div');
+            imgContainer.className = 'cursor-pointer gallery-item';
+            
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = 'Сгенерированная вариация из истории';
+            img.className = 'w-full h-full object-cover block rounded-lg';
+            imgContainer.appendChild(img);
+
+            imgContainer.innerHTML += `
+                <a href="${imageUrl}" download="history-${historyItem.timestamp}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать изображение">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                </a>
+                <button class="set-ref-button absolute bottom-2 left-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Сделать референсом">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>
+                </button>`;
+            
+            imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+            
+            imgContainer.querySelector('.set-ref-button')?.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Set as reference logic
+                referenceImage = historyItem.image;
+                const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
+                referenceImagePreview.src = dataUrl;
+                referenceImagePreview.classList.remove('hidden');
+                referenceDownloadButton.href = dataUrl;
+                referenceDownloadButton.download = `restored-reference-${Date.now()}.png`;
+                referenceDownloadButton.classList.remove('hidden');
+                uploadPlaceholder.classList.add('hidden');
+                uploadContainer.classList.remove('aspect-square');
+                outputGallery.innerHTML = '';
+                
+                statusEl.innerText = 'Анализ фото из истории...';
+                (window as any).navigateToPage('page2'); // Switch to page 2
+                
+                try {
+                    const { category, smile } = await checkImageSubject(referenceImage);
+                    detectedSubjectCategory = category;
+                    detectedSmileType = smile;
+                    initializePoseSequences();
+                    if (category === 'other') {
+                        showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.');
+                        resetApp();
+                        return;
+                    }
+                    const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
+                    statusEl.innerText = `Изображение из истории загружено. Обнаружен: ${subjectMap[category] || 'человек'}.`;
+                    setWizardStep('PAGE2_PLAN');
+                } catch (error) {
+                    showStatusError(error instanceof Error ? error.message : "Ошибка анализа референса из истории.");
+                }
+            });
+
+            imgContainer.addEventListener('click', e => {
+                if (!(e.target as HTMLElement).closest('a, button')) {
+                    openLightbox(img.src);
+                }
+            });
+            
+            historyGallery.appendChild(imgContainer);
+        });
+
+    } catch (error) {
+        console.error("Ошибка при отображении истории:", error);
+        displayErrorInContainer(historyGallery, "Не удалось загрузить историю генераций.");
+    }
+}
+
+
 function setupNavigation() {
     const navContainer = document.querySelector('#app-nav');
     const pages = document.querySelectorAll<HTMLElement>('.page-content');
     const navButtons = document.querySelectorAll<HTMLButtonElement>('.nav-button');
     if (!navContainer || pages.length === 0) return;
+
     const navigateToPage = (pageId: string) => {
         pages.forEach(page => page.classList.add('hidden'));
         const pageToShow = document.querySelector<HTMLElement>(`#${pageId}`);
@@ -812,16 +907,19 @@ function setupNavigation() {
             if (btn.dataset.page === pageId) btn.classList.add('active');
         });
 
-        // Update wizard step on page change
+        // Update wizard step or render content on page change
         if (pageId === 'page1') {
             updatePage1WizardState();
         } else if (pageId === 'page2') {
-            updateAllGenerateButtons(); // FIX: Ensure button state is updated on page switch
+            updateAllGenerateButtons();
             if (referenceImage) {
                 setWizardStep('PAGE2_PLAN');
             } else {
                 setWizardStep('NONE');
             }
+        } else if (pageId === 'page3') {
+            renderHistoryPage();
+            setWizardStep('NONE');
         }
     };
     navContainer.addEventListener('click', (event) => {
@@ -1575,6 +1673,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     generationCredits = 0;
     updateCreditCounterUI(); 
 
+    await initDB();
+
     // --- Robust Google Auth Loader ---
     const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
     let authCheckInterval: number | null = null;
@@ -1637,50 +1737,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     selectPlan(selectedPlan);
     initializePoseSequences();
-    
-    const loadSessionState = () => {
-        try {
-            const savedStateJSON = sessionStorage.getItem(SESSION_STORAGE_KEY);
-            if (!savedStateJSON) return;
-    
-            const savedState: SessionState = JSON.parse(savedStateJSON);
-    
-            if (savedState.p2_referenceImage) {
-                // Restore state variables
-                referenceImage = savedState.p2_referenceImage;
-                detectedSubjectCategory = savedState.p2_detectedSubjectCategory;
-                detectedSmileType = savedState.p2_detectedSmileType;
-                
-                // Restore UI
-                const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
-                referenceImagePreview.src = dataUrl;
-                referenceImagePreview.classList.remove('hidden');
-                referenceDownloadButton.href = dataUrl;
-                referenceDownloadButton.download = `restored-reference.png`;
-                referenceDownloadButton.classList.remove('hidden');
-                uploadPlaceholder.classList.add('hidden');
-                uploadContainer.classList.remove('aspect-square');
-                
-                outputGallery.innerHTML = savedState.p2_galleryHTML;
-                rebindGalleryListeners(); // Make the gallery interactive again
-    
-                customPromptInput.value = savedState.p2_customPrompt;
-                selectPlan(savedState.p2_selectedPlan); // This also sets wizard step
-    
-                updateAllGenerateButtons();
-                
-                // Switch to page 2 automatically
-                (window as any).navigateToPage('page2');
-                statusEl.innerText = 'Сессия восстановлена. Вы можете продолжить работу.';
-                console.log("Сессия успешно восстановлена.");
-            }
-        } catch (e) {
-            console.error("Не удалось восстановить сессию:", e);
-            clearSessionState(); // Clear corrupted data
-        }
-    };
-    loadSessionState();
-
 
     // --- Attach all event listeners now that elements are guaranteed to exist ---
     lightboxOverlay.addEventListener('click', (e) => {
@@ -1807,7 +1863,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
         statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
         setWizardStep('PAGE2_PLAN');
-        saveSessionState();
 
       } catch (e) { 
         showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
