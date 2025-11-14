@@ -1767,18 +1767,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     return;
                                 }
                             }
-                        } catch (cropError) {
-                            console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
                         }
+                    } catch (cropError) {
+                        console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
                     }
-                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
-                };
-                img.onerror = () => {
-                    console.error("Не удалось загрузить изображение для проверки размеров.");
-                    resolve(imageState);
-                };
-                img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
-            });
+                }
+                resolve(imageState); // Resolve with original if not horizontal or if crop fails
+            };
+            img.onerror = () => {
+                console.error("Не удалось загрузить изображение для проверки размеров.");
+                resolve(imageState);
+            };
+            img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+        });
         // --- END OF AUTO-CROP LOGIC ---
         
         imageState = processedImageState;
