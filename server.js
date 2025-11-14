@@ -77,7 +77,7 @@ app.use((req, res, next) => {
     if (req.path === '/api/payment-webhook') {
         express.raw({ type: 'application/json' })(req, res, next);
     } else {
-        express.json({ limit: '10mb' })(req, res, next);
+        express.json({ limit: '50mb' })(req, res, next);
     }
 });
 app.use(cors());

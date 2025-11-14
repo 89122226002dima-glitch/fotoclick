@@ -53,6 +53,16 @@ interface Prompts {
 // --- Wizard State ---
 type WizardStep = 'PAGE1_PHOTO' | 'PAGE1_CLOTHING' | 'PAGE1_LOCATION' | 'PAGE1_GENERATE' | 'PAGE2_PLAN' | 'PAGE2_GENERATE' | 'CREDITS' | 'AUTH' | 'NONE';
 
+// --- Session State ---
+interface SessionState {
+    p2_referenceImage: ImageState | null;
+    p2_galleryHTML: string;
+    p2_selectedPlan: string;
+    p2_customPrompt: string;
+    p2_detectedSubjectCategory: SubjectCategory | null;
+    p2_detectedSmileType: SmileType | null;
+}
+
 // --- DOM Element Variables (will be assigned on DOMContentLoaded) ---
 let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCloseButton: HTMLButtonElement, statusEl: HTMLDivElement,
     planButtonsContainer: HTMLDivElement, generateButton: HTMLButtonElement, resetButton: HTMLButtonElement,
@@ -89,6 +99,36 @@ let poseSequences: {
 };
 
 const MAX_DIMENSION = 1024;
+const MAX_PRE_RESIZE_DIMENSION = 2048; // A safe dimension for pre-processing large uploads
+const SESSION_STORAGE_KEY = 'photoClickSessionState';
+
+// --- Session Management Functions ---
+function saveSessionState() {
+    // If there's no reference image, the state is effectively reset, so clear session.
+    if (!referenceImage) {
+        clearSessionState();
+        return;
+    }
+
+    const state: SessionState = {
+        p2_referenceImage: referenceImage,
+        p2_galleryHTML: outputGallery.innerHTML,
+        p2_selectedPlan: selectedPlan,
+        p2_customPrompt: customPromptInput.value,
+        p2_detectedSubjectCategory: detectedSubjectCategory,
+        p2_detectedSmileType: detectedSmileType,
+    };
+
+    try {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+        console.error("Не удалось сохранить состояние сессии:", e);
+    }
+}
+
+function clearSessionState() {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+}
 
 /**
  * Sets the current step for the user guidance wizard, highlighting the active element.
@@ -123,6 +163,57 @@ function setWizardStep(step: WizardStep) {
         case 'NONE': // Do nothing, all highlights are cleared
             break;
     }
+}
+
+/**
+ * Efficiently pre-resizes a large image file before further processing.
+ * Uses URL.createObjectURL for better memory management compared to FileReader.
+ * @param file The image file to resize.
+ * @returns A promise that resolves with the resized image state.
+ */
+async function preResizeImage(file: File): Promise<ImageState> {
+    return new Promise((resolve, reject) => {
+        if (file.size > 50 * 1024 * 1024) { // 50MB limit
+            return reject(new Error('Файл слишком большой. Максимальный размер 50МБ.'));
+        }
+
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+
+        img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            let { width, height } = img;
+
+            if (width > MAX_PRE_RESIZE_DIMENSION || height > MAX_PRE_RESIZE_DIMENSION) {
+                if (width > height) {
+                    height = Math.round((height * MAX_PRE_RESIZE_DIMENSION) / width);
+                    width = MAX_PRE_RESIZE_DIMENSION;
+                } else {
+                    width = Math.round((width * MAX_PRE_RESIZE_DIMENSION) / height);
+                    height = MAX_PRE_RESIZE_DIMENSION;
+                }
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return reject(new Error('Не удалось получить 2D контекст холста.'));
+            
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            const [header, base64] = dataUrl.split(',');
+            resolve({ base64, mimeType: 'image/jpeg' });
+        };
+
+        img.onerror = (err) => {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error('Не удалось загрузить файл изображения для обработки. Возможно, файл поврежден или не является изображением.'));
+        };
+
+        img.src = objectUrl;
+    });
 }
 
 
@@ -377,6 +468,7 @@ function resetApp() {
   setControlsDisabled(false);
   updateAllGenerateButtons();
   setWizardStep('NONE');
+  clearSessionState();
 }
 
 function showStatusError(message: string) {
@@ -478,6 +570,42 @@ function updateAllGenerateButtons() {
     }
 }
 
+const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
+    const [header, base64] = imgSrc.split(',');
+    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+    referenceImage = { base64, mimeType };
+    referenceImagePreview.src = imgSrc;
+    referenceDownloadButton.href = imgSrc;
+    referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
+    referenceDownloadButton.classList.remove('hidden');
+    initializePoseSequences();
+    uploadContainer.classList.remove('aspect-square');
+    outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
+    imgContainer.classList.add('is-reference');
+    statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
+    saveSessionState();
+};
+
+function rebindGalleryListeners() {
+    outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(imgContainer => {
+        const img = imgContainer.querySelector('img');
+        if (!img) return;
+
+        imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+
+        imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            setAsReference(imgContainer, img.src);
+        });
+        
+        imgContainer.addEventListener('click', e => {
+            if (!(e.target as HTMLElement).closest('a, button')) {
+                openLightbox(img.src);
+            }
+        });
+    });
+}
 
 async function generate() {
   const creditsNeeded = 4;
@@ -600,7 +728,7 @@ async function generate() {
         const customText = customPromptInput.value.trim();
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило. Не изменяй человека.\n2.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.`;
+        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
         
         if (customText) {
             finalPrompt += `\n5. **ВАЖНОЕ ДОПОЛНЕНИЕ:** Также учти это пожелание: "${customText}".`;
@@ -648,27 +776,12 @@ async function generate() {
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.022 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" /></svg>
             </button>`;
         
-        const setAsReference = () => {
-            const [header, base64] = img.src.split(',');
-            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-            referenceImage = { base64, mimeType };
-            referenceImagePreview.src = img.src;
-            referenceDownloadButton.href = img.src;
-            referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
-            referenceDownloadButton.classList.remove('hidden');
-            initializePoseSequences();
-            uploadContainer.classList.remove('aspect-square');
-            outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
-            imgContainer.classList.add('is-reference');
-            statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
-        };
-
         imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
-        imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAsReference(); });
+        imgContainer.querySelector('.set-ref-button')?.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setAsReference(imgContainer, img.src); });
         imgContainer.addEventListener('click', e => { if (!(e.target as HTMLElement).closest('a, button')) openLightbox(img.src); });
     });
 
-
+    saveSessionState();
     if (progressContainer) setTimeout(() => progressContainer.classList.add('hidden'), 1000);
     statusEl.innerText = 'Вариации сгенерированы. Кликните на результат, чтобы сделать его новым референсом.';
     if (referenceImage) setWizardStep('PAGE2_PLAN');
@@ -752,39 +865,40 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
     const uploadPlaceholder = document.getElementById(placeholderId) as HTMLDivElement;
     const clearButton = document.getElementById(clearButtonId) as HTMLButtonElement;
 
-    const handleFile = (file: File) => {
+    const handleFile = async (file: File) => {
         if (!file || !file.type.startsWith('image/')) return;
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            const dataUrl = e.target?.result as string;
-            if (dataUrl) {
-                imagePreview.src = dataUrl;
-                imagePreview.classList.remove('hidden');
-                uploadPlaceholder.classList.add('hidden');
-                clearButton.classList.remove('hidden');
-                
-                const [header, base64] = dataUrl.split(',');
-                const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-                const originalState: ImageState = { base64, mimeType };
 
-                try {
-                    const statusText = `Оптимизация изображения...`;
-                    if(statusEl) statusEl.innerText = statusText;
+        try {
+            // Use the new memory-efficient pre-resizer first for large images
+            const preResizedState = await preResizeImage(file);
+            const dataUrl = `data:${preResizedState.mimeType};base64,${preResizedState.base64}`;
+            
+            imagePreview.src = dataUrl;
+            imagePreview.classList.remove('hidden');
+            uploadPlaceholder.classList.add('hidden');
+            clearButton.classList.remove('hidden');
+            
+            const statusText = `Оптимизация изображения...`;
+            if(statusEl) statusEl.innerText = statusText;
 
-                    const resizedState = await resizeImage(originalState);
-                    
-                    imagePreview.src = `data:${resizedState.mimeType};base64,${resizedState.base64}`;
-                    await onStateChange(resizedState);
-                    if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
+            // Now, use the existing final resizer
+            const finalResizedState = await resizeImage(preResizedState);
+            
+            imagePreview.src = `data:${finalResizedState.mimeType};base64,${finalResizedState.base64}`;
+            await onStateChange(finalResizedState);
+            if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
 
-                } catch (err) {
-                    console.error("Ошибка изменения размера изображения:", err);
-                    showStatusError("Не удалось оптимизировать изображение. Используется оригинал.");
-                    await onStateChange(originalState); // Fallback to original
-                }
-            }
-        };
-        reader.readAsDataURL(file);
+        } catch (err) {
+            console.error("Ошибка обработки изображения:", err);
+            showStatusError(err instanceof Error ? err.message : "Не удалось обработать изображение.");
+            await onStateChange(null);
+            // Also need to reset the UI elements
+            imageUpload.value = '';
+            imagePreview.src = '';
+            imagePreview.classList.add('hidden');
+            uploadPlaceholder.classList.remove('hidden');
+            clearButton.classList.add('hidden');
+        }
     };
 
     uploadContainer.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest(`#${clearButtonId}`)) imageUpload.click(); });
@@ -1462,25 +1576,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateCreditCounterUI(); 
 
     // --- Robust Google Auth Loader ---
-    const authTimeout = 10000; // 10 seconds
-    let authTimer: number | null = null;
+    const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
     let authCheckInterval: number | null = null;
-    
-    authTimer = window.setTimeout(() => {
-        if (authCheckInterval) clearInterval(authCheckInterval);
-        if (!isLoggedIn) { // Only show error if not already logged in
-            showStatusError("Не удалось загрузить сервис авторизации. Попробуйте обновить страницу.");
-            if (googleSignInContainer) googleSignInContainer.innerText = "Ошибка загрузки";
-        }
-    }, authTimeout);
+    let authLoadTimer: number | null = null;
 
-    authCheckInterval = window.setInterval(async () => {
+    const attemptGoogleAuthSetup = async () => {
+        // This function is called repeatedly by the interval
         if ((window as any).google && (window as any).google.accounts) {
-            if(authCheckInterval) clearInterval(authCheckInterval);
-            if (authTimer) clearTimeout(authTimer);
+            // Success! The script is loaded.
+            if (authCheckInterval) clearInterval(authCheckInterval);
+            if (authLoadTimer) clearTimeout(authLoadTimer);
+            googleSignInContainer.innerHTML = ''; // Clear any retry button
             await setupGoogleAuth();
         }
-    }, 100); // Check every 100ms
+    };
+
+    // This timer doesn't stop the process, it just shows a fallback UI
+    authLoadTimer = window.setTimeout(() => {
+        if (!isLoggedIn && !(window as any).google?.accounts?.id) {
+            if (googleSignInContainer) {
+                googleSignInContainer.innerHTML = `
+                    <button id="retry-auth-button" class="btn-secondary">
+                        Войти через Google
+                    </button>
+                `;
+                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
+                    if(statusEl) statusEl.innerText = "Повторная попытка авторизации...";
+                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>'; // Show loading spinner
+                    attemptGoogleAuthSetup(); // Manually retry
+                });
+            }
+            if(statusEl) statusEl.innerText = "Сервис авторизации загружается медленно...";
+        }
+    }, AUTH_LOAD_TIMEOUT);
+
+    // Start polling to check if the script has loaded
+    authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
@@ -1506,6 +1637,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     selectPlan(selectedPlan);
     initializePoseSequences();
+    
+    const loadSessionState = () => {
+        try {
+            const savedStateJSON = sessionStorage.getItem(SESSION_STORAGE_KEY);
+            if (!savedStateJSON) return;
+    
+            const savedState: SessionState = JSON.parse(savedStateJSON);
+    
+            if (savedState.p2_referenceImage) {
+                // Restore state variables
+                referenceImage = savedState.p2_referenceImage;
+                detectedSubjectCategory = savedState.p2_detectedSubjectCategory;
+                detectedSmileType = savedState.p2_detectedSmileType;
+                
+                // Restore UI
+                const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
+                referenceImagePreview.src = dataUrl;
+                referenceImagePreview.classList.remove('hidden');
+                referenceDownloadButton.href = dataUrl;
+                referenceDownloadButton.download = `restored-reference.png`;
+                referenceDownloadButton.classList.remove('hidden');
+                uploadPlaceholder.classList.add('hidden');
+                uploadContainer.classList.remove('aspect-square');
+                
+                outputGallery.innerHTML = savedState.p2_galleryHTML;
+                rebindGalleryListeners(); // Make the gallery interactive again
+    
+                customPromptInput.value = savedState.p2_customPrompt;
+                selectPlan(savedState.p2_selectedPlan); // This also sets wizard step
+    
+                updateAllGenerateButtons();
+                
+                // Switch to page 2 automatically
+                (window as any).navigateToPage('page2');
+                statusEl.innerText = 'Сессия восстановлена. Вы можете продолжить работу.';
+                console.log("Сессия успешно восстановлена.");
+            }
+        } catch (e) {
+            console.error("Не удалось восстановить сессию:", e);
+            clearSessionState(); // Clear corrupted data
+        }
+    };
+    loadSessionState();
+
 
     // --- Attach all event listeners now that elements are guaranteed to exist ---
     lightboxOverlay.addEventListener('click', (e) => {
@@ -1540,58 +1715,56 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (button?.dataset.plan) selectPlan(button.dataset.plan);
     });
 
-    const handlePage2Upload = (file: File) => {
-      if (!file || !file.type.startsWith('image/')) { showStatusError('Пожалуйста, выберите файл изображения.'); return; }
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const dataUrl = e.target?.result as string;
-        if (dataUrl) {
-          const [header, base64] = dataUrl.split(',');
-          const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-          const originalImageState = { base64, mimeType };
-          
-          const overlay = document.createElement('div');
-          overlay.className = 'analysis-overlay';
-          overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Оптимизация изображения...</p>`;
-          uploadContainer.appendChild(overlay);
-          const overlayText = overlay.querySelector('p');
-          setControlsDisabled(true);
-          setWizardStep('NONE');
+    const handlePage2Upload = async (file: File) => {
+      if (!file || !file.type.startsWith('image/')) {
+        showStatusError('Пожалуйста, выберите файл изображения.');
+        return;
+      }
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'analysis-overlay';
+      overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Обработка изображения...</p>`;
+      uploadContainer.appendChild(overlay);
+      const overlayText = overlay.querySelector('p');
+      setControlsDisabled(true);
+      setWizardStep('NONE');
 
-          try {
-            let imageState = await resizeImage(originalImageState);
+      try {
+        const preResizedState = await preResizeImage(file);
+        if (overlayText) overlayText.textContent = 'Оптимизация изображения...';
 
-            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
-            const processedImageState = await new Promise<ImageState>((resolve) => {
-                const img = new Image();
-                img.onload = async () => {
-                    if (img.width > img.height) { // Only process horizontal images
-                        if (overlayText) overlayText.textContent = 'Анализ композиции...';
-                        try {
-                            const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
-                            if (boundingBox) {
-                                const originalWidth = img.width;
-                                const originalHeight = img.height;
-                                const targetAspectRatio = 4 / 5;
-                                const newWidth = originalHeight * targetAspectRatio;
-                                
-                                if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
-                                    const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
-                                    let cropX = personCenterX - (newWidth / 2);
-                                    cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+        let imageState = await resizeImage(preResizedState);
 
-                                    const canvas = document.createElement('canvas');
-                                    canvas.width = newWidth;
-                                    canvas.height = originalHeight;
-                                    const ctx = canvas.getContext('2d');
-                                    if (ctx) {
-                                        ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
-                                        const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
-                                        const [, croppedBase64] = croppedDataUrl.split(',');
-                                        console.log("Изображение успешно обрезано до вертикального формата.");
-                                        resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
-                                        return;
-                                    }
+        // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
+        const processedImageState = await new Promise<ImageState>((resolve) => {
+            const img = new Image();
+            img.onload = async () => {
+                if (img.width > img.height) { // Only process horizontal images
+                    if (overlayText) overlayText.textContent = 'Анализ композиции...';
+                    try {
+                        const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                        if (boundingBox) {
+                            const originalWidth = img.width;
+                            const originalHeight = img.height;
+                            const targetAspectRatio = 4 / 5;
+                            const newWidth = originalHeight * targetAspectRatio;
+                            
+                            if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
+                                const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                let cropX = personCenterX - (newWidth / 2);
+                                cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+
+                                const canvas = document.createElement('canvas');
+                                canvas.width = newWidth;
+                                canvas.height = originalHeight;
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) {
+                                    ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                    const [, croppedBase64] = croppedDataUrl.split(',');
+                                    console.log("Изображение успешно обрезано до вертикального формата.");
+                                    resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                    return;
                                 }
                             }
                         } catch (cropError) {
@@ -1606,55 +1779,53 @@ document.addEventListener('DOMContentLoaded', async () => {
                 };
                 img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
             });
-            // --- END OF AUTO-CROP LOGIC ---
-            
-            imageState = processedImageState;
-            const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+        // --- END OF AUTO-CROP LOGIC ---
+        
+        imageState = processedImageState;
+        const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
 
-            referenceImage = imageState;
-            referenceImagePreview.src = finalDataUrl;
-            referenceImagePreview.classList.remove('hidden');
-            referenceDownloadButton.href = finalDataUrl;
-            referenceDownloadButton.download = `reference-${Date.now()}.png`;
-            referenceDownloadButton.classList.remove('hidden');
-            uploadPlaceholder.classList.add('hidden');
-            uploadContainer.classList.remove('aspect-square');
-            outputGallery.innerHTML = '';
-            
-            if (overlayText) overlayText.textContent = 'Анализ фото...';
+        referenceImage = imageState;
+        referenceImagePreview.src = finalDataUrl;
+        referenceImagePreview.classList.remove('hidden');
+        referenceDownloadButton.href = finalDataUrl;
+        referenceDownloadButton.download = `reference-${Date.now()}.png`;
+        referenceDownloadButton.classList.remove('hidden');
+        uploadPlaceholder.classList.add('hidden');
+        uploadContainer.classList.remove('aspect-square');
+        outputGallery.innerHTML = '';
+        
+        if (overlayText) overlayText.textContent = 'Анализ фото...';
 
-            statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
-            
-            const { category, smile } = await checkImageSubject(imageState);
-            detectedSubjectCategory = category;
-            detectedSmileType = smile;
-            initializePoseSequences();
-            if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
-            const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
-            statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
-            setWizardStep('PAGE2_PLAN');
+        statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
+        
+        const { category, smile } = await checkImageSubject(imageState);
+        detectedSubjectCategory = category;
+        detectedSmileType = smile;
+        initializePoseSequences();
+        if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
+        const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
+        statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
+        setWizardStep('PAGE2_PLAN');
+        saveSessionState();
 
-          } catch (e) { 
-            showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
-            resetApp();
-          }
-          finally { 
-              overlay.remove();
-              setControlsDisabled(false); 
-          }
-        }
-      };
-      reader.readAsDataURL(file);
+      } catch (e) { 
+        showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
+        resetApp();
+      } finally { 
+          overlay.remove();
+          setControlsDisabled(false); 
+      }
     };
     
-    imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handlePage2Upload((event.target as HTMLInputElement).files[0]); });
+    imageUpload.addEventListener('change', (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (file) handlePage2Upload(file);
+    });
     
     uploadContainer.addEventListener('click', (e) => {
-      // Если изображение загружено и клик происходит именно по нему, открываем лайтбокс
       if (referenceImage && e.target === referenceImagePreview) {
         openLightbox(referenceImagePreview.src);
       } else if (!(e.target as HTMLElement).closest('a')) {
-        // В противном случае (если клик по пустой области или плейсхолдеру и не по ссылке) открываем диалог загрузки файла
         imageUpload.click();
       }
     });
