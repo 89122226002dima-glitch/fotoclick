@@ -13,6 +13,54 @@
     <meta property="og:url" content="https://photo-click-ai.ru" />
     <meta property="og:type" content="website" />
 
+    <script>
+      // --- Aggressive Cache & Service Worker Cleaner ---
+      // This script runs on page load to fix issues where old versions of the site are cached by browsers,
+      // especially on mobile networks. It unregisters old Service Workers and clears all caches.
+      // It runs only once per session to avoid a reload loop.
+      (async () => {
+        if (sessionStorage.getItem('force-reload-complete-v2')) {
+          return;
+        }
+
+        let needsReload = false;
+        
+        try {
+          if ('serviceWorker' in navigator) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            if (registrations.length > 0) {
+              console.log('Photo-Click: Обнаружены старые Service Worker. Принудительное удаление...');
+              await Promise.all(registrations.map(reg => reg.unregister()));
+              needsReload = true;
+              console.log('Photo-Click: Service Worker удалены.');
+            }
+          }
+        } catch (e) {
+          console.error('Photo-Click: Ошибка при удалении Service Worker:', e);
+        }
+
+        try {
+          if ('caches' in window) {
+            const keys = await caches.keys();
+            if (keys.length > 0) {
+                console.log('Photo-Click: Обнаружен кэш. Принудительная очистка...');
+                await Promise.all(keys.map(key => caches.delete(key)));
+                needsReload = true;
+                console.log('Photo-Click: Кэш очищен.');
+            }
+          }
+        } catch (e) {
+           console.error('Photo-Click: Ошибка при очистке кэша:', e);
+        }
+
+        if (needsReload) {
+          console.log('Photo-Click: Кэш и Service Worker очищены. Выполняется принудительная перезагрузка страницы.');
+          sessionStorage.setItem('force-reload-complete-v2', 'true');
+          window.location.reload();
+        }
+      })();
+    </script>
+
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
