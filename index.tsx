@@ -4,6 +4,7 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
+import 'idb'; // Ensure Vite bundles this dependency.
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 
 // --- Type Definitions ---
