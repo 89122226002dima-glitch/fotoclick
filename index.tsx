@@ -89,8 +89,8 @@ let malePoseIndex = 0;
 let femalePoseIndex = 0;
 let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; // All users start with 0 credits until they log in.
-let isLoggedIn = false;
+let generationCredits = 500; // TEST MODE: Start with 500 credits.
+let isLoggedIn = true; // TEST MODE: Assume user is logged in.
 let userProfile: UserProfile | null = null;
 let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
@@ -1592,6 +1592,12 @@ function signOut() {
 }
 
 function updateAuthUI() {
+    // TEST MODE: Auth is disabled, just hide the container.
+    if (authContainer) {
+        authContainer.style.display = 'none';
+    }
+
+    /*
     if (isLoggedIn && userProfile) {
         googleSignInContainer.classList.add('hidden');
         userProfileContainer.classList.remove('hidden');
@@ -1603,6 +1609,7 @@ function updateAuthUI() {
         userProfileImage.src = '';
         userProfileName.textContent = '';
     }
+    */
 }
 
 async function setupGoogleAuth() {
@@ -1669,13 +1676,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
   try {
-    // User starts with 0 and receives them from the server upon login.
-    generationCredits = 0;
+    // In TEST MODE, credits are already set.
     updateCreditCounterUI(); 
 
     await initDB();
 
-    // --- Robust Google Auth Loader ---
+    // --- Robust Google Auth Loader (DISABLED FOR TEST) ---
+    /*
     const AUTH_LOAD_TIMEOUT = 8000; // 8 seconds before showing a retry button
     let authCheckInterval: number | null = null;
     let authLoadTimer: number | null = null;
@@ -1712,6 +1719,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Start polling to check if the script has loaded
     authCheckInterval = window.setInterval(attemptGoogleAuthSetup, 100);
+    */
     
     // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
