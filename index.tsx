@@ -288,6 +288,46 @@ async function resizeImage(imageState: ImageState): Promise<ImageState> {
 }
 
 /**
+ * Crops an image based on normalized coordinates using the HTML Canvas API.
+ * @param imageState The original image state.
+ * @param boundingBox The normalized coordinates for the crop area.
+ * @returns A promise that resolves with the new, cropped image state.
+ */
+async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: number, y_min: number, x_max: number, y_max: number }): Promise<ImageState> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const sx = boundingBox.x_min * img.width;
+            const sy = boundingBox.y_min * img.height;
+            const sWidth = (boundingBox.x_max - boundingBox.x_min) * img.width;
+            const sHeight = (boundingBox.y_max - boundingBox.y_min) * img.height;
+
+            if (sWidth <= 0 || sHeight <= 0) {
+                return reject(new Error('Неверные координаты для обрезки.'));
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = sWidth;
+            canvas.height = sHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                return reject(new Error('Не удалось получить 2D контекст холста для обрезки.'));
+            }
+            ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9); // Use jpeg for consistency
+            const [, base64] = dataUrl.split(',');
+            resolve({ base64, mimeType: 'image/jpeg' });
+        };
+        img.onerror = (err) => {
+            reject(new Error('Не удалось загрузить изображение для обрезки.'));
+        };
+        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+    });
+}
+
+
+/**
  * A generic helper function to make API calls to our own server backend.
  * It automatically includes the authentication token if the user is logged in.
  * This version is robust against "body stream already read" errors by reading
@@ -1349,21 +1389,25 @@ function initializePage1Wizard() {
             page1ClothingImage = null;
         } else {
             const originalPlaceholder = clothingPromptInput.placeholder;
-            clothingPromptInput.placeholder = 'Анализ и обрезка фото одежды...';
+            clothingPromptInput.placeholder = 'Анализ фото одежды...';
             clothingPromptInput.disabled = true;
             try {
-                // New: AI-based cropping
-                const { croppedImage } = await callApi('/api/cropClothing', { image: state });
+                // Get coordinates from the server
+                const { boundingBox } = await callApi('/api/cropClothing', { image: state });
+                
+                // Crop the image on the client-side
+                clothingPromptInput.placeholder = 'Обрезка изображения...';
+                const croppedImage = await cropImageByCoords(state, boundingBox);
                 page1ClothingImage = croppedImage;
                 
-                // Update the preview with the AI-cropped image
+                // Update the preview with the client-cropped image
                 const imagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
                 if (imagePreview) {
                     imagePreview.src = `data:${croppedImage.mimeType};base64,${croppedImage.base64}`;
                 }
             } catch (err) {
-                 console.error("Ошибка AI-обрезки изображения одежды:", err);
-                 showStatusError("Не удалось обработать фото одежды. Используется оригинал.");
+                 console.error("Ошибка обрезки изображения одежды по координатам:", err);
+                 showStatusError("Не удалось автоматически обрезать фото одежды. Используется оригинал.");
                  page1ClothingImage = state; // Fallback to original
             } finally {
                 clothingPromptInput.disabled = false;

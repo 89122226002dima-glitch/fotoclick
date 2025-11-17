@@ -375,37 +375,29 @@ app.post('/api/cropClothing', verifyToken, async (req, res) => {
     }
 
     try {
-        const prompt = `Проанализируй это изображение, которое может быть скриншотом из интернет-магазина. Твоя задача — идеально выделить основной предмет одежды на человеке. 
-        КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-        1.  **ВЫРЕЖИ ТОЛЬКО ОДЕЖДУ:** Итоговое изображение должно содержать только одежду, примерно до уровня бедер.
-        2.  **УДАЛИ ВСЕ ЛИШНЕЕ:** Полностью удали фон, голову модели, руки, ноги ниже бедер, а также любые элементы интерфейса, текст, логотипы, цены и кнопки "в корзину".
-        3.  **РЕЗУЛЬТАТ:** Верни чистое изображение только самой одежды на прозрачном или нейтральном фоне.
-        
-        Результат — только одно изображение без текста.`;
+        const prompt = `Проанализируй это изображение. Найди основной предмет одежды на человеке. Твоя задача — вернуть координаты прямоугольника (bounding box), который охватывает одежду от плеч до бедер, но ОБЯЗАТЕЛЬНО ИСКЛЮЧАЕТ голову и лицо модели. Ответ должен быть СТРОГО в формате JSON: {"boundingBox": {"x_min": float, "y_min": float, "x_max": float, "y_max": float}}. Координаты должны быть нормализованы (от 0.0 до 1.0). Не добавляй никакого другого текста или форматирования.`;
         
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
 
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
+            model: 'gemini-2.5-flash', // Use a cheaper text model
             contents: { parts: [imagePart, textPart] },
-            config: { responseModalities: [Modality.IMAGE] },
         });
 
-        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение после обрезки одежды.');
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) {
+            throw new Error('Gemini не вернул корректный JSON для координат.');
+        }
+        const result = JSON.parse(jsonStringMatch[0]);
+        if (!result.boundingBox) {
+            throw new Error('Ответ Gemini не содержит поля "boundingBox".');
         }
 
-        const croppedImage = {
-            base64: generatedImagePart.inlineData.data,
-            mimeType: generatedImagePart.inlineData.mimeType,
-        };
-
-        res.json({ croppedImage });
+        res.json({ boundingBox: result.boundingBox });
 
     } catch (error) {
-        const userMessage = handleGeminiError(error, 'Не удалось интеллектуально обрезать изображение одежды.');
+        const userMessage = handleGeminiError(error, 'Не удалось получить координаты для обрезки одежды.');
         res.status(500).json({ error: userMessage });
     }
 });
