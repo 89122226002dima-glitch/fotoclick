@@ -163,7 +163,7 @@ function setWizardStep(step: WizardStep) {
         page1Location: document.querySelector('#clothing-location-container .step-container:last-child'),
         page1Generate: document.getElementById('generate-photoshoot-button'),
         page2Photo: document.getElementById('upload-container'),
-        page2Plan: document.getElementById('plan-buttons'),
+        page2Plans: document.getElementById('plan-buttons'),
         page2Generate: document.getElementById('generate-button'),
         credits: document.getElementById('credit-counter'),
         auth: document.getElementById('auth-container'),
@@ -179,7 +179,7 @@ function setWizardStep(step: WizardStep) {
         case 'PAGE1_LOCATION': targets.page1Location?.classList.add('highlight-step'); break;
         case 'PAGE1_GENERATE': targets.page1Generate?.classList.add('highlight-step'); break;
         case 'PAGE2_PHOTO': targets.page2Photo?.classList.add('highlight-step'); break;
-        case 'PAGE2_PLAN': targets.page2Plan?.classList.add('highlight-step'); break;
+        case 'PAGE2_PLAN': targets.page2Plans?.classList.add('highlight-step'); break;
         case 'PAGE2_GENERATE': targets.page2Generate?.classList.add('highlight-step'); break;
         case 'CREDITS': targets.credits?.classList.add('highlight-step'); break;
         case 'AUTH': targets.auth?.classList.add('highlight-step'); break;
@@ -490,7 +490,7 @@ function resetApp() {
   progressContainer?.classList.add('hidden');
   setControlsDisabled(false);
   updateAllGenerateButtons();
-  setWizardStep('PAGE2_PHOTO');
+  setWizardStep('NONE');
 }
 
 function showStatusError(message: string) {
@@ -1626,8 +1626,7 @@ async function setupGoogleAuth() {
             statusEl.innerText = 'Восстанавливаем сессию...';
             await handleCredentialResponse({ credential: storedToken });
         } else {
-            // If no token, highlight auth and show One Tap
-            setWizardStep('AUTH');
+            // If no token, show the One Tap prompt for returning users.
             (window as any).google.accounts.id.prompt();
         }
 
