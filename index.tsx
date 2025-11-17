@@ -166,7 +166,7 @@ function setWizardStep(step: WizardStep) {
         page2Plans: document.getElementById('plan-buttons'),
         page2Generate: document.getElementById('generate-button'),
         credits: document.getElementById('credit-counter'),
-        auth: document.getElementById('auth-container'),
+        auth: document.getElementById('google-signin-container'),
     };
 
     // Remove the highlight class from all targets first
@@ -282,68 +282,6 @@ async function resizeImage(imageState: ImageState): Promise<ImageState> {
         img.onerror = (err) => {
             console.error("Ошибка при загрузке изображения для изменения размера:", err);
             reject(new Error('Не удалось загрузить изображение для обработки.'));
-        };
-        img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
-    });
-}
-
-/**
- * Crops tall images (like screenshots) by removing the top and bottom sections.
- * This is used to clean up clothing reference images.
- * @param imageState The image to process.
- * @returns A promise that resolves with the cropped image state, or the original if not a tall image.
- */
-async function cropImage(imageState: ImageState): Promise<ImageState> {
-    const topPercent = 15;
-    const bottomPercent = 20;
-    const requiredAspectRatio = 3 / 2; // Crop if taller than 3:2 portrait (1.5)
-
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const originalWidth = img.width;
-            const originalHeight = img.height;
-
-            // Only crop if image is taller than the required aspect ratio.
-            if (originalWidth <= 0 || (originalHeight / originalWidth) <= requiredAspectRatio) {
-                resolve(imageState);
-                return;
-            }
-
-            const topCrop = originalHeight * (topPercent / 100);
-            const bottomCrop = originalHeight * (bottomPercent / 100);
-            const newHeight = originalHeight - topCrop - bottomCrop;
-            
-            if (newHeight <= 0) { // Safety check
-                resolve(imageState);
-                return;
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = originalWidth;
-            canvas.height = newHeight;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) {
-                return reject(new Error('Не удалось получить 2D контекст холста для обрезки.'));
-            }
-            
-            // Draw the middle part of the source image onto the new, smaller canvas
-            ctx.drawImage(img,
-                0, topCrop,                 // Source x, y (start cropping from 20% down)
-                originalWidth, newHeight,  // Source width, height (the middle 60% of the image)
-                0, 0,                      // Destination x, y (draw at the top-left of the canvas)
-                originalWidth, newHeight   // Destination width, height (fill the new canvas)
-            );
-
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-            const [, base64] = dataUrl.split(',');
-            const mimeType = 'image/jpeg';
-
-            resolve({ base64, mimeType });
-        };
-        img.onerror = (err) => {
-            console.error("Ошибка при загрузке изображения для обрезки:", err);
-            reject(new Error('Не удалось загрузить изображение для обрезки.'));
         };
         img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
     });
@@ -605,6 +543,7 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
     imgContainer.classList.add('is-reference');
     statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
+    setWizardStep('PAGE2_PLAN');
 };
 
 async function generate() {
@@ -858,7 +797,7 @@ async function renderHistoryPage() {
                 outputGallery.innerHTML = '';
                 
                 statusEl.innerText = 'Анализ фото из истории...';
-                (window as any).navigateToPage('page2'); // Switch to page 2
+                (window as any).navigateToPage('page2');
                 
                 try {
                     const { category, smile } = await checkImageSubject(referenceImage);
@@ -1409,20 +1348,26 @@ function initializePage1Wizard() {
         if (!state) {
             page1ClothingImage = null;
         } else {
+            const originalPlaceholder = clothingPromptInput.placeholder;
+            clothingPromptInput.placeholder = 'Анализ и обрезка фото одежды...';
+            clothingPromptInput.disabled = true;
             try {
-                // Apply the new cropping logic for tall images like screenshots
-                const croppedState = await cropImage(state);
-                page1ClothingImage = croppedState;
+                // New: AI-based cropping
+                const { croppedImage } = await callApi('/api/cropClothing', { image: state });
+                page1ClothingImage = croppedImage;
                 
-                // Update the preview with the potentially cropped image
+                // Update the preview with the AI-cropped image
                 const imagePreview = document.getElementById('clothing-image-preview') as HTMLImageElement;
                 if (imagePreview) {
-                    imagePreview.src = `data:${croppedState.mimeType};base64,${croppedState.base64}`;
+                    imagePreview.src = `data:${croppedImage.mimeType};base64,${croppedImage.base64}`;
                 }
             } catch (err) {
-                 console.error("Ошибка обрезки изображения одежды:", err);
-                 showStatusError("Не удалось обрезать изображение одежды. Используется оригинал.");
+                 console.error("Ошибка AI-обрезки изображения одежды:", err);
+                 showStatusError("Не удалось обработать фото одежды. Используется оригинал.");
                  page1ClothingImage = state; // Fallback to original
+            } finally {
+                clothingPromptInput.disabled = false;
+                clothingPromptInput.placeholder = originalPlaceholder;
             }
         }
 

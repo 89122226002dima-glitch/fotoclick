@@ -367,6 +367,50 @@ app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
     }
 });
 
+// New endpoint for intelligent clothing cropping
+app.post('/api/cropClothing', verifyToken, async (req, res) => {
+    const { image } = req.body;
+    if (!image || !image.base64 || !image.mimeType) {
+        return res.status(400).json({ error: 'Изображение одежды для анализа не предоставлено.' });
+    }
+
+    try {
+        const prompt = `Проанализируй это изображение, которое может быть скриншотом из интернет-магазина. Твоя задача — идеально выделить основной предмет одежды на человеке. 
+        КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
+        1.  **ВЫРЕЖИ ТОЛЬКО ОДЕЖДУ:** Итоговое изображение должно содержать только одежду, примерно до уровня бедер.
+        2.  **УДАЛИ ВСЕ ЛИШНЕЕ:** Полностью удали фон, голову модели, руки, ноги ниже бедер, а также любые элементы интерфейса, текст, логотипы, цены и кнопки "в корзину".
+        3.  **РЕЗУЛЬТАТ:** Верни чистое изображение только самой одежды на прозрачном или нейтральном фоне.
+        
+        Результат — только одно изображение без текста.`;
+        
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [imagePart, textPart] },
+            config: { responseModalities: [Modality.IMAGE] },
+        });
+
+        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+        if (!generatedImagePart || !generatedImagePart.inlineData) {
+            throw new Error('Gemini не вернул изображение после обрезки одежды.');
+        }
+
+        const croppedImage = {
+            base64: generatedImagePart.inlineData.data,
+            mimeType: generatedImagePart.inlineData.mimeType,
+        };
+
+        res.json({ croppedImage });
+
+    } catch (error) {
+        const userMessage = handleGeminiError(error, 'Не удалось интеллектуально обрезать изображение одежды.');
+        res.status(500).json({ error: userMessage });
+    }
+});
+
+
 // Endpoint for generating the main photoshoot
 app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async (req, res) => {
     const { parts } = req.body;
