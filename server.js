@@ -133,23 +133,11 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
 
 const handleGeminiError = (error, defaultMessage) => {
     console.error(`Ошибка Gemini: ${error.message}`);
-    const errorMessage = error.message || '';
-
-    // Пропускаем наши заранее подготовленные, понятные пользователю сообщения.
-    if (errorMessage.startsWith('Изображение было заблокировано') || 
-        errorMessage.startsWith('Получен пустой ответ от AI') || 
-        errorMessage.startsWith('AI вернул ответ в некорректном формате')) {
-        return errorMessage;
-    }
-
-    if (errorMessage.includes('API key not valid') || errorMessage.includes('API_KEY_INVALID')) {
+    if (error.message && (error.message.includes('API key not valid') || error.message.includes('API_KEY_INVALID'))) {
         return 'Ошибка: API-ключ Google недействителен. Пожалуйста, проверьте ключ в Google AI Studio и в файле .env на сервере.';
     }
-    if (errorMessage.toLowerCase().includes('permission denied')) {
+    if (error.message && error.message.toLowerCase().includes('permission denied')) {
         return 'Ошибка: У API-ключа Google нет необходимых разрешений. Проверьте настройки в Google Cloud.';
-    }
-    if (errorMessage.toLowerCase().includes('safety')) {
-        return 'Не удалось обработать фото. Изображение заблокировано автоматической системой безопасности. Пожалуйста, используйте другое фото.';
     }
     return defaultMessage;
 };
@@ -286,7 +274,7 @@ app.post('/api/payment-webhook', async (req, res) => {
 
 
 // Check image subject endpoint
-app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
+app.post('/api/checkImageSubject', verifyToken, async (req, res) => { // No charge, so no authenticateAndCharge
     const { image } = req.body;
     if (!image || !image.base64 || !image.mimeType) {
         return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
@@ -301,25 +289,8 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
         const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
-
-        // --- NEW: More robust response handling ---
-        if (response.promptFeedback?.blockReason) {
-            console.warn(`[checkImageSubject] Gemini blocked prompt. Reason: ${response.promptFeedback.blockReason}`);
-            throw new Error('Изображение было заблокировано нашей системой безопасности. Пожалуйста, попробуйте другое фото.');
-        }
-    
-        const text = response.text;
-        if (!text) {
-             console.error('[checkImageSubject] Gemini response was empty. Full response:', JSON.stringify(response, null, 2));
-             throw new Error("Получен пустой ответ от AI. Попробуйте другое фото.");
-        }
-        // --- END NEW ---
-
-        const jsonStringMatch = text.match(/\{.*\}/s);
-        if (!jsonStringMatch) {
-            console.error('[checkImageSubject] Gemini did not return valid JSON. Response text:', text);
-            throw new Error("AI вернул ответ в некорректном формате. Попробуйте другое фото.");
-        }
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) throw new Error("Gemini не вернул корректный JSON.");
         res.json({ subjectDetails: JSON.parse(jsonStringMatch[0]) });
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
