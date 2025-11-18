@@ -83,6 +83,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
+let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let malePoseIndex = 0;
@@ -329,60 +330,70 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
 
 /**
  * A generic helper function to make API calls to our own server backend.
- * It automatically includes the authentication token if the user is logged in.
- * This version is robust against "body stream already read" errors by reading
- * the response body only once.
- * @param endpoint The API endpoint to call (e.g., '/api/generateVariation').
+ * It automatically includes the authentication token and adds a timeout.
+ * @param endpoint The API endpoint to call.
  * @param body The JSON payload to send.
  * @returns A promise that resolves with the JSON response from the server.
  */
 async function callApi(endpoint: string, body: object) {
+    const controller = new AbortController();
+    // 45-second timeout for API calls, as Gemini can be slow, but this prevents infinite hangs on network issues.
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
     };
-    // Always check localStorage for the most current token
     const currentToken = localStorage.getItem('idToken');
     if (currentToken) {
         headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify(body),
-    });
+    let response;
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+    } catch (error) {
+        // This block catches network errors (e.g., CORS, DNS, no internet) and timeouts.
+        if (error.name === 'AbortError' || error instanceof TypeError) {
+            console.error(`API call to ${endpoint} failed or timed out. Error:`, error);
+            // This user-friendly message addresses the user's suspicion directly.
+            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или региональными блокировками. Проверьте ваше соединение и попробуйте снова.');
+        }
+        // Re-throw any other unexpected errors.
+        throw error;
+    } finally {
+        // Always clear the timeout, whether the request succeeded, failed, or timed out.
+        clearTimeout(timeoutId);
+    }
 
-    // Read the response body as text ONCE to avoid stream errors
     const responseText = await response.text();
     let responseData;
     
     try {
-        // Try to parse the text as JSON
         responseData = JSON.parse(responseText);
     } catch (e) {
-        // If parsing fails, it's a non-JSON response (e.g., HTML error page)
         if (!response.ok) {
             console.error("Non-JSON error response from server:", responseText);
             throw new Error(`Сервер вернул неожиданный ответ (${response.status}).`);
         }
-        // If it's a 2xx response but not JSON, this is unexpected.
         console.warn("An OK response was not in JSON format:", responseText);
-        // We return an object that won't crash the app, but indicates a problem.
         return { error: 'Некорректный ответ от сервера.' };
     }
 
-    // If the response was not OK (e.g., 401, 402, 500), throw an error with the server's message
     if (!response.ok) {
         if (response.status === 401) {
              console.log("Сессия истекла. Пользователю нужно войти снова.");
-             signOut(); // Automatically sign out the user
+             signOut();
              throw new Error("Ваша сессия истекла. Пожалуйста, войдите снова.");
         }
         console.error(`Ошибка API на ${endpoint}:`, responseData);
         throw new Error(responseData.error || `Произошла ошибка (${response.status}).`);
     }
 
-    // If we reach here, the response was OK and is valid JSON
     return responseData;
 }
 
@@ -449,6 +460,7 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
+  referenceImageLocationPrompt = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
@@ -574,6 +586,7 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     const [header, base64] = imgSrc.split(',');
     const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
     referenceImage = { base64, mimeType };
+    referenceImageLocationPrompt = null; // NEW: Reset location prompt on re-reference
     referenceImagePreview.src = imgSrc;
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
@@ -599,7 +612,7 @@ async function generate() {
       const modalTitle = document.querySelector('#payment-modal-title');
       const modalDescription = document.querySelector('#payment-modal-description');
       if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-      if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 79 ₽.`;
+      if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для создания ${creditsNeeded} вариаций требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 129 ₽.`;
       
       setWizardStep('CREDITS');
       showPaymentModal();
@@ -642,6 +655,19 @@ async function generate() {
   }
 
   try {
+    // --- NEW HYBRID PROMPT LOGIC ---
+    let finalLocationPrompt = referenceImageLocationPrompt;
+    if (!finalLocationPrompt && referenceImage) {
+        statusEl.innerText = 'Анализ фона референса для создания единого стиля...';
+        try {
+            finalLocationPrompt = await analyzeImageForText(referenceImage, "Опиши фон или локацию на этом изображении одним коротким, но емким предложением. Ответ должен быть только описанием, без лишних слов.");
+        } catch (e) {
+            console.warn("Анализ фона не удался, будет использован стандартный метод расширения фона.", e);
+            finalLocationPrompt = null;
+        }
+    }
+    // --- END OF NEW LOGIC ---
+
     let poses: string[], glamourPoses: string[] = [];
     const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
     if (selectedPlan === 'close_up') {
@@ -702,12 +728,17 @@ async function generate() {
         }
         if (currentPose) allChanges.push(currentPose);
 
-        // Текст пользователя теперь добавляется как отдельное, явное правило,
-        // чтобы модель не игнорировала другие сгенерированные инструкции.
         const customText = customPromptInput.value.trim();
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
+        let backgroundPromptPart: string;
+        if (finalLocationPrompt) {
+            backgroundPromptPart = `4. **РАСШИРЬ ЛОКАЦИЮ:** Сгенерируй новый фон для локации "${finalLocationPrompt}". **Важно:** сохрани стиль, атмосферу и цветовую палитру фона с референсного фото, чтобы все изображения выглядели как единая фотосессия. Фон должен соответствовать новому ракурсу камеры.`;
+        } else {
+            backgroundPromptPart = `4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
+        }
+        
+        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n${backgroundPromptPart}`;
         
         if (customText) {
             finalPrompt += `\n5. **ВАЖНОЕ ДОПОЛНЕНИЕ:** Также учти это пожелание: "${customText}".`;
@@ -826,6 +857,7 @@ async function renderHistoryPage() {
                 
                 // Set as reference logic
                 referenceImage = historyItem.image;
+                referenceImageLocationPrompt = null; // NEW: History items don't have a baked-in prompt
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
                 referenceImagePreview.classList.remove('hidden');
@@ -1174,6 +1206,8 @@ function initializePage1Wizard() {
     
             const data = await generatePhotoshoot(parts);
             
+            await addToHistory([data.generatedPhotoshootResult]);
+
             generatedPhotoshootResult = data.generatedPhotoshootResult;
             generationCredits = data.newCredits;
             updateCreditCounterUI();
@@ -1190,6 +1224,7 @@ function initializePage1Wizard() {
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
+                referenceImageLocationPrompt = locationText; // NEW: Save location prompt
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1228,7 +1263,7 @@ function initializePage1Wizard() {
             const modalTitle = document.querySelector('#payment-modal-title');
             if (modalTitle) modalTitle.textContent = "Закончились кредиты!";
             const modalDescription = document.querySelector('#payment-modal-description');
-            if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для фотосессии требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 79 ₽.`;
+            if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для фотосессии требуется ${creditsNeeded}. Пополните баланс, чтобы купить <strong>пакет '12 фотографий'</strong> за 129 ₽.`;
 
             setWizardStep('CREDITS');
             showPaymentModal();
@@ -1835,6 +1870,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
 
         referenceImage = imageState;
+        referenceImageLocationPrompt = null; // NEW: Reset location prompt for new uploads
         referenceImagePreview.src = finalDataUrl;
         referenceImagePreview.classList.remove('hidden');
         referenceDownloadButton.href = finalDataUrl;
