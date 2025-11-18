@@ -83,6 +83,7 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
+let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let malePoseIndex = 0;
@@ -449,6 +450,7 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
+  referenceImageLocationPrompt = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
@@ -574,6 +576,7 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     const [header, base64] = imgSrc.split(',');
     const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
     referenceImage = { base64, mimeType };
+    referenceImageLocationPrompt = null; // NEW: Reset location prompt on re-reference
     referenceImagePreview.src = imgSrc;
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
@@ -642,6 +645,19 @@ async function generate() {
   }
 
   try {
+    // --- NEW HYBRID PROMPT LOGIC ---
+    let finalLocationPrompt = referenceImageLocationPrompt;
+    if (!finalLocationPrompt && referenceImage) {
+        statusEl.innerText = 'Анализ фона референса для создания единого стиля...';
+        try {
+            finalLocationPrompt = await analyzeImageForText(referenceImage, "Опиши фон или локацию на этом изображении одним коротким, но емким предложением. Ответ должен быть только описанием, без лишних слов.");
+        } catch (e) {
+            console.warn("Анализ фона не удался, будет использован стандартный метод расширения фона.", e);
+            finalLocationPrompt = null;
+        }
+    }
+    // --- END OF NEW LOGIC ---
+
     let poses: string[], glamourPoses: string[] = [];
     const angles = (detectedSubjectCategory === 'man' || detectedSubjectCategory === 'elderly_man') ? prompts.maleCameraAnglePrompts : prompts.femaleCameraAnglePrompts;
     if (selectedPlan === 'close_up') {
@@ -702,12 +718,17 @@ async function generate() {
         }
         if (currentPose) allChanges.push(currentPose);
 
-        // Текст пользователя теперь добавляется как отдельное, явное правило,
-        // чтобы модель не игнорировала другие сгенерированные инструкции.
         const customText = customPromptInput.value.trim();
         const changesDescription = allChanges.filter(Boolean).join(', ');
 
-        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
+        let backgroundPromptPart: string;
+        if (finalLocationPrompt) {
+            backgroundPromptPart = `4. **РАСШИРЬ ЛОКАЦИЮ:** Сгенерируй новый фон для локации "${finalLocationPrompt}". **Важно:** сохрани стиль, атмосферу и цветовую палитру фона с референсного фото, чтобы все изображения выглядели как единая фотосессия. Фон должен соответствовать новому ракурсу камеры.`;
+        } else {
+            backgroundPromptPart = `4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
+        }
+        
+        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n${backgroundPromptPart}`;
         
         if (customText) {
             finalPrompt += `\n5. **ВАЖНОЕ ДОПОЛНЕНИЕ:** Также учти это пожелание: "${customText}".`;
@@ -826,6 +847,7 @@ async function renderHistoryPage() {
                 
                 // Set as reference logic
                 referenceImage = historyItem.image;
+                referenceImageLocationPrompt = null; // NEW: History items don't have a baked-in prompt
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
                 referenceImagePreview.classList.remove('hidden');
@@ -1190,6 +1212,7 @@ function initializePage1Wizard() {
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
+                referenceImageLocationPrompt = locationText; // NEW: Save location prompt
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1835,6 +1858,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
 
         referenceImage = imageState;
+        referenceImageLocationPrompt = null; // NEW: Reset location prompt for new uploads
         referenceImagePreview.src = finalDataUrl;
         referenceImagePreview.classList.remove('hidden');
         referenceDownloadButton.href = finalDataUrl;
