@@ -956,7 +956,9 @@ function displaySuggestions(container: HTMLElement, allSuggestions: string[], sh
         shownSuggestions.clear();
         availableSuggestions = allSuggestions;
     }
-    const selected = [...availableSuggestions].sort(() => 0.5 - Math.random()).slice(10);
+    // --- FIXED: .slice(0, 10) instead of .slice(10) ---
+    const selected = [...availableSuggestions].sort(() => 0.5 - Math.random()).slice(0, 10);
+    
     selected.forEach(s => shownSuggestions.add(s));
     selected.forEach(suggestionText => {
         const item = document.createElement('button');
@@ -1346,7 +1348,8 @@ function initializePage1Wizard() {
                 case 'elderly_man': currentClothingSuggestions = prompts.elderlyMaleClothingSuggestions; currentLocationSuggestions = prompts.locationSuggestions; subjectText = 'пожилого мужчины'; break;
                 case 'child': currentClothingSuggestions = prompts.childClothingSuggestions; currentLocationSuggestions = prompts.childLocationSuggestions; subjectText = 'ребенка'; break;
             }
-            shownClothingSuggestions.clear(); shownLocationSuggestions.clear();
+            // IMPORTANT: Do NOT clear shown suggestions here, we might be resuming.
+            // The clearing happens in setupUploader when a NEW image is provided.
             subtitle.textContent = `Обнаружено фото ${subjectText}. Шаг 2: Опишите одежду и локацию.`;
             displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput);
             displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
@@ -1421,6 +1424,9 @@ function initializePage1Wizard() {
             // --- NEW: Clean up previous session inputs when new photo is uploaded ---
             clothingPromptInput.value = '';
             locationPromptInput.value = '';
+            shownClothingSuggestions.clear(); // Reset memory of shown suggestions
+            shownLocationSuggestions.clear(); // Reset memory of shown suggestions
+
             page1ClothingImage = null;
             page1LocationImage = null;
             
@@ -1497,8 +1503,22 @@ function initializePage1Wizard() {
     generatePhotoshootButton.addEventListener('click', handlePhotoshootButtonClick);
     clothingPromptInput.addEventListener('input', updatePage1WizardState);
     locationPromptInput.addEventListener('input', updatePage1WizardState);
-    refreshClothingBtn.addEventListener('mousedown', (e) => { e.preventDefault(); displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput) });
-    refreshLocationBtn.addEventListener('mousedown', (e) => { if (!prompts) return; e.preventDefault(); displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput) });
+    
+    // --- FIXED REFRESH LISTENERS: Ensure visibility and focus ---
+    refreshClothingBtn.addEventListener('mousedown', (e) => { 
+        e.preventDefault(); 
+        displaySuggestions(clothingSuggestionsContainer, currentClothingSuggestions, shownClothingSuggestions, clothingPromptInput);
+        clothingSuggestionsContainer.classList.add('visible');
+        clothingPromptInput.focus();
+    });
+    refreshLocationBtn.addEventListener('mousedown', (e) => { 
+        if (!prompts) return; 
+        e.preventDefault(); 
+        displaySuggestions(locationSuggestionsContainer, currentLocationSuggestions, shownLocationSuggestions, locationPromptInput);
+        locationSuggestionsContainer.classList.add('visible');
+        locationPromptInput.focus();
+    });
+    
     clothingPromptInput.addEventListener('focus', () => clothingSuggestionsContainer.classList.add('visible'));
     clothingPromptInput.addEventListener('blur', () => setTimeout(() => clothingSuggestionsContainer.classList.remove('visible'), 200));
     locationPromptInput.addEventListener('focus', () => locationSuggestionsContainer.classList.add('visible'));
