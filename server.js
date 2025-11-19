@@ -68,7 +68,7 @@ const PROMO_CODES = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
     "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
-    "521370": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
+    "521379": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
 };
 
 
@@ -445,6 +445,19 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
          }
          return res.status(400).json({ error: 'Некорректные данные для фотосессии.' });
     }
+
+    // --- INJECT STRICT FACE SIMILARITY PROMPT ---
+    // This ensures Page 1 (Photoshoot) also gets the instruction, even if client code isn't fully updated.
+    const strictPrompt = "\n\n**ФИНАЛЬНАЯ ПРОВЕРКА СХОДСТВА:** Лицо должно быть максимально похожим и быть двойником референсного изображения с учетом эмоций и освещения.";
+    
+    // Try to find the main text prompt to append to, or add a new text part
+    const textPart = parts.find(p => p.text);
+    if (textPart) {
+        textPart.text += strictPrompt;
+    } else {
+        parts.push({ text: strictPrompt });
+    }
+    // ---------------------------------------------
 
     try {
         const response = await ai.models.generateContent({
