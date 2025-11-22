@@ -324,6 +324,42 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
     });
 }
 
+// --- NEW: Helper to slice a 2x2 grid image into 4 separate images ---
+async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const w = img.width;
+            const h = img.height;
+            const halfW = Math.floor(w / 2);
+            const halfH = Math.floor(h / 2);
+            const imageUrls: string[] = [];
+
+            // Order: Top-Left, Top-Right, Bottom-Left, Bottom-Right
+            const positions = [
+                { x: 0, y: 0 },
+                { x: halfW, y: 0 },
+                { x: 0, y: halfH },
+                { x: halfW, y: halfH }
+            ];
+
+            positions.forEach(pos => {
+                const canvas = document.createElement('canvas');
+                canvas.width = halfW;
+                canvas.height = halfH;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
+                    imageUrls.push(canvas.toDataURL(gridMimeType));
+                }
+            });
+            resolve(imageUrls);
+        };
+        img.onerror = (e) => reject(new Error("Failed to load grid image for slicing"));
+        img.src = `data:${gridMimeType};base64,${gridBase64}`;
+    });
+}
+
 
 /**
  * A generic helper function to make API calls to our own server backend.
@@ -563,7 +599,7 @@ function updateAllGenerateButtons() {
     if (generateButton) {
         const creditsNeeded = 4;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать 4 фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
             generateButton.disabled = false; // Always enabled to show prompt
@@ -744,13 +780,21 @@ async function generate() {
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация... 10%';
+    if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
 
-    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
+    // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
+    const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
         image: referenceImage!
     });
     
+    if (progressText) progressText.innerText = 'Обработка результатов...';
+
+    // --- SLICE THE GRID IMAGE CLIENT-SIDE ---
+    const [header, gridBase64] = gridImageUrl.split(',');
+    const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+    const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
+
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
