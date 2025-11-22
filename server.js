@@ -329,7 +329,7 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
 
 // New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image } = req.body;
+    const { prompts, image, aspectRatio = '1:1' } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -364,7 +364,7 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
                 responseModalities: [Modality.IMAGE],
                 imageConfig: { 
                     imageSize: '2K',
-                    aspectRatio: '1:1' // Квадратная сетка
+                    aspectRatio: aspectRatio // Use detected aspect ratio
                 } 
             },
         });
