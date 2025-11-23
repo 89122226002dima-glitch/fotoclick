@@ -65,10 +65,7 @@ db.read().then(() => {
 
 const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
-    "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
-    "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
-    "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
-    "521378": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
+    "521377": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
 };
 
 
@@ -329,7 +326,7 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
 
 // New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, aspectRatio = '1:1' } = req.body;
+    const { prompts, image, faceImage, aspectRatio = '1:1' } = req.body; // Added faceImage
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -343,7 +340,7 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
 
     try {
         // Создаем один большой промпт для сетки 2x2
-        const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
+        let gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
         
         Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
         1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
@@ -354,17 +351,28 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
         ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
         Соблюдай стиль и качество во всех четырех частях.`;
 
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: gridPrompt };
+        if (faceImage) {
+            gridPrompt = `ПЕРВОЕ ИЗОБРАЖЕНИЕ - это общий референс для стиля и позы.
+            ВТОРОЕ ИЗОБРАЖЕНИЕ (лицо крупным планом) - это ЭТАЛОН ВНЕШНОСТИ. Используй второе изображение, чтобы максимально точно скопировать черты лица (глаза, нос, губы, текстуру кожи) на всех вариациях.
+            
+            ${gridPrompt}`;
+        }
+
+        const parts = [];
+        parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
+        if (faceImage) {
+            parts.push({ inlineData: { data: faceImage.base64, mimeType: faceImage.mimeType } });
+        }
+        parts.push({ text: gridPrompt });
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview', // Используем Pro для качества и 2K
-            contents: { parts: [imagePart, textPart] },
+            model: 'gemini-3-pro-image-preview',
+            contents: { parts: parts },
             config: { 
                 responseModalities: [Modality.IMAGE],
                 imageConfig: { 
                     imageSize: '2K',
-                    aspectRatio: aspectRatio // Use detected aspect ratio
+                    aspectRatio: aspectRatio 
                 } 
             },
         });
@@ -411,6 +419,41 @@ app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
         res.json({ boundingBox });
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось определить положение человека на фото.');
+        res.status(500).json({ error: userMessage });
+    }
+});
+
+// New endpoint for intelligent face cropping
+app.post('/api/cropFace', verifyToken, async (req, res) => {
+    const { image } = req.body;
+    if (!image || !image.base64 || !image.mimeType) {
+        return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
+    }
+
+    try {
+        const prompt = `Найди лицо главного человека на этом изображении. Твоя задача — вернуть координаты прямоугольника (bounding box), который плотно охватывает лицо (от подбородка до верха лба, от уха до уха). Ответ должен быть СТРОГО в формате JSON: {"boundingBox": {"x_min": float, "y_min": float, "x_max": float, "y_max": float}}. Координаты должны быть нормализованы (от 0.0 до 1.0). Не добавляй никакого другого текста.`;
+        
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: { parts: [imagePart, textPart] },
+        });
+
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) {
+            throw new Error('Gemini не вернул корректный JSON для координат лица.');
+        }
+        const result = JSON.parse(jsonStringMatch[0]);
+        if (!result.boundingBox) {
+            throw new Error('Ответ Gemini не содержит поля "boundingBox" для лица.');
+        }
+
+        res.json({ boundingBox: result.boundingBox });
+
+    } catch (error) {
+        const userMessage = handleGeminiError(error, 'Не удалось определить лицо для точного сходства.');
         res.status(500).json({ error: userMessage });
     }
 });
