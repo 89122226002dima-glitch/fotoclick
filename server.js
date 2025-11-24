@@ -362,7 +362,7 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
             contents: { parts: [imagePart, textPart] },
             config: { 
                 responseModalities: [Modality.IMAGE],
-                responseMimeType: 'image/png', // <--- Force PNG request
+                // responseMimeType removed to prevent 500 error on this model
                 imageConfig: { 
                     imageSize: '2K',
                     aspectRatio: aspectRatio // Use detected aspect ratio
