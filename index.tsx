@@ -351,6 +351,7 @@ async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                     ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
+                    // Force PNG here for better quality when saving/downloading
                     imageUrls.push(canvas.toDataURL('image/png'));
                 }
             });
@@ -1655,4 +1656,421 @@ function getUploaderPlaceholderHtml(): string {
           <path d="M5541 7169 c-59 -53 -130 -73 -232 -66 -83 5 -173 39 -216 79 -13 12 -23 16 -23 10 0 -7 19 -26 43 -42 23 -17 49 -37 58 -44 9 -7 30 -18 49 -24 55 -20 238 -13 225 8 -2 4 13 15 34 25 22 9 56 35 77 56 49 50 41 49 -15 -2z"/>
           <path d="M4507 6975 c8 -168 -38 -341 -127 -470 -18 -26 -102 -119 -189 -208 -144 -150 -215 -229 -236 -267 -10 -17 259 234 343 320 152 156 226 338 226 560 0 63 -5 126 -11 140 -8 19 -10 3 -6 -75z"/>
           <path d="M5662 6687 c-105 -331 -172 -699 -172 -942 0 -60 6 -128 12 -150 11 -36 13 -22 19 140 12 301 84 706 183 1027 8 26 12 50 8 52 -5 3 -27 -55 -50 -127z"/>
-          <path d="M4545 6184 c-125 -33 -302 -100 -291 -111 2 -2 59 15 127 38 69 30 146 44 200 47 71 4 82 2 138 -27 133 -67 278 -178 356 -271 50 -59 92 -150 110 -236 28 -140 48 -449 47 -744 -1 -157 -3 -295 -6 -308 -3 -12 -8 -147 -11 -300 l-6 -277 -77 -59 c-183 -141 -361 -286 -407 -332 -27 -27 -71 -66 -99 -86 -27 -21 -65 -52 -85 -71 -20 -18 -44 -38 -53 -43 -10 -5 -58 -50 -108 -98 -58 -57 -91 -84 -94 -75 -3 8 -28 156 -56 329 -90 549 -128 721 -189 853 -26 57 -81 125 -81 100 0 -6 6 -16 14 -22 21 -17 63 -124 85 -216 27 -109 60 -299 121 -684 28 -179 55 -344 59 -368 l8 -43 -158 -160 c-87 -88 -160 -156 -163 -151 -8 12 -65 169 -76 206 -4 17 -41 122 -80 235 -208 591 -249 776 -257 1145 -6 284 10 450 72 760 69 340 127 490 263 671 35 47 63 87 61 89 -5 4 -108 -117 -150 -175 -238 -329 -399 -1005 -359 -1510 28 -366 143 -748 394 -1313 35 -78 66 -153 70 -165 8 -25 -44 -100 -136 -192 -82 -82 -236 -294 -279 -384 -71 -145 -47 -255 66 -307 39 -18 136 -26 169 -13 26 10 18 24 -15 24 -37 0 -30 16 11 25 17 4 30 11 30 16 0 5 -1 9 -2 9 -2 1 -30 3 -63 6 -79 7 -157 29 -186 53 -19 15 -24 29 -24 64 0 36 9 57 49 118 27 41 77 108 110 149 61 76 292 322 307 328 4 2 24 -27 43 -65 43 -84 46 -78 6 10 -16 37 -30 70 -30 74 0 5 10 14 21 22 18 11 23 11 31 -1 7 -9 8 -7 3 8 -5 18 18 44 127 149 143 136 166 154 173 133 6 -20 170 -843 206 -1033 17 -93 40 -191 50 -217 23 -59 282 -558 287 -553 2 1 -5 20 -16 42 -11 21 -47 106 -81 188 -34 83 -89 205 -122 271 -49 98 -63 138 -75 210 -73 455 -75 471 -185 1004 l-30 145 23 18 c23 18 92 76 158 132 19 17 69 57 110 90 41 33 77 63 78 68 2 4 10 7 17 7 7 0 15 4 17 9 2 7 125 100 179 136 59 24 95 62 95 62 43 28 90 61 102 72 13 12 28 21 32 21 5 0 29 13 53 30 25 17 48 30 51 30 3 0 6 -24 6 -52 0 -66 39 -588 46 -607 12 -35 13 6 4 125 -5 71 -12 228 -15 349 l-7 220 47 28 c25 15 50 27 55 27 6 0 10 3 10 8 0 4 17 16 38 27 20 11 39 23 42 26 3 4 21 14 40 23 19 9 49 25 65 35 30 19 152 81 210 106 17 7 75 35 130 63 105 52 358 162 372 161 4 0 -35 -23 -87 -50 -111 -59 -103 -58 40 4 58 
+          <path d="M4545 6184 c-125 -33 -302 -100 -291 -111 2 -2 59 15 127 38 69 30 146 44 200 47 71 4 82 2 138 -27 133 -67 278 -178 356 -271 50 -59 92 -150 110 -236 28 -140 48 -449 47 -744 -1 -157 -3 -295 -6 -308 -3 -12 -8 -147 -11 -300 l-6 -277 -77 -59 c-183 -141 -361 -286 -407 -332 -27 -27 -71 -66 -99 -86 -27 -21 -65 -52 -85 -71 -20 -18 -44 -38 -53 -43 -10 -5 -58 -50 -108 -98 -58 -57 -91 -84 -94 -75 -3 8 -28 156 -56 329 -90 549 -128 721 -189 853 -26 57 -81 125 -81 100 0 -6 6 -16 14 -22 21 -17 63 -124 85 -216 27 -109 60 -299 121 -684 28 -179 55 -344 59 -368 l8 -43 -158 -160 c-87 -88 -160 -156 -163 -151 -8 12 -65 169 -76 206 -4 17 -41 122 -80 235 -208 591 -249 776 -257 1145 -6 284 10 450 72 760 69 340 127 490 263 671 35 47 63 87 61 89 -5 4 -108 -117 -150 -175 -238 -329 -399 -1005 -359 -1510 28 -366 143 -748 394 -1313 35 -78 66 -153 70 -165 8 -25 -44 -100 -136 -192 -82 -82 -236 -294 -279 -384 -71 -145 -47 -255 66 -307 39 -18 136 -26 169 -13 26 10 18 24 -15 24 -37 0 -30 16 11 25 17 4 30 11 30 16 0 5 -1 9 -2 9 -2 1 -30 3 -63 6 -79 7 -157 29 -186 53 -19 15 -24 29 -24 64 0 36 9 57 49 118 27 41 77 108 110 149 61 76 292 322 307 328 4 2 24 -27 43 -65 43 -84 46 -78 6 10 -16 37 -30 70 -30 74 0 5 10 14 21 22 18 11 23 11 31 -1 7 -9 8 -7 3 8 -5 18 18 44 127 149 143 136 166 154 173 133 6 -20 170 -843 206 -1033 17 -93 40 -191 50 -217 23 -59 282 -558 287 -553 2 1 -5 20 -16 42 -11 21 -47 106 -81 188 -34 83 -89 205 -122 271 -49 98 -63 138 -75 210 -73 455 -75 471 -185 1004 l-30 145 23 18 c23 18 92 76 158 132 19 17 69 57 110 90 41 33 77 63 78 68 2 4 10 7 17 7 7 0 15 4 17 9 2 7 125 100 179 136 59 24 95 62 95 62 43 28 90 61 102 72 13 12 28 21 32 21 5 0 29 13 53 30 25 17 48 30 51 30 3 0 6 -24 6 -52 0 -66 39 -588 46 -607 12 -35 13 6 4 125 -5 71 -12 228 -15 349 l-7 220 47 28 c25 15 50 27 55 27 6 0 10 3 10 8 0 4 17 16 38 27 20 11 39 23 42 26 3 4 21 14 40 23 19 9 49 25 65 35 30 19 152 81 210 106 17 7 75 35 130 63 105 52 358 162 372 161 4 0 -35 -23 -87 -50 -111 -59 -103 -58 40 4 58 25 143 57 190 72 47 15 90 29 96 32 6 2 32 -24 57 -59 25 -35 98 -121 162 -193 175 -194 175 -193 175 -285 0 -180 -52 -318 -230 -614 -70 -116 -146 -247 -170 -291 l-42 -80 71 75 c196 207 329 435 382 657 18 73 20 108 16 204 -3 75 -10 126 -20 146 -9 16 -66 85 -129 154 -112 122 -248 283 -248 291 0 3 19 10 43 17 67 20 164 70 180 94 28 44 28 83 1 123 -33 47 -58 69 -113 95 -56 26 -104 22 -231 -20 -50 -17 -95 -31 -100 -31 -17 0 -91 159 -111 238 -11 43 -19 110 -19 156 -1 142 -18 309 -40 378 -55 179 -200 303 -459 392 -116 40 -146 40 -55 0 205 -91 265 -125 338 -194 80 -77 127 -152 146 -240 7 -30 16 -149 20 -265 6 -171 11 -220 28 -265 26 -75 59 -137 94 -182 l28 -36 -162 -80 c-266 -129 -614 -336 -778 -462 -19 -15 -48 -35 -63 -45 l-29 -18 7 194 c4 107 9 212 11 234 12 131 15 629 5 761 -37 466 -69 573 -214 717 -74 73 -168 140 -290 207 -64 35 -89 43 -140 46 -34 1 -71 1 -82 -2z m-872 -2774 c14 -41 76 -185 137 -319 611 -241 111 -244 92 -263 -19 -19 -20 -18 -75 129 -67 176 -175 476 -188 517 -18 59 9 9 34 -64z"/>
+          <path d="M5282 3060 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5322 2580 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5332 2470 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M4065 2325 c34 -109 49 -199 48 -300 0 -121 -10 -161 -70 -280 -74 -145 -132 -212 -472 -535 -278 -265 -438 -470 -570 -729 -64 -126 -85 -192 -26 -82 75 140 317 425 460 544 143 94 445 399 506 466 214 233 287 499 205 745 -22 66 -98 227 -81 171z"/>
+          <path d="M5350 2278 c-1 -36 57 -172 166 -393 139 -283 166 -354 265 -720 98 -357 171 -607 176 -601 5 8 -219 891 -258 1004 -23 64 -70 176 -105 247 -126 258 -243 480 -244 463z" />
+        </g>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="bg-white/30 backdrop-blur-md p-4 rounded-xl inline-block">
+        <p class="text-stone-700 font-semibold text-lg mb-1">Ваше лучшее фото</p>
+        <div class="text-sm max-w-xs mx-auto mb-3 text-stone-500 text-left px-2 sm:px-0">
+          <p class="font-semibold text-stone-600 mb-2">Чтобы сэкономить кредиты, используйте качественное фото:</p>
+          <ul class="list-disc list-inside space-y-1 text-stone-600">
+            <li>хорошее освещение, лицо в фокусе;</li>
+            <li>без других людей в кадре;</li>
+            <li class="font-semibold text-red-500">поясной портрет до бедер, как на рисунке.</li>
+          </ul>
+        </div>
+        <div class="p-2 bg-stone-100/50 border border-stone-300/80 rounded-lg transition-colors duration-200 inline-block">
+          <p class="text-stone-700 text-xs font-medium">Нажмите или перетащите файл</p>
+          <p class="text-xs text-stone-400 mt-1">PNG, JPG, WEBP</p>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function applyPromoCode() {
+    if (!promoCodeInput || !applyPromoButton) return;
+    const code = promoCodeInput.value.trim();
+    if (!code) {
+        showStatusError("Пожалуйста, введите промокод.");
+        return;
+    }
+
+    const originalButtonText = applyPromoButton.innerHTML;
+    applyPromoButton.disabled = true;
+    applyPromoButton.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
+
+    try {
+        const response = await callApi('/api/apply-promo', { code });
+        generationCredits = response.newCredits;
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        statusEl.innerHTML = `<span class="text-green-400">${response.message}</span>`;
+        promoCodeInput.value = '';
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        showStatusError(message);
+    } finally {
+        applyPromoButton.disabled = false;
+        applyPromoButton.innerHTML = originalButtonText;
+    }
+}
+
+// --- Auth Functions ---
+async function handleCredentialResponse(response: any) {
+    try {
+        // Use the token to log in to our backend
+        const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
+        
+        // Store the token in localStorage to persist the session
+        localStorage.setItem('idToken', response.credential);
+        idToken = response.credential; // Also keep it in memory
+        
+        isLoggedIn = true;
+        userProfile = serverProfile;
+        generationCredits = credits;
+
+        // Update UI
+        updateAuthUI();
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
+
+    } catch (error) {
+        console.error("Login failed:", error);
+        const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка входа.";
+        showStatusError(`Не удалось войти: ${errorMessage}`);
+        // If login fails, ensure we are fully signed out
+        signOut();
+    }
+}
+
+function updateAuthUI() {
+    if (isLoggedIn && userProfile) {
+        googleSignInContainer.classList.add('hidden');
+        userProfileContainer.classList.remove('hidden');
+        userProfileImage.src = userProfile.picture;
+        userProfileName.textContent = userProfile.name.split(' ')[0]; // Show first name
+    } else {
+        googleSignInContainer.classList.remove('hidden');
+        userProfileContainer.classList.add('hidden');
+        userProfileImage.src = '';
+        userProfileName.textContent = '';
+    }
+}
+
+async function setupGoogleAuth() {
+    if (!googleSignInContainer) return;
+    try {
+        (window as any).google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleCredentialResponse
+        });
+        googleSignInContainer.innerHTML = ''; // Clear any previous attempts or error messages
+        (window as any).google.accounts.id.renderButton(
+            googleSignInContainer,
+            { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" }
+        );
+
+        // --- AUTO-LOGIN LOGIC ---
+        const storedToken = localStorage.getItem('idToken');
+        if (storedToken) {
+            statusEl.innerText = 'Восстанавливаем сессию...';
+            await handleCredentialResponse({ credential: storedToken });
+        } else {
+            // If no token, show the One Tap prompt for returning users.
+            (window as any).google.accounts.id.prompt();
+        }
+
+    } catch (error) {
+        console.error("Google Auth Setup Error:", error);
+        showStatusError("Не удалось инициализировать вход через Google.");
+    }
+}
+
+async function loadGoogleScriptAndInitAuth() {
+    return new Promise<void>((resolve, reject) => {
+        if ((window as any).google?.accounts?.id) {
+            console.log("Скрипт Google Auth уже загружен.");
+            setupGoogleAuth().then(resolve).catch(reject);
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+            console.log("Скрипт Google Auth успешно загружен.");
+            setupGoogleAuth().then(resolve).catch(reject);
+        };
+        script.onerror = () => {
+            console.error("Не удалось загрузить скрипт Google Auth.");
+            if (googleSignInContainer) {
+                googleSignInContainer.innerHTML = `
+                    <button id="retry-auth-button" class="btn-secondary">
+                        Ошибка загрузки. Повторить?
+                    </button>
+                `;
+                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
+                    if (statusEl) statusEl.innerText = "Повторная попытка авторизации...";
+                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>';
+                    script.remove();
+                    loadGoogleScriptAndInitAuth().then(resolve).catch(reject);
+                });
+            }
+            showStatusError("Не удалось загрузить сервис авторизации. Проверьте интернет-соединение.");
+            reject(new Error("Скрипт Google Auth не удалось загрузить."));
+        };
+        document.body.appendChild(script);
+    });
+}
+
+
+// --- MAIN APP INITIALIZATION ---
+document.addEventListener('DOMContentLoaded', async () => {
+  // --- DOM Element Selection (Safe Zone) ---
+  lightboxOverlay = document.querySelector('#lightbox-overlay')!;
+  lightboxImage = document.querySelector('#lightbox-image')!;
+  lightboxCloseButton = document.querySelector('#lightbox-close-button')!;
+  statusEl = document.querySelector('#status')!;
+  planButtonsContainer = document.querySelector('#plan-buttons')!;
+  generateButton = document.querySelector('#generate-button')!;
+  resetButton = document.querySelector('#reset-button')!;
+  outputGallery = document.querySelector('#output-gallery')!;
+  uploadContainer = document.querySelector('#upload-container')!;
+  imageUpload = document.querySelector('#image-upload')!;
+  referenceImagePreview = document.querySelector('#reference-image-preview')!;
+  uploadPlaceholder = document.querySelector('#upload-placeholder')!;
+  customPromptInput = document.querySelector('#custom-prompt-input')!;
+  referenceDownloadButton = document.querySelector('#reference-download-button')!;
+  paymentModalOverlay = document.querySelector('#payment-modal-overlay')!;
+  paymentConfirmButton = document.querySelector('#payment-confirm-button')!;
+  paymentCloseButton = document.querySelector('#payment-close-button')!;
+  creditCounterEl = document.querySelector('#credit-counter')!;
+  promoCodeInput = document.querySelector('#promo-code-input')!;
+  applyPromoButton = document.querySelector('#apply-promo-button')!;
+  authContainer = document.getElementById('auth-container') as HTMLDivElement;
+  googleSignInContainer = document.getElementById('google-signin-container') as HTMLDivElement;
+  userProfileContainer = document.getElementById('user-profile-container') as HTMLDivElement;
+  userProfileImage = document.getElementById('user-profile-image') as HTMLImageElement;
+  userProfileName = document.getElementById('user-profile-name') as HTMLSpanElement;
+  paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
+  paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
+  paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+
+
+  try {
+    // User starts with 0 and receives them from the server upon login.
+    generationCredits = 0;
+    updateCreditCounterUI(); 
+
+    await initDB();
+
+    await loadGoogleScriptAndInitAuth();
+    
+    // --- Handle post-payment redirect ---
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('payment_status') === 'success') {
+      statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
+      // Clean the URL to avoid showing the message on every refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+
+    const response = await fetch('/prompts.json');
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    prompts = await response.json();
+    
+    // --- Initial UI Setup & Event Listeners ---
+    const placeholderHtml = getUploaderPlaceholderHtml();
+    document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
+    uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
+
+
+    setupNavigation();
+    initializePage1Wizard();
+    
+    selectPlan(selectedPlan);
+    initializePoseSequences();
+
+    // --- Attach all event listeners now that elements are guaranteed to exist ---
+    lightboxOverlay.addEventListener('click', (e) => {
+        // Only close if the dark background itself is clicked, not children like the image or button.
+        if (e.target === lightboxOverlay) {
+          hideLightbox();
+        }
+    });
+    lightboxCloseButton.addEventListener('click', hideLightbox);
+
+    generateButton.addEventListener('click', generate);
+    resetButton.addEventListener('click', resetApp);
+    applyPromoButton.addEventListener('click', applyPromoCode);
+    promoCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyPromoCode(); });
+    
+    paymentCloseButton.addEventListener('click', hidePaymentModal);
+    paymentModalOverlay.addEventListener('click', (e) => { if (e.target === paymentModalOverlay) hidePaymentModal(); });
+    creditCounterEl.addEventListener('click', showPaymentModal);
+    userProfileContainer.addEventListener('click', signOut);
+    
+    paymentProceedButton.addEventListener('click', handlePayment);
+    paymentBackButton.addEventListener('click', () => {
+        paymentQrView.classList.add('hidden');
+        paymentSelectionView.classList.remove('hidden');
+        if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
+    });
+
+    referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
+    
+    planButtonsContainer.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-plan]');
+      if (button?.dataset.plan) selectPlan(button.dataset.plan);
+    });
+
+    const handlePage2Upload = async (file: File) => {
+      if (!file || !file.type.startsWith('image/')) {
+        showStatusError('Пожалуйста, выберите файл изображения.');
+        return;
+      }
+      
+      const overlay = document.createElement('div');
+      overlay.className = 'analysis-overlay';
+      overlay.innerHTML = `<div class="loading-spinner"></div><p class="mt-2 text-sm text-center">Обработка изображения...</p>`;
+      uploadContainer.appendChild(overlay);
+      const overlayText = overlay.querySelector('p');
+      setControlsDisabled(true);
+      setWizardStep('NONE');
+
+      try {
+        const preResizedState = await preResizeImage(file);
+        if (overlayText) overlayText.textContent = 'Оптимизация изображения...';
+
+        let imageState = await resizeImage(preResizedState);
+
+        // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
+        const processedImageState = await new Promise<ImageState>((resolve) => {
+            const img = new Image();
+            img.onload = async () => {
+                if (img.width > img.height) { // Only process horizontal images
+                    if (overlayText) overlayText.textContent = 'Анализ композиции...';
+                    try {
+                        const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
+                        if (boundingBox) {
+                            const originalWidth = img.width;
+                            const originalHeight = img.height;
+                            const targetAspectRatio = 4 / 5;
+                            const newWidth = originalHeight * targetAspectRatio;
+                            
+                            if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
+                                const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
+                                let cropX = personCenterX - (newWidth / 2);
+                                cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+
+                                const canvas = document.createElement('canvas');
+                                canvas.width = newWidth;
+                                canvas.height = originalHeight;
+                                const ctx = canvas.getContext('2d');
+                                if (ctx) {
+                                    ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
+                                    const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                                    const [, croppedBase64] = croppedDataUrl.split(',');
+                                    console.log("Изображение успешно обрезано до вертикального формата.");
+                                    resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
+                                    return;
+                                }
+                            }
+                        }
+                    } catch (cropError) {
+                        console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
+                    }
+                }
+                resolve(imageState); // Resolve with original if not horizontal or if crop fails
+            };
+            img.onerror = () => {
+                console.error("Не удалось загрузить изображение для проверки размеров.");
+                resolve(imageState);
+            };
+            img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
+        });
+        // --- END OF AUTO-CROP LOGIC ---
+        
+        imageState = processedImageState;
+        const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
+
+        referenceImage = imageState;
+        referenceImageLocationPrompt = null; // NEW: Reset location prompt for new uploads
+        referenceImagePreview.src = finalDataUrl;
+        referenceImagePreview.classList.remove('hidden');
+        referenceDownloadButton.href = finalDataUrl;
+        referenceDownloadButton.download = `reference-${Date.now()}.png`;
+        referenceDownloadButton.classList.remove('hidden');
+        uploadPlaceholder.classList.add('hidden');
+        uploadContainer.classList.remove('aspect-square');
+        outputGallery.innerHTML = '';
+        
+        // --- NEW: CROP FACE LOGIC ---
+        if (overlayText) overlayText.textContent = 'Поиск лица...';
+        try {
+            const { boundingBox } = await callApi('/api/cropFace', { image: imageState });
+            referenceFaceImage = await cropImageByCoords(imageState, boundingBox);
+            console.log('Face cropped successfully.');
+        } catch (faceErr) {
+            console.warn('Could not crop face automatically:', faceErr);
+            referenceFaceImage = null; // Continue without face crop if failed
+        }
+        // -----------------------------
+
+        if (overlayText) overlayText.textContent = 'Анализ фото...';
+
+        statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
+        
+        const { category, smile } = await checkImageSubject(imageState);
+        detectedSubjectCategory = category;
+        detectedSmileType = smile;
+        initializePoseSequences();
+        if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
+        const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
+        statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
+        setWizardStep('PAGE2_PLAN');
+
+      } catch (e) { 
+        showStatusError(e instanceof Error ? e.message : 'Неизвестная ошибка анализа или оптимизации.'); 
+        resetApp();
+      } finally { 
+          overlay.remove();
+          setControlsDisabled(false); 
+      }
+    };
+    
+    imageUpload.addEventListener('change', (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (file) handlePage2Upload(file);
+    });
+    
+    uploadContainer.addEventListener('click', (e) => {
+      if (referenceImage && e.target === referenceImagePreview) {
+        openLightbox(referenceImagePreview.src);
+      } else if (!(e.target as HTMLElement).closest('a')) {
+        imageUpload.click();
+      }
+    });
+
+    ['dragover', 'dragleave', 'drop'].forEach(eventName => uploadContainer.addEventListener(eventName, e => {
+        e.preventDefault(); e.stopPropagation();
+        if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
+        if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
+        if (eventName === 'drop' && (e as DragEvent).dataTransfer?.files?.[0]) {
+            imageUpload.files = (e as DragEvent).dataTransfer.files;
+            imageUpload.dispatchEvent(new Event('change'));
+        }
+    }));
+
+    (window as any).navigateToPage('page1');
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    updateAuthUI();
+
+  } catch (error) {
+    console.error("Fatal Error: Could not load prompts configuration.", error);
+    document.body.innerHTML = `<div class="w-screen h-screen flex items-center justify-center bg-gray-900 text-white"><div class="text-center p-8 bg-gray-800 rounded-lg shadow-lg"><h1 class="text-2xl font-bold text-red-500 mb-4">Ошибка загрузки приложения</h1><p>Не удалось загрузить необходимые данные (prompts.json).</p><p>Пожалуйста, проверьте консоль и перезагрузите страницу.</p></div></div>`;
+  }
+});
