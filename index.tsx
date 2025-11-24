@@ -86,14 +86,11 @@ let referenceImage: ImageState | null = null;
 let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
-let malePoseIndex = 0;
-let femalePoseIndex = 0;
-let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
 let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
-let idToken: string | null = null; // Holds the Google Auth Token
+let idToken: string | null = null;
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
 
@@ -327,6 +324,43 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
     });
 }
 
+// --- NEW: Helper to slice a 2x2 grid image into 4 separate images ---
+async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const w = img.width;
+            const h = img.height;
+            const halfW = Math.floor(w / 2);
+            const halfH = Math.floor(h / 2);
+            const imageUrls: string[] = [];
+
+            // Order: Top-Left, Top-Right, Bottom-Left, Bottom-Right
+            const positions = [
+                { x: 0, y: 0 },
+                { x: halfW, y: 0 },
+                { x: 0, y: halfH },
+                { x: halfW, y: halfH }
+            ];
+
+            positions.forEach(pos => {
+                const canvas = document.createElement('canvas');
+                canvas.width = halfW;
+                canvas.height = halfH;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
+                    // Force PNG format to ensure high quality and larger file size (~2.5MB)
+                    imageUrls.push(canvas.toDataURL('image/png'));
+                }
+            });
+            resolve(imageUrls);
+        };
+        img.onerror = (e) => reject(new Error("Failed to load grid image for slicing"));
+        img.src = `data:${gridMimeType};base64,${gridBase64}`;
+    });
+}
+
 
 /**
  * A generic helper function to make API calls to our own server backend.
@@ -337,8 +371,8 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
  */
 async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
-    // 45-second timeout for API calls, as Gemini can be slow, but this prevents infinite hangs on network issues.
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // 90-second timeout for API calls to support high-res 2K generation on Gemini 3 Pro
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -361,7 +395,7 @@ async function callApi(endpoint: string, body: object) {
         if (error.name === 'AbortError' || error instanceof TypeError) {
             console.error(`API call to ${endpoint} failed or timed out. Error:`, error);
             // This user-friendly message addresses the user's suspicion directly.
-            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или региональными блокировками. Проверьте ваше соединение и попробуйте снова.');
+            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или долгим временем генерации. Проверьте ваше соединение и попробуйте снова.');
         }
         // Re-throw any other unexpected errors.
         throw error;
@@ -434,9 +468,6 @@ function initializePoseSequences() {
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
-    malePoseIndex = 0;
-    femalePoseIndex = 0;
-    femaleGlamourPoseIndex = 0;
 }
 
 function updateCreditCounterUI() {
@@ -569,7 +600,7 @@ function updateAllGenerateButtons() {
     if (generateButton) {
         const creditsNeeded = 4;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать 4 фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
             generateButton.disabled = false; // Always enabled to show prompt
@@ -640,10 +671,30 @@ async function generate() {
   divider.innerHTML = `<span class="font-semibold text-gray-300">${getPlanDisplayName(selectedPlan)}</span><span class="text-gray-500">${timestamp}</span>`;
   outputGallery.prepend(divider);
 
+  // --- ASPECT RATIO DETECTION ---
+  let aspectRatioRequest = '1:1';
+  let aspectClass = 'aspect-square';
+  try {
+      const img = new Image();
+      img.src = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
+      await new Promise<void>(resolve => { img.onload = () => resolve(); img.onerror = () => resolve(); });
+      if (img.width && img.height) {
+          const ratio = img.width / img.height;
+          if (ratio < 0.85) {
+              aspectRatioRequest = '3:4';
+              aspectClass = 'aspect-[3/4]';
+          } else if (ratio > 1.15) {
+              aspectRatioRequest = '4:3';
+              aspectClass = 'aspect-[4/3]';
+          }
+      }
+  } catch (e) { console.warn('Could not detect aspect ratio, defaulting to square', e); }
+  // ------------------------------
+
   const placeholders: HTMLDivElement[] = [];
   for (let i = 0; i < 4; i++) {
     const placeholder = document.createElement('div');
-    placeholder.className = 'bg-[#353739] rounded-lg relative overflow-hidden aspect-square placeholder-shimmer';
+    placeholder.className = `bg-[#353739] rounded-lg relative overflow-hidden ${aspectClass} placeholder-shimmer`;
     placeholders.push(placeholder);
   }
   placeholders.slice().reverse().forEach((p) => outputGallery.prepend(p));
@@ -750,13 +801,22 @@ async function generate() {
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация... 10%';
+    if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
 
-    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
+    // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
+    const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
-        image: referenceImage!
+        image: referenceImage!,
+        aspectRatio: aspectRatioRequest // Pass detected ratio
     });
     
+    if (progressText) progressText.innerText = 'Обработка результатов...';
+
+    // --- SLICE THE GRID IMAGE CLIENT-SIDE ---
+    const [header, gridBase64] = gridImageUrl.split(',');
+    const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+    const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
+
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
@@ -1187,11 +1247,11 @@ function initializePage1Wizard() {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото человека (первое изображение) и референсное фото одежды (второе изображение).
 Твоя главная цель — идеально сохранить человека с первого фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "**одежду которую нужно взять в точности со 2 референсной фотографии,нужно взять только одежду и игнорировать лицо на 2 референсном кадре**". Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
-4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+4.  **ЗАМЕНИ ФОН И ВПИШИ ЧЕЛОВЕКА:** Полностью замени фон на новый: "${locationText}". Критически важно: впиши человека в локацию так, чтобы **перспектива фона и линия горизонта** идеально совпадали с ракурсом съемки человека. Человек должен физически ощущаться в этом пространстве.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Создай единую световую среду. Наложи на человека тени и **цветовые рефлексы (отсветы)** от нового фона. Кожа должна реагировать на свет окружения, сохраняя при этом узнаваемость черт лица. Освещение должно выглядеть естественно и фотореалистично.
 6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
@@ -1199,11 +1259,11 @@ function initializePage1Wizard() {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
 Твоя главная цель — идеально сохранить человека с фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в новом кадре.
-4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+4.  **ЗАМЕНИ ФОН И ВПИШИ ЧЕЛОВЕКА:** Полностью замени фон на новый: "${locationText}". Критически важно: впиши человека в локацию так, чтобы **перспектива фона и линия горизонта** идеально совпадали с ракурсом съемки человека. Человек должен физически ощущаться в этом пространстве.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Создай единую световую среду. Наложи на человека тени и **цветовые рефлексы (отсветы)** от нового фона. Кожа должна реагировать на свет окружения, сохраняя при этом узнаваемость черт лица. Освещение должно выглядеть естественно и фотореалистично.
 6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
@@ -1534,8 +1594,6 @@ function getUploaderPlaceholderHtml(): string {
         <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
           <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
           <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
-          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
-          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 7 -12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
           <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
           <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
           <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
