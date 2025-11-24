@@ -826,6 +826,14 @@ async function generate() {
         }
 
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
+
+        // --- NEW LOGIC START ---
+        const subjectsForBeauty = ['woman', 'elderly_woman', 'child', 'teenager'];
+        // Check if current category needs beauty filter
+        if (detectedSubjectCategory && subjectsForBeauty.includes(detectedSubjectCategory)) {
+            finalPrompt += `\n7. **СТИЛИЗАЦИЯ КОЖИ:** Примени стиль: "smooth skin, soft lighting, beauty photography". Сделай кожу визуально ровной и мягкой, убери артефакты, пигментацию и шум исходного фото, сохранив при этом узнаваемость черт.`;
+        }
+        // --- NEW LOGIC END ---
         
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
