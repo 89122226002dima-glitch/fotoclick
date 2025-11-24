@@ -327,9 +327,24 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
     }
 });
 
-// New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
+const callGeminiForVariation = async (prompt, image) => {
+    const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+    const textPart = { text: prompt };
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, textPart] },
+        config: { responseModalities: [Modality.IMAGE] },
+    });
+    const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+    if (!generatedImagePart || !generatedImagePart.inlineData) {
+        throw new Error('Gemini не вернул изображение.');
+    }
+    return `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
+};
+
+// New atomic endpoint for generating 4 variations
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, aspectRatio = '1:1' } = req.body;
+    const { prompts, image } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -342,44 +357,10 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
     }
 
     try {
-        // Создаем один большой промпт для сетки 2x2
-        const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
-        
-        Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
-        1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
-        2. ВЕРХНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[1]}
-        3. НИЖНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[2]}
-        4. НИЖНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[3]}
-        
-        ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
-        Соблюдай стиль и качество во всех четырех частях.`;
-
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: gridPrompt };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview', // Используем Pro для качества и 2K
-            contents: { parts: [imagePart, textPart] },
-            config: { 
-                responseModalities: [Modality.IMAGE],
-                imageConfig: { 
-                    imageSize: '2K',
-                    aspectRatio: aspectRatio // Use detected aspect ratio
-                } 
-            },
-        });
-
-        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение.');
-        }
-
-        // Возвращаем одну большую картинку (сетку). Клиент сам разрежет её.
-        const gridImageUrl = `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
-        
+        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
+        const imageUrls = await Promise.all(generationPromises);
         await db.read();
-        res.json({ gridImageUrl, newCredits: db.data.users[userEmail].credits });
-
+        res.json({ imageUrls, newCredits: db.data.users[userEmail].credits });
     } catch (error) {
         await db.read();
         if(db.data.users[userEmail]) {
@@ -466,14 +447,10 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
     }
 
     try {
-        // REVERTED TO GEMINI 2.5 FLASH FOR BETTER COMPOSITION BLENDING
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image', 
+            model: 'gemini-2.5-flash-image',
             contents: { parts: parts },
-            config: { 
-                responseModalities: [Modality.IMAGE]
-                // No imageConfig for 2.5 flash
-            },
+            config: { responseModalities: [Modality.IMAGE] },
         });
         const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
         if (!generatedImagePart || !generatedImagePart.inlineData) {
