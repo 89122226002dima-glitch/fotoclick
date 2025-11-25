@@ -1,3 +1,5 @@
+
+
 // server.js - Версия с интеграцией LowDB для надежного хранения кредитов.
 
 import express from 'express';
@@ -68,7 +70,8 @@ const PROMO_CODES = {
     "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
     "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
     "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
-    "521378": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
+    "521378": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." },
+    "521375": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
 };
 
 
@@ -329,7 +332,7 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
 
 // New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, aspectRatio = '1:1' } = req.body;
+    const { prompts, image, image2, aspectRatio = '1:1' } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -342,8 +345,15 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
     }
 
     try {
+        let referenceText = "Используя предоставленное референсное фото";
+        if (image2) {
+            referenceText = "Используя ДВА предоставленных референсных фото одного и того же человека (ОБЪЕДИНИ черты лица с обоих фото для максимального сходства)";
+        }
+
         // Создаем один большой промпт для сетки 2x2
         const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
+        
+        ${referenceText}.
         
         Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
         1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
@@ -354,12 +364,19 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
         ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
         Соблюдай стиль и качество во всех четырех частях.`;
 
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: gridPrompt };
+        const parts = [
+            { inlineData: { data: image.base64, mimeType: image.mimeType } }
+        ];
+
+        if (image2) {
+             parts.push({ inlineData: { data: image2.base64, mimeType: image2.mimeType } });
+        }
+        
+        parts.push({ text: gridPrompt });
 
         const response = await ai.models.generateContent({
             model: 'gemini-3-pro-image-preview', // Используем Pro для качества и 2K
-            contents: { parts: [imagePart, textPart] },
+            contents: { parts: parts },
             config: { 
                 responseModalities: [Modality.IMAGE],
                 // responseMimeType removed to prevent 500 error on this model
