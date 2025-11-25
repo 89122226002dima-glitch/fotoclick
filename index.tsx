@@ -83,20 +83,17 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
-let referenceImage2: ImageState | null = null; // NEW: Second reference image
 let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
-// --- NEW: Identity Reference Variables ---
-// These store the original photos to use for face reconstruction when the main reference is a synthetic image
-let identityReferenceImage: ImageState | null = null; 
-let identityReferenceImage2: ImageState | null = null;
-// ----------------------------------------
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
+let malePoseIndex = 0;
+let femalePoseIndex = 0;
+let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
 let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
-let idToken: string | null = null;
+let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
 
@@ -330,43 +327,6 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
     });
 }
 
-// --- NEW: Helper to slice a 2x2 grid image into 4 separate images ---
-async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const w = img.width;
-            const h = img.height;
-            const halfW = Math.floor(w / 2);
-            const halfH = Math.floor(h / 2);
-            const imageUrls: string[] = [];
-
-            // Order: Top-Left, Top-Right, Bottom-Left, Bottom-Right
-            const positions = [
-                { x: 0, y: 0 },
-                { x: halfW, y: 0 },
-                { x: 0, y: halfH },
-                { x: halfW, y: halfH }
-            ];
-
-            positions.forEach(pos => {
-                const canvas = document.createElement('canvas');
-                canvas.width = halfW;
-                canvas.height = halfH;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
-                    // Force PNG format to ensure high quality and larger file size (~2.5MB)
-                    imageUrls.push(canvas.toDataURL('image/png'));
-                }
-            });
-            resolve(imageUrls);
-        };
-        img.onerror = (e) => reject(new Error("Failed to load grid image for slicing"));
-        img.src = `data:${gridMimeType};base64,${gridBase64}`;
-    });
-}
-
 
 /**
  * A generic helper function to make API calls to our own server backend.
@@ -377,8 +337,8 @@ async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise
  */
 async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
-    // 90-second timeout for API calls to support high-res 2K generation on Gemini 3 Pro
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    // 45-second timeout for API calls, as Gemini can be slow, but this prevents infinite hangs on network issues.
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -401,7 +361,7 @@ async function callApi(endpoint: string, body: object) {
         if (error.name === 'AbortError' || error instanceof TypeError) {
             console.error(`API call to ${endpoint} failed or timed out. Error:`, error);
             // This user-friendly message addresses the user's suspicion directly.
-            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или долгим временем генерации. Проверьте ваше соединение и попробуйте снова.');
+            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или региональными блокировками. Проверьте ваше соединение и попробуйте снова.');
         }
         // Re-throw any other unexpected errors.
         throw error;
@@ -474,6 +434,9 @@ function initializePoseSequences() {
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
+    malePoseIndex = 0;
+    femalePoseIndex = 0;
+    femaleGlamourPoseIndex = 0;
 }
 
 function updateCreditCounterUI() {
@@ -497,19 +460,12 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
-  referenceImage2 = null; // NEW: Reset second image
   referenceImageLocationPrompt = null;
-  // --- NEW: Reset Identity References ---
-  identityReferenceImage = null;
-  identityReferenceImage2 = null;
-  // --------------------------------------
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
   referenceImagePreview.src = '';
   referenceImagePreview.classList.add('hidden');
-  const secondaryContainer = document.getElementById('secondary-images-container');
-  if (secondaryContainer) secondaryContainer.innerHTML = '';
   referenceDownloadButton.href = '#';
   referenceDownloadButton.removeAttribute('download');
   referenceDownloadButton.classList.add('hidden');
@@ -613,7 +569,7 @@ function updateAllGenerateButtons() {
     if (generateButton) {
         const creditsNeeded = 4;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `Создать 4 фотографии (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
             generateButton.disabled = false; // Always enabled to show prompt
@@ -630,15 +586,8 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     const [header, base64] = imgSrc.split(',');
     const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
     referenceImage = { base64, mimeType };
-    referenceImage2 = null; // NEW: When setting generated image as reference, we usually use just that one
     referenceImageLocationPrompt = null; // NEW: Reset location prompt on re-reference
-    // --- NEW: Clear identity references when manually picking a generated image ---
-    identityReferenceImage = null;
-    identityReferenceImage2 = null;
-    // -----------------------------------------------------------------------------
     referenceImagePreview.src = imgSrc;
-    const secondaryContainer = document.getElementById('secondary-images-container');
-    if (secondaryContainer) secondaryContainer.innerHTML = '';
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
     referenceDownloadButton.classList.remove('hidden');
@@ -691,30 +640,10 @@ async function generate() {
   divider.innerHTML = `<span class="font-semibold text-gray-300">${getPlanDisplayName(selectedPlan)}</span><span class="text-gray-500">${timestamp}</span>`;
   outputGallery.prepend(divider);
 
-  // --- ASPECT RATIO DETECTION ---
-  let aspectRatioRequest = '1:1';
-  let aspectClass = 'aspect-square';
-  try {
-      const img = new Image();
-      img.src = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
-      await new Promise<void>(resolve => { img.onload = () => resolve(); img.onerror = () => resolve(); });
-      if (img.width && img.height) {
-          const ratio = img.width / img.height;
-          if (ratio < 0.85) {
-              aspectRatioRequest = '3:4';
-              aspectClass = 'aspect-[3/4]';
-          } else if (ratio > 1.15) {
-              aspectRatioRequest = '4:3';
-              aspectClass = 'aspect-[4/3]';
-          }
-      }
-  } catch (e) { console.warn('Could not detect aspect ratio, defaulting to square', e); }
-  // ------------------------------
-
   const placeholders: HTMLDivElement[] = [];
   for (let i = 0; i < 4; i++) {
     const placeholder = document.createElement('div');
-    placeholder.className = `bg-[#353739] rounded-lg relative overflow-hidden ${aspectClass} placeholder-shimmer`;
+    placeholder.className = 'bg-[#353739] rounded-lg relative overflow-hidden aspect-square placeholder-shimmer';
     placeholders.push(placeholder);
   }
   placeholders.slice().reverse().forEach((p) => outputGallery.prepend(p));
@@ -809,49 +738,25 @@ async function generate() {
             backgroundPromptPart = `4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
         }
         
-        // UPDATED PROMPT HERE
-        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое изображение это фото гламурной фотосессии с художественной ретушью, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.`;
-        
-        // NEW: Add instruction about dual reference if applicable (works for standard mode)
-        if (referenceImage2) {
-            finalPrompt += `\n**ВАЖНО: Я предоставляю ДВА референсных фото одного и того же человека. Проанализируй оба изображения, чтобы создать максимально точный цифровой двойник. Используй черты лица с обоих снимков для улучшения сходства.**\n`;
-        }
-
-        finalPrompt += `\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n${backgroundPromptPart}`;
+        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.\n2.  **НОВАЯ КОМПОЗИЦИЯ И РАКУРС:** Примени следующие изменения: "${changesDescription}". Это главный творческий элемент.\n3.  **СОХРАНИ ОДЕЖДУ:** Одежда человека должна быть взята с референсного фото.\n${backgroundPromptPart}`;
         
         if (customText) {
             finalPrompt += `\n5. **ВАЖНОЕ ДОПОЛНЕНИЕ:** Также учти это пожелание: "${customText}".`;
         }
 
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
-
-        // --- NEW: Added Rule 7 for Artistic Retouching ---
-        finalPrompt += `\n7. **ХУДОЖЕСТВЕННАЯ РЕТУШЬ:** сделай Художественную глянцевую ретушь лица, удали недостатки и дефекты: аккуратное удаление возрастных пятен, морщин, синяков.сглаживание мелких деталей кожи,Работа с цветом и тоном кожи — коррекция цвета, балансировка белого и насыщенности.`;
-        // -------------------------------------------------
         
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
+    if (progressText) progressText.innerText = 'Генерация... 10%';
 
-    // --- UPDATED API CALL: SEND IDENTITY REFERENCES IF AVAILABLE ---
-    const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
+    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
-        image: referenceImage!,
-        image2: referenceImage2 || undefined, 
-        identityImage: identityReferenceImage || undefined, // Pass the original ID face
-        identityImage2: identityReferenceImage2 || undefined, // Pass the second original ID face
-        aspectRatio: aspectRatioRequest 
+        image: referenceImage!
     });
     
-    if (progressText) progressText.innerText = 'Обработка результатов...';
-
-    // --- SLICE THE GRID IMAGE CLIENT-SIDE ---
-    const [header, gridBase64] = gridImageUrl.split(',');
-    const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-    const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
-
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
@@ -954,17 +859,10 @@ async function renderHistoryPage() {
                 
                 // Set as reference logic
                 referenceImage = historyItem.image;
-                referenceImage2 = null; // NEW: History item is a single image reference
                 referenceImageLocationPrompt = null; // NEW: History items don't have a baked-in prompt
-                // --- NEW: Reset Identity ---
-                identityReferenceImage = null;
-                identityReferenceImage2 = null;
-                // ---------------------------
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
                 referenceImagePreview.classList.remove('hidden');
-                const secondaryContainer = document.getElementById('secondary-images-container');
-                if (secondaryContainer) secondaryContainer.innerHTML = '';
                 referenceDownloadButton.href = dataUrl;
                 referenceDownloadButton.download = `restored-reference-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
@@ -1047,7 +945,6 @@ function setupNavigation() {
 }
 
 let page1ReferenceImage: ImageState | null = null;
-let page1ReferenceImage2: ImageState | null = null; // NEW
 let page1ClothingImage: ImageState | null = null;
 let generatedPhotoshootResult: ImageState | null = null;
 let page1DetectedSubject: SubjectDetails | null = null;
@@ -1076,51 +973,41 @@ function displaySuggestions(container: HTMLElement, allSuggestions: string[], sh
     });
 }
 
-function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null, state2?: ImageState | null) => Promise<void>) {
+function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null) => Promise<void>) {
     const uploadContainer = document.getElementById(containerId) as HTMLDivElement;
     const imageUpload = document.getElementById(inputId) as HTMLInputElement;
     const imagePreview = document.getElementById(previewId) as HTMLImageElement;
     const uploadPlaceholder = document.getElementById(placeholderId) as HTMLDivElement;
     const clearButton = document.getElementById(clearButtonId) as HTMLButtonElement;
 
-    // Modified to handle multiple files (up to 2)
-    const handleFiles = async (files: FileList | null) => {
-        if (!files || files.length === 0) return;
+    const handleFile = async (file: File) => {
+        if (!file || !file.type.startsWith('image/')) return;
 
         try {
-            const processFile = async (file: File) => {
-                if (!file.type.startsWith('image/')) throw new Error('Файл не является изображением');
-                const preResizedState = await preResizeImage(file);
-                const finalResizedState = await resizeImage(preResizedState);
-                return finalResizedState;
-            };
-
-            const statusText = `Оптимизация изображений...`;
-            if(statusEl) statusEl.innerText = statusText;
-
-            // Process first image
-            const img1 = await processFile(files[0]);
-            let img2: ImageState | null = null;
-
-            // Process second image if exists
-            if (files.length > 1) {
-                img2 = await processFile(files[1]);
-            }
-
-            // Update UI (showing only first image as preview)
-            imagePreview.src = `data:${img1.mimeType};base64,${img1.base64}`;
+            // Use the new memory-efficient pre-resizer first for large images
+            const preResizedState = await preResizeImage(file);
+            const dataUrl = `data:${preResizedState.mimeType};base64,${preResizedState.base64}`;
+            
+            imagePreview.src = dataUrl;
             imagePreview.classList.remove('hidden');
             uploadPlaceholder.classList.add('hidden');
             clearButton.classList.remove('hidden');
+            
+            const statusText = `Оптимизация изображения...`;
+            if(statusEl) statusEl.innerText = statusText;
 
-            await onStateChange(img1, img2);
+            // Now, use the existing final resizer
+            const finalResizedState = await resizeImage(preResizedState);
+            
+            imagePreview.src = `data:${finalResizedState.mimeType};base64,${finalResizedState.base64}`;
+            await onStateChange(finalResizedState);
             if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
 
         } catch (err) {
             console.error("Ошибка обработки изображения:", err);
             showStatusError(err instanceof Error ? err.message : "Не удалось обработать изображение.");
             await onStateChange(null);
-            // Reset UI
+            // Also need to reset the UI elements
             imageUpload.value = '';
             imagePreview.src = '';
             imagePreview.classList.add('hidden');
@@ -1136,16 +1023,11 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
         if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
         if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
         if (eventName === 'drop') {
-            const files = (e as DragEvent).dataTransfer?.files;
-            if (files && files.length > 0) handleFiles(files);
+            const file = (e as DragEvent).dataTransfer?.files?.[0];
+            if (file) handleFile(file);
         }
     }));
-    
-    // Handle input change
-    imageUpload.addEventListener('change', (event) => { 
-        handleFiles((event.target as HTMLInputElement).files); 
-    });
-    
+    imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handleFile((event.target as HTMLInputElement).files[0]); });
     clearButton.addEventListener('click', async () => {
         await onStateChange(null);
         imageUpload.value = '';
@@ -1296,43 +1178,33 @@ function initializePage1Wizard() {
             const isPortrait = img.height > img.width;
             const aspectRatioInstruction = isPortrait ? '4:5 (портретный)' : '3:2 (альбомный)';
 
-            // --- Updated Logic: Handle one or two reference images ---
             const parts: any[] = [{ inlineData: { data: page1ReferenceImage.base64, mimeType: page1ReferenceImage.mimeType } }];
-            
-            // Add second image if available
-            if (page1ReferenceImage2) {
-                parts.push({ inlineData: { data: page1ReferenceImage2.base64, mimeType: page1ReferenceImage2.mimeType } });
-            }
-
             let promptText: string;
-            // Base context about reference photos
-            let referenceContext = `Это референсное фото человека.`;
-            if (page1ReferenceImage2) {
-                referenceContext = `Это ДВА референсных фото одного и того же человека. Проанализируй оба изображения, чтобы создать максимально точный цифровой двойник. Используй черты лица с обоих снимков.`;
-            }
-
+            
             if (page1ClothingImage) {
                 parts.push({ inlineData: { data: page1ClothingImage.base64, mimeType: page1ClothingImage.mimeType } });
                 const additionalClothingDetails = clothingText ? ` Дополнительные пожелания к одежде (например, изменение цвета или детали): "${clothingText}".` : '';
-                promptText = `Твоя задача — действовать как 'цифровой стилист'. ${referenceContext} Следующее изображение — референс одежды.
-Твоя главная цель — идеально сохранить человека с референсных фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
+                promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото человека (первое изображение) и референсное фото одежды (второе изображение).
+Твоя главная цель — идеально сохранить человека с первого фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.**
-2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию, но адаптируй под соотношение сторон ${aspectRatioInstruction}.
-3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в одежду с референсного фото одежды. Игнорируй лицо на фото одежды. Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
-4.  **ЗАМЕНИ ФОН И ВПИШИ ЧЕЛОВЕКА:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Создай единую световую среду. Наложи на человека тени и **цветовые рефлексы** от нового фона.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
+3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "**одежду которую нужно взять в точности со 2 референсной фотографии,нужно взять только одежду и игнорировать лицо на 2 референсном кадре**". Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
+4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             } else {
-                promptText = `Твоя задача — действовать как 'цифровой стилист'. ${referenceContext}
+                promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
 Твоя главная цель — идеально сохранить человека с фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.**
-2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию, но адаптируй под соотношение сторон ${aspectRatioInstruction}.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в новом кадре.
-4.  **ЗАМЕНИ ФОН И ВПИШИ ЧЕЛОВЕКА:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Создай единую световую среду. Наложи на человека тени и **цветовые рефлексы** от нового фона.
+4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             }
@@ -1358,27 +1230,13 @@ function initializePage1Wizard() {
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
-                referenceImage2 = null; // Reset second ref when proceeding
-                
-                // --- FIX: CLEAR TEXT TAIL ---
-                referenceImageLocationPrompt = null; // Force visual extension, remove text tail
-                customPromptInput.value = ''; // Clear custom prompt to avoid leftover instructions
-                // -----------------------------
-
-                // --- NEW: Carry over Identity References ---
-                // We use the originals from Page 1 as the identity source for the synthetic reference
-                identityReferenceImage = page1ReferenceImage;
-                identityReferenceImage2 = page1ReferenceImage2;
-                // -------------------------------------------
-                
+                referenceImageLocationPrompt = locationText; // NEW: Save location prompt
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
                 const dataUrlForPage2 = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrlForPage2;
                 referenceImagePreview.classList.remove('hidden');
-                const secondaryContainer = document.getElementById('secondary-images-container');
-                if (secondaryContainer) secondaryContainer.innerHTML = '';
                 referenceDownloadButton.href = dataUrlForPage2;
                 referenceDownloadButton.download = `photoshoot-result-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
@@ -1456,24 +1314,18 @@ function initializePage1Wizard() {
     };
 
     const resetWizard = () => {
-        subtitle.textContent = 'Шаг 1: Загрузите ваше фото для начала (можно 2)';
+        subtitle.textContent = 'Шаг 1: Загрузите ваше фото для начала';
         subtitle.classList.remove('text-red-400');
         clothingLocationContainer.classList.add('hidden');
         clothingPromptInput.value = ''; locationPromptInput.value = '';
         generatedPhotoshootResult = null; page1DetectedSubject = null;
         page1ClothingImage = null; page1LocationImage = null;
-        page1ReferenceImage2 = null; // Reset second image
         shownClothingSuggestions.clear(); shownLocationSuggestions.clear();
         (document.getElementById('clothing-image-upload') as HTMLInputElement).value = '';
         (document.getElementById('clothing-image-preview') as HTMLImageElement).src = '';
         document.getElementById('clothing-image-preview')?.classList.add('hidden');
         document.getElementById('clothing-upload-placeholder')?.classList.remove('hidden');
         document.getElementById('clothing-clear-button')?.classList.add('hidden');
-        
-        // --- NEW: Clear Page 1 secondary images ---
-        const secondaryContainer = document.getElementById('page1-secondary-images-container');
-        if (secondaryContainer) secondaryContainer.innerHTML = '';
-        
         updatePage1WizardState();
     };
     
@@ -1510,15 +1362,13 @@ function initializePage1Wizard() {
         }
     };
 
-    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state, state2) => {
+    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state) => {
         page1ReferenceImage = state;
-        page1ReferenceImage2 = state2 || null;
-
         if (state) {
             subtitle.textContent = 'Оптимизация изображения...';
             let imageState = state;
     
-            // --- AUTO-CROP LOGIC (Apply only to primary image) ---
+            // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES (PAGE 1) ---
             const processedImageState = await new Promise<ImageState>((resolve) => {
                 const img = new Image();
                 img.onload = async () => {
@@ -1532,7 +1382,7 @@ function initializePage1Wizard() {
                                 const targetAspectRatio = 4 / 5;
                                 const newWidth = originalHeight * targetAspectRatio;
                                 
-                                if (newWidth < originalWidth) {
+                                if (newWidth < originalWidth) { // Check if it's wider than target
                                     const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
                                     let cropX = personCenterX - (newWidth / 2);
                                     cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
@@ -1545,6 +1395,10 @@ function initializePage1Wizard() {
                                         ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
                                         const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
                                         const [, croppedBase64] = croppedDataUrl.split(',');
+                                        
+                                        const imagePreview = document.getElementById('page1-image-preview') as HTMLImageElement;
+                                        if (imagePreview) imagePreview.src = croppedDataUrl;
+    
                                         console.log("Фото для фотосессии успешно обрезано.");
                                         resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
                                         return;
@@ -1552,23 +1406,27 @@ function initializePage1Wizard() {
                                 }
                             }
                         } catch (cropError) {
-                            console.warn("Не удалось автоматически обрезать фото, используется оригинал:", cropError);
+                            console.warn("Не удалось автоматически обрезать фото для фотосессии, используется оригинал:", cropError);
                         }
                     }
+                    resolve(imageState); // Resolve with original if not horizontal or if crop fails
+                };
+                img.onerror = () => {
+                    console.error("Не удалось загрузить изображение для проверки размеров (Page 1).");
                     resolve(imageState);
                 };
-                img.onerror = () => resolve(imageState);
                 img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
             });
             // --- END OF AUTO-CROP LOGIC ---
             
             page1ReferenceImage = processedImageState;
 
-            // --- Reset secondary inputs ---
+            // --- NEW: Clean up previous session inputs when new photo is uploaded ---
             clothingPromptInput.value = '';
             locationPromptInput.value = '';
-            shownClothingSuggestions.clear();
-            shownLocationSuggestions.clear();
+            shownClothingSuggestions.clear(); // Reset memory of shown suggestions
+            shownLocationSuggestions.clear(); // Reset memory of shown suggestions
+
             page1ClothingImage = null;
             page1LocationImage = null;
             
@@ -1581,19 +1439,8 @@ function initializePage1Wizard() {
             document.getElementById('location-image-preview')?.classList.add('hidden');
             document.getElementById('location-upload-placeholder')?.classList.remove('hidden');
             document.getElementById('location-clear-button')?.classList.add('hidden');
+            // -----------------------------------------------------------------------
 
-            // --- NEW: Render secondary image for Page 1 ---
-            const secondaryContainer = document.getElementById('page1-secondary-images-container');
-            if (secondaryContainer) {
-                secondaryContainer.innerHTML = '';
-                if (state2) {
-                    const thumb = document.createElement('img');
-                    thumb.src = `data:${state2.mimeType};base64,${state2.base64}`;
-                    thumb.className = "w-16 h-16 object-cover rounded-lg border-2 border-white shadow-lg bg-gray-800";
-                    secondaryContainer.appendChild(thumb);
-                }
-            }
-            
             await showCombinedSteps(processedImageState);
         } else {
             resetWizard();
@@ -1680,13 +1527,15 @@ function initializePage1Wizard() {
     resetWizard();
 }
 
-function getUploaderPlaceholderHtml() {
+function getUploaderPlaceholderHtml(): string {
   return `<div class="w-full h-full flex flex-col items-center justify-center p-4 gap-4">
     <div class="w-full max-w-xs aspect-square border border-stone-400/50 rounded-lg flex items-center justify-center p-2">
       <svg version="1.0" xmlns="http://www.w3.org/2000/svg" width="1024pt" height="1024pt" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid" meet" class="w-full h-full object-contain text-stone-600 opacity-70 pointer-events-none">
         <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
           <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
           <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 7 -12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
           <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
           <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
           <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
@@ -1950,7 +1799,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Initial UI Setup & Event Listeners ---
     const placeholderHtml = getUploaderPlaceholderHtml();
     document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
-    uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс (можно выбрать 2)</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
+    uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
 
 
     setupNavigation();
@@ -1992,11 +1841,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (button?.dataset.plan) selectPlan(button.dataset.plan);
     });
 
-    const handlePage2Upload = async (files: FileList | null) => {
-      if (!files || files.length === 0) return;
-      
-      const file = files[0];
-      if (!file.type.startsWith('image/')) {
+    const handlePage2Upload = async (file: File) => {
+      if (!file || !file.type.startsWith('image/')) {
         showStatusError('Пожалуйста, выберите файл изображения.');
         return;
       }
@@ -2010,44 +1856,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       setWizardStep('NONE');
 
       try {
-        const processFile = async (f: File) => {
-            const preResized = await preResizeImage(f);
-            return await resizeImage(preResized);
-        };
+        const preResizedState = await preResizeImage(file);
+        if (overlayText) overlayText.textContent = 'Оптимизация изображения...';
 
-        const img1 = await processFile(file);
-        let img2: ImageState | null = null;
-        let img3: ImageState | null = null; // Prepare for potential 3rd image
+        let imageState = await resizeImage(preResizedState);
 
-        // Process secondary images
-        if (files.length > 1) {
-            if (overlayText) overlayText.textContent = 'Обработка второго изображения...';
-            if (files[1].type.startsWith('image/')) img2 = await processFile(files[1]);
-        }
-        if (files.length > 2) {
-            if (overlayText) overlayText.textContent = 'Обработка третьего изображения...';
-             if (files[2].type.startsWith('image/')) img3 = await processFile(files[2]);
-        }
-
-
-        // --- AUTO-CROP LOGIC (Main image only) ---
-        let processedImageState = img1;
-        const img = new Image();
-        await new Promise<void>((resolve) => {
+        // --- AUTO-CROP LOGIC FOR HORIZONTAL IMAGES ---
+        const processedImageState = await new Promise<ImageState>((resolve) => {
+            const img = new Image();
             img.onload = async () => {
                 if (img.width > img.height) { // Only process horizontal images
                     if (overlayText) overlayText.textContent = 'Анализ композиции...';
                     try {
-                        const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: img1 });
+                        const { boundingBox } = await callApi('/api/detectPersonBoundingBox', { image: imageState });
                         if (boundingBox) {
                             const originalWidth = img.width;
                             const originalHeight = img.height;
                             const targetAspectRatio = 4 / 5;
                             const newWidth = originalHeight * targetAspectRatio;
-                            if (newWidth < originalWidth) {
+                            
+                            if (newWidth < originalWidth) { // Only crop if it's wider than the target aspect ratio
                                 const personCenterX = ((boundingBox.x_min + boundingBox.x_max) / 2) * originalWidth;
                                 let cropX = personCenterX - (newWidth / 2);
                                 cropX = Math.max(0, Math.min(cropX, originalWidth - newWidth));
+
                                 const canvas = document.createElement('canvas');
                                 canvas.width = newWidth;
                                 canvas.height = originalHeight;
@@ -2056,54 +1888,33 @@ document.addEventListener('DOMContentLoaded', async () => {
                                     ctx.drawImage(img, cropX, 0, newWidth, originalHeight, 0, 0, newWidth, originalHeight);
                                     const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.9);
                                     const [, croppedBase64] = croppedDataUrl.split(',');
-                                    resolve();
-                                    processedImageState = { base64: croppedBase64, mimeType: 'image/jpeg' };
+                                    console.log("Изображение успешно обрезано до вертикального формата.");
+                                    resolve({ base64: croppedBase64, mimeType: 'image/jpeg' });
                                     return;
                                 }
                             }
                         }
-                    } catch (e) { console.warn('Auto-crop failed', e); }
+                    } catch (cropError) {
+                        console.warn("Не удалось автоматически обрезать изображение, используется оригинал:", cropError);
+                    }
                 }
-                resolve();
+                resolve(imageState); // Resolve with original if not horizontal or if crop fails
             };
-            img.onerror = () => resolve();
-            img.src = `data:${img1.mimeType};base64,${img1.base64}`;
+            img.onerror = () => {
+                console.error("Не удалось загрузить изображение для проверки размеров.");
+                resolve(imageState);
+            };
+            img.src = `data:${imageState.mimeType};base64,${imageState.base64}`;
         });
         // --- END OF AUTO-CROP LOGIC ---
         
-        const finalDataUrl = `data:${processedImageState.mimeType};base64,${processedImageState.base64}`;
+        imageState = processedImageState;
+        const finalDataUrl = `data:${imageState.mimeType};base64,${imageState.base64}`;
 
-        referenceImage = processedImageState;
-        referenceImage2 = img2; // Store second image for generation
-        // Note: img3 is processed but not sent to generation API yet as per previous request to keep logic minimal, 
-        // but we WILL show it in UI below.
-
-        referenceImageLocationPrompt = null;
-        // --- NEW: Clear Identity References on new manual upload ---
-        identityReferenceImage = null;
-        identityReferenceImage2 = null;
-        // -----------------------------------------------------------
+        referenceImage = imageState;
+        referenceImageLocationPrompt = null; // NEW: Reset location prompt for new uploads
         referenceImagePreview.src = finalDataUrl;
         referenceImagePreview.classList.remove('hidden');
-        
-        // --- UI UPDATE: SHOW SECONDARY IMAGES ---
-        const secondaryContainer = document.getElementById('secondary-images-container');
-        if (secondaryContainer) {
-            secondaryContainer.innerHTML = ''; // Clear previous
-            
-            // Helper to add thumb
-            const addThumb = (imgState: ImageState) => {
-                const thumb = document.createElement('img');
-                thumb.src = `data:${imgState.mimeType};base64,${imgState.base64}`;
-                thumb.className = "w-16 h-16 object-cover rounded-lg border-2 border-white shadow-lg bg-gray-800";
-                secondaryContainer.appendChild(thumb);
-            };
-
-            if (img2) addThumb(img2);
-            if (img3) addThumb(img3);
-        }
-        // ----------------------------------------
-
         referenceDownloadButton.href = finalDataUrl;
         referenceDownloadButton.download = `reference-${Date.now()}.png`;
         referenceDownloadButton.classList.remove('hidden');
@@ -2115,16 +1926,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
         
-        const { category, smile } = await checkImageSubject(processedImageState);
+        const { category, smile } = await checkImageSubject(imageState);
         detectedSubjectCategory = category;
         detectedSmileType = smile;
         initializePoseSequences();
         if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
         const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
-        
-        const count = files.length;
-        const msg = count > 1 ? `Загружено изображений: ${count}. Обнаружен: ${subjectMap[category] || 'человек'}.` : `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}.`;
-        statusEl.innerText = msg;
+        statusEl.innerText = `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}. Готово к генерации.`;
         setWizardStep('PAGE2_PLAN');
 
       } catch (e) { 
@@ -2137,7 +1945,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     imageUpload.addEventListener('change', (event) => {
-        handlePage2Upload((event.target as HTMLInputElement).files);
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (file) handlePage2Upload(file);
     });
     
     uploadContainer.addEventListener('click', (e) => {
@@ -2152,9 +1961,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault(); e.stopPropagation();
         if (eventName === 'dragover') uploadContainer.classList.add('drag-over');
         if (eventName === 'dragleave' || eventName === 'drop') uploadContainer.classList.remove('drag-over');
-        if (eventName === 'drop') {
-            const files = (e as DragEvent).dataTransfer?.files;
-            if (files && files.length > 0) handlePage2Upload(files);
+        if (eventName === 'drop' && (e as DragEvent).dataTransfer?.files?.[0]) {
+            imageUpload.files = (e as DragEvent).dataTransfer.files;
+            imageUpload.dispatchEvent(new Event('change'));
         }
     }));
 

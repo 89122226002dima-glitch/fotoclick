@@ -43,10 +43,7 @@
     "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.5.0",
     "module": "https://aistudiocdn.com/module@^2.0.0",
     "lowdb/": "https://aistudiocdn.com/lowdb@^7.0.1/",
-    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1"
   }
 }
 </script>
@@ -113,7 +110,7 @@
              <h1 class="app-title tracking-tight">
               Фото-Клик
             </h1>
-             <p id="page1-subtitle" class="text-gray-400 mt-2 text-sm transition-all duration-300">Шаг 1: Загрузите ваше фото для начала (можно выбрать 2 фото)</p>
+             <p id="page1-subtitle" class="text-gray-400 mt-2 text-sm transition-all duration-300">Шаг 1: Загрузите ваше фото для начала</p>
            </div>
            <div class="flex flex-col items-center gap-6 mt-6">
              <!-- Step 1: Your Photo Uploader -->
@@ -123,10 +120,7 @@
                         <!-- Placeholder content is injected by JavaScript -->
                     </div>
                     <img id="page1-image-preview" class="hidden h-full w-full object-cover rounded-lg" alt="Превью вашего фото" />
-                    <!-- NEW: Secondary images container for Page 1 -->
-                    <div id="page1-secondary-images-container" class="absolute bottom-4 left-0 right-0 flex justify-center gap-2 px-4 z-10 pointer-events-none"></div>
-                    
-                    <input type="file" id="page1-image-upload" class="hidden" accept="image/png, image/jpeg, image/webp" multiple />
+                    <input type="file" id="page1-image-upload" class="hidden" accept="image/png, image/jpeg, image/webp" />
                     <button id="page1-clear-button" class="clear-button hidden" title="Очистить">
                       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
                     </button>
@@ -239,7 +233,7 @@
               Фото-Клик
             </h1>
             <p class="text-gray-400 mt-2 text-sm">
-              ЗАГРУЗИТЕ ВАШЕ ИЗОБРАЖЕНИЕ (можно 2 фото для точности), ВЫБЕРЕТЕ ПЛАН СЪЕМКИ И СОЗДАЙТЕ ВАШУ ФОТОСЕССИЮ.
+              ЗАГРУЗИТЕ ВАШЕ ИЗОБРАЖЕНИЕ, ВЫБЕРЕТЕ ПЛАН СЪЕМКИ И СОЗДАЙТЕ ВАШУ ФОТОСЕССИЮ.
               <br />
               Кликните на результат, чтобы сделать его новым референсом.
             </p>
@@ -254,7 +248,7 @@
                 class="uploader-box flex-1 md:flex-[2] aspect-square max-h-[420px] flex items-center justify-center rounded-lg p-4 text-center cursor-pointer transition-colors relative"
               >
                 <div id="upload-placeholder" class="flex flex-col items-center justify-center">
-                  <p class="text-gray-400">Нажмите, чтобы загрузить референс (можно выбрать 2)</p>
+                  <p class="text-gray-400">Нажмите, чтобы загрузить референс</p>
                   <p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>
                 </div>
                 <img
@@ -262,15 +256,11 @@
                   class="hidden max-h-full max-w-full object-contain rounded-md"
                   alt="Превью загруженного изображения"
                 />
-                <!-- Secondary images previews container -->
-                <div id="secondary-images-container" class="absolute bottom-4 left-0 right-0 flex justify-center gap-2 px-4 z-10 pointer-events-none"></div>
-
                 <input
                   type="file"
                   id="image-upload"
                   class="hidden"
                   accept="image/png, image/jpeg, image/webp"
-                  multiple
                 />
                 <a href="#" id="reference-download-button" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20 hidden" title="Скачать изображение">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
