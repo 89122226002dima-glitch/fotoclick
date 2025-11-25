@@ -499,6 +499,8 @@ function resetApp() {
   initializePoseSequences();
   referenceImagePreview.src = '';
   referenceImagePreview.classList.add('hidden');
+  const secondaryContainer = document.getElementById('secondary-images-container');
+  if (secondaryContainer) secondaryContainer.innerHTML = '';
   referenceDownloadButton.href = '#';
   referenceDownloadButton.removeAttribute('download');
   referenceDownloadButton.classList.add('hidden');
@@ -622,6 +624,8 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     referenceImage2 = null; // NEW: When setting generated image as reference, we usually use just that one
     referenceImageLocationPrompt = null; // NEW: Reset location prompt on re-reference
     referenceImagePreview.src = imgSrc;
+    const secondaryContainer = document.getElementById('secondary-images-container');
+    if (secondaryContainer) secondaryContainer.innerHTML = '';
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
     referenceDownloadButton.classList.remove('hidden');
@@ -792,7 +796,8 @@ async function generate() {
             backgroundPromptPart = `4.  **РАСШИРЬ ФОН:** Сохрани стиль, атмосферу и ключевые детали фона с референсного фото, но дострой и сгенерируй его так, чтобы он соответствовал новому ракурсу камеры. Представь, что ты поворачиваешь камеру в том же самом месте.`;
         }
         
-        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое фотореалистичное изображение, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.`;
+        // UPDATED PROMPT HERE
+        let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое изображение это фото гламурной фотосессии с художественной ретушью, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.`;
         
         // NEW: Add instruction about dual reference if applicable
         if (referenceImage2) {
@@ -935,6 +940,8 @@ async function renderHistoryPage() {
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
                 referenceImagePreview.classList.remove('hidden');
+                const secondaryContainer = document.getElementById('secondary-images-container');
+                if (secondaryContainer) secondaryContainer.innerHTML = '';
                 referenceDownloadButton.href = dataUrl;
                 referenceDownloadButton.download = `restored-reference-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
@@ -1338,6 +1345,8 @@ function initializePage1Wizard() {
                 const dataUrlForPage2 = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrlForPage2;
                 referenceImagePreview.classList.remove('hidden');
+                const secondaryContainer = document.getElementById('secondary-images-container');
+                if (secondaryContainer) secondaryContainer.innerHTML = '';
                 referenceDownloadButton.href = dataUrlForPage2;
                 referenceDownloadButton.download = `photoshoot-result-${Date.now()}.png`;
                 referenceDownloadButton.classList.remove('hidden');
@@ -1897,10 +1906,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const img1 = await processFile(file);
         let img2: ImageState | null = null;
-        if (files.length > 1 && files[1].type.startsWith('image/')) {
+        let img3: ImageState | null = null; // Prepare for potential 3rd image
+
+        // Process secondary images
+        if (files.length > 1) {
             if (overlayText) overlayText.textContent = 'Обработка второго изображения...';
-            img2 = await processFile(files[1]);
+            if (files[1].type.startsWith('image/')) img2 = await processFile(files[1]);
         }
+        if (files.length > 2) {
+            if (overlayText) overlayText.textContent = 'Обработка третьего изображения...';
+             if (files[2].type.startsWith('image/')) img3 = await processFile(files[2]);
+        }
+
 
         // --- AUTO-CROP LOGIC (Main image only) ---
         let processedImageState = img1;
@@ -1945,10 +1962,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         const finalDataUrl = `data:${processedImageState.mimeType};base64,${processedImageState.base64}`;
 
         referenceImage = processedImageState;
-        referenceImage2 = img2; // Store second image
+        referenceImage2 = img2; // Store second image for generation
+        // Note: img3 is processed but not sent to generation API yet as per previous request to keep logic minimal, 
+        // but we WILL show it in UI below.
+
         referenceImageLocationPrompt = null; 
         referenceImagePreview.src = finalDataUrl;
         referenceImagePreview.classList.remove('hidden');
+        
+        // --- UI UPDATE: SHOW SECONDARY IMAGES ---
+        const secondaryContainer = document.getElementById('secondary-images-container');
+        if (secondaryContainer) {
+            secondaryContainer.innerHTML = ''; // Clear previous
+            
+            // Helper to add thumb
+            const addThumb = (imgState: ImageState) => {
+                const thumb = document.createElement('img');
+                thumb.src = `data:${imgState.mimeType};base64,${imgState.base64}`;
+                thumb.className = "w-16 h-16 object-cover rounded-lg border-2 border-white shadow-lg bg-gray-800";
+                secondaryContainer.appendChild(thumb);
+            };
+
+            if (img2) addThumb(img2);
+            if (img3) addThumb(img3);
+        }
+        // ----------------------------------------
+
         referenceDownloadButton.href = finalDataUrl;
         referenceDownloadButton.download = `reference-${Date.now()}.png`;
         referenceDownloadButton.classList.remove('hidden');
@@ -1967,7 +2006,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (category === 'other') { showStatusError('На фото не обнаружен человек. Попробуйте другое изображение.'); resetApp(); return; }
         const subjectMap = { woman: 'женщина', man: 'мужчина', teenager: 'подросток', elderly_woman: 'пожилая женщина', elderly_man: 'пожилый мужчина', child: 'ребенок' };
         
-        const msg = referenceImage2 ? `Загружено 2 изображения. Обнаружен: ${subjectMap[category] || 'человек'}.` : `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}.`;
+        const count = files.length;
+        const msg = count > 1 ? `Загружено изображений: ${count}. Обнаружен: ${subjectMap[category] || 'человек'}.` : `Изображение загружено. Обнаружен: ${subjectMap[category] || 'человек'}.`;
         statusEl.innerText = msg;
         setWizardStep('PAGE2_PLAN');
 
