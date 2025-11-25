@@ -83,17 +83,15 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
-let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
+let referenceFaceImage: ImageState | null = null; // NEW: Stores cropped face
+let referenceImageLocationPrompt: string | null = null;
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
-let malePoseIndex = 0;
-let femalePoseIndex = 0;
-let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; // All users start with 0 credits until they log in.
+let generationCredits = 0; 
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
-let idToken: string | null = null; // Holds the Google Auth Token
+let idToken: string | null = null;
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
 
@@ -107,7 +105,7 @@ let poseSequences: {
 };
 
 const MAX_DIMENSION = 1024;
-const MAX_PRE_RESIZE_DIMENSION = 2048; // A safe dimension for pre-processing large uploads
+const MAX_PRE_RESIZE_DIMENSION = 2048;
 const HISTORY_LIMIT = 50;
 
 // --- History (IndexedDB) Management Functions ---
@@ -327,6 +325,57 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
     });
 }
 
+// --- NEW: Helper to slice a 2x2 grid image into 4 separate images ---
+async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const w = img.width;
+            const h = img.height;
+            const halfW = Math.floor(w / 2);
+            const halfH = Math.floor(h / 2);
+            const imageUrls: string[] = [];
+
+            // Order: Top-Left, Top-Right, Bottom-Left, Bottom-Right
+            const positions = [
+                { x: 0, y: 0 },
+                { x: halfW, y: 0 },
+                { x: 0, y: halfH },
+                { x: halfW, y: halfH }
+            ];
+
+            positions.forEach(pos => {
+                const canvas = document.createElement('canvas');
+                canvas.width = halfW;
+                canvas.height = halfH;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
+                    imageUrls.push(canvas.toDataURL(gridMimeType));
+                }
+            });
+            resolve(imageUrls);
+        };
+        img.onerror = (e) => reject(new Error("Failed to load grid image for slicing"));
+        img.src = `data:${gridMimeType};base64,${gridBase64}`;
+    });
+}
+
+function signOut() {
+    isLoggedIn = false;
+    userProfile = null;
+    idToken = null;
+    generationCredits = 0;
+    
+    localStorage.removeItem('idToken');
+    localStorage.removeItem('userProfile');
+
+    if (userProfileContainer) userProfileContainer.classList.add('hidden');
+    if (googleSignInContainer) googleSignInContainer.classList.remove('hidden');
+    
+    updateCreditCounterUI();
+    updateAllGenerateButtons();
+}
 
 /**
  * A generic helper function to make API calls to our own server backend.
@@ -337,8 +386,8 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
  */
 async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
-    // 45-second timeout for API calls, as Gemini can be slow, but this prevents infinite hangs on network issues.
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // 90-second timeout for API calls to support high-res 2K generation on Gemini 3 Pro
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -361,7 +410,7 @@ async function callApi(endpoint: string, body: object) {
         if (error.name === 'AbortError' || error instanceof TypeError) {
             console.error(`API call to ${endpoint} failed or timed out. Error:`, error);
             // This user-friendly message addresses the user's suspicion directly.
-            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или региональными блокировками. Проверьте ваше соединение и попробуйте снова.');
+            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или долгим временем генерации. Проверьте ваше соединение и попробуйте снова.');
         }
         // Re-throw any other unexpected errors.
         throw error;
@@ -434,9 +483,6 @@ function initializePoseSequences() {
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
-    malePoseIndex = 0;
-    femalePoseIndex = 0;
-    femaleGlamourPoseIndex = 0;
 }
 
 function updateCreditCounterUI() {
@@ -460,6 +506,7 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
+  referenceFaceImage = null; // Reset face crop
   referenceImageLocationPrompt = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
@@ -569,7 +616,7 @@ function updateAllGenerateButtons() {
     if (generateButton) {
         const creditsNeeded = 4;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать 4 фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
             generateButton.disabled = false; // Always enabled to show prompt
@@ -582,7 +629,7 @@ function updateAllGenerateButtons() {
     }
 }
 
-const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
+const setAsReference = async (imgContainer: HTMLElement, imgSrc: string) => {
     const [header, base64] = imgSrc.split(',');
     const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
     referenceImage = { base64, mimeType };
@@ -591,6 +638,19 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
     referenceDownloadButton.classList.remove('hidden');
+    
+    // --- NEW: Re-detect face crop when setting new reference ---
+    statusEl.innerText = 'Обновление референса и поиск лица...';
+    try {
+        const { boundingBox } = await callApi('/api/cropFace', { image: referenceImage });
+        referenceFaceImage = await cropImageByCoords(referenceImage, boundingBox);
+        console.log('Face re-cropped for new reference');
+    } catch (err) {
+        console.warn("Could not re-crop face for new reference:", err);
+        referenceFaceImage = null;
+    }
+    // -----------------------------------------------------------
+
     initializePoseSequences();
     uploadContainer.classList.remove('aspect-square');
     outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
@@ -640,10 +700,30 @@ async function generate() {
   divider.innerHTML = `<span class="font-semibold text-gray-300">${getPlanDisplayName(selectedPlan)}</span><span class="text-gray-500">${timestamp}</span>`;
   outputGallery.prepend(divider);
 
+  // --- ASPECT RATIO DETECTION ---
+  let aspectRatioRequest = '1:1';
+  let aspectClass = 'aspect-square';
+  try {
+      const img = new Image();
+      img.src = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
+      await new Promise<void>(resolve => { img.onload = () => resolve(); img.onerror = () => resolve(); });
+      if (img.width && img.height) {
+          const ratio = img.width / img.height;
+          if (ratio < 0.85) {
+              aspectRatioRequest = '3:4';
+              aspectClass = 'aspect-[3/4]';
+          } else if (ratio > 1.15) {
+              aspectRatioRequest = '4:3';
+              aspectClass = 'aspect-[4/3]';
+          }
+      }
+  } catch (e) { console.warn('Could not detect aspect ratio, defaulting to square', e); }
+  // ------------------------------
+
   const placeholders: HTMLDivElement[] = [];
   for (let i = 0; i < 4; i++) {
     const placeholder = document.createElement('div');
-    placeholder.className = 'bg-[#353739] rounded-lg relative overflow-hidden aspect-square placeholder-shimmer';
+    placeholder.className = `bg-[#353739] rounded-lg relative overflow-hidden ${aspectClass} placeholder-shimmer`;
     placeholders.push(placeholder);
   }
   placeholders.slice().reverse().forEach((p) => outputGallery.prepend(p));
@@ -746,17 +826,32 @@ async function generate() {
 
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
         
+        finalPrompt += `\n7. **СТИЛЬ И ЦВЕТОКОРРЕКЦИЯ (Color Grading):** Примени к изображению профессиональную кинематографическую цветокоррекцию.
+*   **Свет:** Используй объемное, драматичное освещение. Добавь мягкий контраст между светом и тенью.
+*   **Текстура:** Добавь едва заметное пленочное зерно (film grain) для реалистичности. Кожа должна иметь естественную, но "дорогую" текстуру.
+*   **Атмосфера:** Сделай цвета глубокими и насыщенными (в стиле Kodak Portra или Teal & Orange). Избегай плоского "цифрового" вида. Картинка должна выглядеть как стоп-кадр из высокобюджетного фильма или обложка журнала.`;
+
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация... 10%';
+    if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
 
-    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
+    // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
+    const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
-        image: referenceImage!
+        image: referenceImage!,
+        faceImage: referenceFaceImage, // Send the cropped face if available
+        aspectRatio: aspectRatioRequest // Pass detected ratio
     });
     
+    if (progressText) progressText.innerText = 'Обработка результатов...';
+
+    // --- SLICE THE GRID IMAGE CLIENT-SIDE ---
+    const [header, gridBase64] = gridImageUrl.split(',');
+    const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+    const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
+
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
@@ -859,6 +954,7 @@ async function renderHistoryPage() {
                 
                 // Set as reference logic
                 referenceImage = historyItem.image;
+                referenceFaceImage = null; // Reset face crop, we need to re-calc
                 referenceImageLocationPrompt = null; // NEW: History items don't have a baked-in prompt
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
@@ -874,6 +970,11 @@ async function renderHistoryPage() {
                 (window as any).navigateToPage('page2');
                 
                 try {
+                    // --- NEW: Re-crop face when loading from history ---
+                    const { boundingBox } = await callApi('/api/cropFace', { image: referenceImage });
+                    referenceFaceImage = await cropImageByCoords(referenceImage, boundingBox);
+                    // ---------------------------------------------------
+
                     const { category, smile } = await checkImageSubject(referenceImage);
                     detectedSubjectCategory = category;
                     detectedSmileType = smile;
@@ -1187,24 +1288,30 @@ function initializePage1Wizard() {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото человека (первое изображение) и референсное фото одежды (второе изображение).
 Твоя главная цель — идеально сохранить человека с первого фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "**одежду которую нужно взять в точности со 2 референсной фотографии,нужно взять только одежду и игнорировать лицо на 2 референсном кадре**". Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
 4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
-6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица. Освещение должно выглядеть естественно и фотореалистично.
+6.  **СТИЛЬ И ЦВЕТОКОРРЕКЦИЯ (Color Grading):** Примени к изображению профессиональную кинематографическую цветокоррекцию.
+*   **Свет:** Используй объемное, драматичное освещение. Добавь мягкий контраст между светом и тенью.
+*   **Текстура:** Добавь едва заметное пленочное зерно (film grain) для реалистичности. Кожа должна иметь естественную, но "дорогую" текстуру.
+*   **Атмосфера:** Сделай цвета глубокими и насыщенными (в стиле Kodak Portra или Teal & Orange). Избегай плоского "цифрового" вида. Картинка должна выглядеть как стоп-кадр из высокобюджетного фильма или обложка журнала.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             } else {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
 Твоя главная цель — идеально сохранить человека с фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в новом кадре.
 4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
-6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица. Освещение должно выглядеть естественно и фотореалистично.
+6.  **СТИЛЬ И ЦВЕТОКОРРЕКЦИЯ (Color Grading):** Примени к изображению профессиональную кинематографическую цветокоррекцию.
+*   **Свет:** Используй объемное, драматичное освещение. Добавь мягкий контраст между светом и тенью.
+*   **Текстура:** Добавь едва заметное пленочное зерно (film grain) для реалистичности. Кожа должна иметь естественную, но "дорогую" текстуру.
+*   **Атмосфера:** Сделай цвета глубокими и насыщенными (в стиле Kodak Portra или Teal & Orange). Избегай плоского "цифрового" вида. Картинка должна выглядеть как стоп-кадр из высокобюджетного фильма или обложка журнала.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             }
@@ -1229,8 +1336,22 @@ function initializePage1Wizard() {
             photoshootResultContainer.querySelector('.generated-photoshoot-wrapper')?.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(resultUrl); });
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
+                // Set generated image as reference for Page 2
                 referenceImage = generatedPhotoshootResult;
                 referenceImageLocationPrompt = locationText; // NEW: Save location prompt
+                
+                // --- NEW: Generate Face Crop for the new reference immediately ---
+                statusEl.innerText = 'Анализ лица на новом фото...';
+                try {
+                    const { boundingBox } = await callApi('/api/cropFace', { image: referenceImage });
+                    referenceFaceImage = await cropImageByCoords(referenceImage, boundingBox);
+                    console.log('Face cropped successfully for Page 2 transfer.');
+                } catch (err) {
+                    console.warn("Could not crop face from photoshoot result:", err);
+                    referenceFaceImage = null;
+                }
+                // -----------------------------------------------------------------
+
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1637,28 +1758,6 @@ async function handleCredentialResponse(response: any) {
     }
 }
 
-function signOut() {
-    // Clear token from memory and localStorage
-    idToken = null; 
-    localStorage.removeItem('idToken');
-
-    isLoggedIn = false;
-    userProfile = null;
-    generationCredits = 0; // Reset credits on sign out
-    
-    // Tell Google to forget the user for auto-login
-    if ((window as any).google) {
-        (window as any).google.accounts.id.disableAutoSelect();
-    }
-    
-    // Update UI to reflect signed-out state
-    updateAuthUI();
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
-    updatePage1WizardState();
-    if(statusEl) statusEl.innerText = "Вы вышли из системы.";
-}
-
 function updateAuthUI() {
     if (isLoggedIn && userProfile) {
         googleSignInContainer.classList.add('hidden');
@@ -1922,6 +2021,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         uploadContainer.classList.remove('aspect-square');
         outputGallery.innerHTML = '';
         
+        // --- NEW: CROP FACE LOGIC ---
+        if (overlayText) overlayText.textContent = 'Поиск лица...';
+        try {
+            const { boundingBox } = await callApi('/api/cropFace', { image: imageState });
+            referenceFaceImage = await cropImageByCoords(imageState, boundingBox);
+            console.log('Face cropped successfully.');
+        } catch (faceErr) {
+            console.warn('Could not crop face automatically:', faceErr);
+            referenceFaceImage = null; // Continue without face crop if failed
+        }
+        // -----------------------------
+
         if (overlayText) overlayText.textContent = 'Анализ фото...';
 
         statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
