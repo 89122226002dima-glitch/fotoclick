@@ -1338,7 +1338,12 @@ function initializePage1Wizard() {
             if (generatedPhotoshootResult && page1DetectedSubject) {
                 referenceImage = generatedPhotoshootResult;
                 referenceImage2 = null; // Reset second ref when proceeding
-                referenceImageLocationPrompt = locationText;
+                
+                // --- FIX: CLEAR TEXT TAIL ---
+                referenceImageLocationPrompt = null; // Force visual extension, remove text tail
+                customPromptInput.value = ''; // Clear custom prompt to avoid leftover instructions
+                // -----------------------------
+                
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1437,6 +1442,11 @@ function initializePage1Wizard() {
         document.getElementById('clothing-image-preview')?.classList.add('hidden');
         document.getElementById('clothing-upload-placeholder')?.classList.remove('hidden');
         document.getElementById('clothing-clear-button')?.classList.add('hidden');
+        
+        // --- NEW: Clear Page 1 secondary images ---
+        const secondaryContainer = document.getElementById('page1-secondary-images-container');
+        if (secondaryContainer) secondaryContainer.innerHTML = '';
+        
         updatePage1WizardState();
     };
     
@@ -1544,6 +1554,18 @@ function initializePage1Wizard() {
             document.getElementById('location-image-preview')?.classList.add('hidden');
             document.getElementById('location-upload-placeholder')?.classList.remove('hidden');
             document.getElementById('location-clear-button')?.classList.add('hidden');
+
+            // --- NEW: Render secondary image for Page 1 ---
+            const secondaryContainer = document.getElementById('page1-secondary-images-container');
+            if (secondaryContainer) {
+                secondaryContainer.innerHTML = '';
+                if (state2) {
+                    const thumb = document.createElement('img');
+                    thumb.src = `data:${state2.mimeType};base64,${state2.base64}`;
+                    thumb.className = "w-16 h-16 object-cover rounded-lg border-2 border-white shadow-lg bg-gray-800";
+                    secondaryContainer.appendChild(thumb);
+                }
+            }
             
             await showCombinedSteps(processedImageState);
         } else {
