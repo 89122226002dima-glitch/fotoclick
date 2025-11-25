@@ -332,7 +332,7 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
 
 // New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, image2, aspectRatio = '1:1' } = req.body;
+    const { prompts, image, image2, identityImage, identityImage2, aspectRatio = '1:1' } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -346,9 +346,38 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
 
     try {
         let referenceText = "Используя предоставленное референсное фото";
-        if (image2) {
-            referenceText = "Используя ДВА предоставленных референсных фото одного и того же человека (ОБЪЕДИНИ черты лица с обоих фото для максимального сходства)";
+        const parts = [];
+
+        // --- NEW LOGIC: Handle Face Replacement Scenario ---
+        if (identityImage) {
+            // Case 1: We have separate Style/Context Image (image) and Identity Image (identityImage)
+            // This happens when transitioning from Page 1 -> Page 2
+            referenceText = `ВНИМАНИЕ: ТЕБЕ ПРЕДОСТАВЛЕНЫ ИЗОБРАЖЕНИЯ С РАЗНЫМИ РОЛЯМИ.
+            
+            1. **ПЕРВОЕ ИЗОБРАЖЕНИЕ (СТИЛЬ И КОМПОЗИЦИЯ):** Используй это фото как ОСНОВУ для позы, одежды, фона и освещения.
+            2. **ВТОРОЕ ИЗОБРАЖЕНИЕ (ИДЕНТИЧНОСТЬ ЛИЦА):** Это реальное фото человека. Бери черты лица, текстуру кожи и микро-детали СТРОГО с этого фото.
+            ${identityImage2 ? '3. **ТРЕТЬЕ ИЗОБРАЖЕНИЕ:** Дополнительный референс лица для точности.' : ''}
+            
+            **ГЛАВНАЯ ЗАДАЧА:** Сгенерируй изображение, используя композицию ПЕРВОГО изображения, но с лицом ВТОРОГО (и третьего). Впиши лицо в освещение первого фото, но сохрани его узнаваемость.`;
+
+            parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } }); // Style Ref
+            parts.push({ inlineData: { data: identityImage.base64, mimeType: identityImage.mimeType } }); // ID Ref 1
+            if (identityImage2) {
+                parts.push({ inlineData: { data: identityImage2.base64, mimeType: identityImage2.mimeType } }); // ID Ref 2
+            }
+
+        } else {
+            // Case 2: Standard flow (Page 2 manual upload)
+            // Use 'image' and optional 'image2' as standard references
+            if (image2) {
+                referenceText = "Используя ДВА предоставленных референсных фото одного и того же человека (ОБЪЕДИНИ черты лица с обоих фото для максимального сходства)";
+            }
+            parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
+            if (image2) {
+                parts.push({ inlineData: { data: image2.base64, mimeType: image2.mimeType } });
+            }
         }
+        // ---------------------------------------------------
 
         // Создаем один большой промпт для сетки 2x2
         const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
@@ -364,13 +393,6 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
         ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
         Соблюдай стиль и качество во всех четырех частях.`;
 
-        const parts = [
-            { inlineData: { data: image.base64, mimeType: image.mimeType } }
-        ];
-
-        if (image2) {
-             parts.push({ inlineData: { data: image2.base64, mimeType: image2.mimeType } });
-        }
         
         parts.push({ text: gridPrompt });
 

@@ -15,6 +15,11 @@ interface ImageState {
 interface UserProfile {
   name: string;
   email: string;
+}
+
+interface UserProfile {
+  name: string;
+  email: string;
   picture: string;
 }
 
@@ -85,6 +90,11 @@ let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
 let referenceImage2: ImageState | null = null; // NEW: Second reference image
 let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
+// --- NEW: Identity Reference Variables ---
+// These store the original photos to use for face reconstruction when the main reference is a synthetic image
+let identityReferenceImage: ImageState | null = null; 
+let identityReferenceImage2: ImageState | null = null;
+// ----------------------------------------
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
 let prompts: Prompts | null = null;
@@ -494,6 +504,10 @@ function resetApp() {
   referenceImage = null;
   referenceImage2 = null; // NEW: Reset second image
   referenceImageLocationPrompt = null;
+  // --- NEW: Reset Identity References ---
+  identityReferenceImage = null;
+  identityReferenceImage2 = null;
+  // --------------------------------------
   detectedSubjectCategory = null;
   detectedSmileType = null;
   initializePoseSequences();
@@ -623,6 +637,10 @@ const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     referenceImage = { base64, mimeType };
     referenceImage2 = null; // NEW: When setting generated image as reference, we usually use just that one
     referenceImageLocationPrompt = null; // NEW: Reset location prompt on re-reference
+    // --- NEW: Clear identity references when manually picking a generated image ---
+    identityReferenceImage = null;
+    identityReferenceImage2 = null;
+    // -----------------------------------------------------------------------------
     referenceImagePreview.src = imgSrc;
     const secondaryContainer = document.getElementById('secondary-images-container');
     if (secondaryContainer) secondaryContainer.innerHTML = '';
@@ -799,7 +817,7 @@ async function generate() {
         // UPDATED PROMPT HERE
         let finalPrompt = `Это референсное фото. Твоя задача — сгенерировать новое изображение это фото гламурной фотосессии с художественной ретушью, следуя строгим правилам.\n\nКРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:\n1.  **АБСОЛЮТНАЯ УЗНАВАЕМОСТЬ:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. Это самое важное правило.`;
         
-        // NEW: Add instruction about dual reference if applicable
+        // NEW: Add instruction about dual reference if applicable (works for standard mode)
         if (referenceImage2) {
             finalPrompt += `\n**ВАЖНО: Я предоставляю ДВА референсных фото одного и того же человека. Проанализируй оба изображения, чтобы создать максимально точный цифровой двойник. Используй черты лица с обоих снимков для улучшения сходства.**\n`;
         }
@@ -822,12 +840,14 @@ async function generate() {
     
     if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
 
-    // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
+    // --- UPDATED API CALL: SEND IDENTITY REFERENCES IF AVAILABLE ---
     const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
         image: referenceImage!,
-        image2: referenceImage2 || undefined, // Pass the second image if exists
-        aspectRatio: aspectRatioRequest // Pass detected ratio
+        image2: referenceImage2 || undefined, 
+        identityImage: identityReferenceImage || undefined, // Pass the original ID face
+        identityImage2: identityReferenceImage2 || undefined, // Pass the second original ID face
+        aspectRatio: aspectRatioRequest 
     });
     
     if (progressText) progressText.innerText = 'Обработка результатов...';
@@ -941,6 +961,10 @@ async function renderHistoryPage() {
                 referenceImage = historyItem.image;
                 referenceImage2 = null; // NEW: History item is a single image reference
                 referenceImageLocationPrompt = null; // NEW: History items don't have a baked-in prompt
+                // --- NEW: Reset Identity ---
+                identityReferenceImage = null;
+                identityReferenceImage2 = null;
+                // ---------------------------
                 const dataUrl = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
                 referenceImagePreview.src = dataUrl;
                 referenceImagePreview.classList.remove('hidden');
@@ -1347,6 +1371,12 @@ function initializePage1Wizard() {
                 referenceImageLocationPrompt = null; // Force visual extension, remove text tail
                 customPromptInput.value = ''; // Clear custom prompt to avoid leftover instructions
                 // -----------------------------
+
+                // --- NEW: Carry over Identity References ---
+                // We use the originals from Page 1 as the identity source for the synthetic reference
+                identityReferenceImage = page1ReferenceImage;
+                identityReferenceImage2 = page1ReferenceImage2;
+                // -------------------------------------------
                 
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
@@ -2055,7 +2085,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Note: img3 is processed but not sent to generation API yet as per previous request to keep logic minimal, 
         // but we WILL show it in UI below.
 
-        referenceImageLocationPrompt = null; 
+        referenceImageLocationPrompt = null;
+        // --- NEW: Clear Identity References on new manual upload ---
+        identityReferenceImage = null;
+        identityReferenceImage2 = null;
+        // -----------------------------------------------------------
         referenceImagePreview.src = finalDataUrl;
         referenceImagePreview.classList.remove('hidden');
         
