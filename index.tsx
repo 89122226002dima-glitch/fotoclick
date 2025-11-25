@@ -813,7 +813,7 @@ async function generate() {
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
 
         // --- NEW: Added Rule 7 for Artistic Retouching ---
-        finalPrompt += `\n7. **ХУДОЖЕСТВЕННАЯ РЕТУШЬ:** сделай Художественную ретушь лица, удали недостатки и дефекты: аккуратное удаление возрастных пятен, морщин, синяков.`;
+        finalPrompt += `\n7. **ХУДОЖЕСТВЕННАЯ РЕТУШЬ:** сделай Художественную глянцевую ретушь лица, удали недостатки и дефекты: аккуратное удаление возрастных пятен, морщин, синяков.сглаживание мелких деталей кожи,Работа с цветом и тоном кожи — коррекция цвета, балансировка белого и насыщенности.`;
         // -------------------------------------------------
         
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
@@ -1657,162 +1657,217 @@ function initializePage1Wizard() {
     resetWizard();
 }
 
-// --- Auth Functions ---
 function getUploaderPlaceholderHtml() {
-    return `<div class="flex flex-col items-center justify-center pt-5 pb-6">
-        <svg class="w-8 h-8 mb-4 text-gray-500" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
-            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
-        </svg>
-        <p class="mb-2 text-sm text-gray-400"><span class="font-semibold">Нажмите для загрузки</span> или перетащите</p>
-        <p class="text-xs text-gray-500">SVG, PNG, JPG или WEBP</p>
-    </div>`;
-}
-
-function updateAuthUI() {
-    if (isLoggedIn && userProfile) {
-        if(authContainer) authContainer.classList.add('hidden');
-        if(userProfileContainer) userProfileContainer.classList.remove('hidden');
-        if(userProfileImage) userProfileImage.src = userProfile.picture;
-        if(userProfileName) userProfileName.textContent = userProfile.name;
-    } else {
-        if(authContainer) authContainer.classList.remove('hidden');
-        if(userProfileContainer) userProfileContainer.classList.add('hidden');
-        if(userProfileImage) userProfileImage.src = '';
-        if(userProfileName) userProfileName.textContent = '';
-    }
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
-}
-
-function signOut() {
-    isLoggedIn = false;
-    userProfile = null;
-    idToken = null;
-    generationCredits = 0;
-    localStorage.removeItem('idToken');
-    localStorage.removeItem('userProfile');
-    updateAuthUI();
-    if ((window as any).google) {
-        (window as any).google.accounts.id.disableAutoSelect();
-    }
-    statusEl.innerText = 'Вы вышли из системы.';
-}
-
-async function handleCredentialResponse(response: any) {
-    try {
-        const res = await fetch('/api/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: response.credential }),
-        });
-
-        if (!res.ok) {
-            const errData = await res.json();
-            throw new Error(errData.error || 'Ошибка входа');
-        }
-
-        const data = await res.json();
-        isLoggedIn = true;
-        userProfile = data.userProfile;
-        idToken = response.credential;
-        generationCredits = data.credits;
-
-        localStorage.setItem('idToken', idToken!);
-        localStorage.setItem('userProfile', JSON.stringify(userProfile));
-
-        updateAuthUI();
-        statusEl.innerText = `Добро пожаловать, ${userProfile?.name}!`;
-    } catch (error) {
-        console.error('Login error:', error);
-        showStatusError('Не удалось войти в систему.');
-    }
-}
-
-async function loadGoogleScriptAndInitAuth() {
-    const storedToken = localStorage.getItem('idToken');
-    const storedProfile = localStorage.getItem('userProfile');
-
-    if (storedToken && storedProfile) {
-        try {
-            userProfile = JSON.parse(storedProfile);
-            idToken = storedToken;
-            isLoggedIn = true;
-            updateAuthUI();
-            
-            // Validate token silently
-            try {
-                 const res = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: storedToken }),
-                 });
-                 if (res.ok) {
-                     const data = await res.json();
-                     generationCredits = data.credits;
-                     updateCreditCounterUI();
-                     updateAllGenerateButtons();
-                 } else {
-                     signOut();
-                 }
-            } catch(e) { console.warn('Silent login check failed', e); }
-        } catch (e) {
-            console.error("Error parsing stored profile", e);
-            signOut();
-        }
-    } else {
-        updateAuthUI();
-    }
-
-    const script = document.createElement('script');
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-        if ((window as any).google) {
-            (window as any).google.accounts.id.initialize({
-                client_id: GOOGLE_CLIENT_ID,
-                callback: handleCredentialResponse
-            });
-            if (googleSignInContainer) {
-                (window as any).google.accounts.id.renderButton(
-                    googleSignInContainer,
-                    { theme: "outline", size: "large", width: '100%' }
-                );
-            }
-        }
-    };
-    document.body.appendChild(script);
+  return `<div class="w-full h-full flex flex-col items-center justify-center p-4 gap-4">
+    <div class="w-full max-w-xs aspect-square border border-stone-400/50 rounded-lg flex items-center justify-center p-2">
+      <svg version="1.0" xmlns="http://www.w3.org/2000/svg" width="1024pt" height="1024pt" viewBox="0 0 1024 1024" preserveAspectRatio="xMidYMid" meet" class="w-full h-full object-contain text-stone-600 opacity-70 pointer-events-none">
+        <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
+          <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
+          <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
+          <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
+          <path d="M4715 8253 c-32 -6 -107 -35 -103 -39 2 -2 32 6 67 16 79 25 157 25 221 1 27 -11 48 -15 45 -11 -17 28 -160 48 -230 33z"/>
+          <path d="M5664 8234 c-19 -15 -19 -15 1 -6 11 5 27 12 35 15 13 5 13 6 -1 6 -8 1 -24 -6 -35 -15z"/>
+          <path d="M4690 8194 c-36 -9 -92 -19 -125 -22 l-60 -7 28 -20 c16 -11 40 -30 55 -41 44 -35 107 -63 154 -69 l43 -6 -52 20 c-29 11 -67 29 -84 42 l-31 22 23 12 c50 26 69 28 69 7 0 -11 9 -30 20 -43 l20 -24 -15 38 c-9 21 -13 42 -10 47 10 17 43 11 50 -9 3 -10 14 -26 25 -36 30 -27 70 -7 70 35 0 31 6 35 34 24 21 -8 20 -43 0 -72 -9 -13 -14 -25 -11 -28 7 -7 47 46 47 62 0 21 12 17 53 -17 48 -40 48 -21 0 21 -79 70 -186 92 -303 64z"/>
+          <path d="M5691 8193 c-44 -16 -131 -90 -131 -111 0 -7 18 6 40 28 22 22 43 40 48 40 4 0 15 -18 24 -40 9 -22 21 -40 27 -40 6 0 4 12 -5 28 -20 38 -18 60 7 67 24 8 22 9 35 -30 8 -26 14 -30 44 -30 32 0 35 3 38 33 3 28 7 33 25 30 20 -3 22 -9 20 -53 -1 -46 0 -48 13 -31 8 11 14 31 14 44 0 21 3 23 28 17 15 -3 31 -11 37 -16 13 -13 -38 -54 -100 -78 -37 -15 -44 -20 -25 -20 42 -1 123 43 185 102 l60 57 -33 -5 c-19 -2 -67 3 -109 11 -95 18 -186 17 -242 -3z"/>
+          <path d="M6157 7789 c-21 -79 -50 -205 -66 -279 -47 -218 -77 -289 -177 -410 -85 -105 -325 -335 -374 -360 -63 -32 -264 -46 -347 -24 -142 37 -572 317 -655 426 -39 51 -56 88 -135 298 -41 107 -80 201 -87 208 -18 18 113 -368 149 -438 15 -30 42 -75 59 -99 68 -95 317 -279 513 -378 l95 -48 162 0 c177 1 207 7 279 58 75 54 286 248 349 322 64 75 118 164 143 235 9 25 33 130 55 235 22 104 49 232 60 284 33 148 18 129 -23 -30z"/>
+          <path d="M5422 7566 c-34 -28 -66 -46 -85 -46 -8 0 -34 13 -58 30 -43 29 -72 36 -103 24 -9 -3 -16 -12 -16 -20 0 -11 9 -13 41 -8 32 5 46 3 69 -15 40 -29 92 -27 138 4 20 14 49 25 65 25 31 0 29 14 -3 23 -13 3 -31 -3 -48 -17z"/>
+          <path d="M5150 7324 c-95 -32 -174 -41 -195 -24 -19 16 -32 5 -16 -14 15 -18 117 -36 202 -36 35 0 91 -5 124 -10 45 -7 85 -6 160 5 248 38 295 50 295 82 0 14 -2 14 -20 -2 -26 -24 -99 -23 -179 4 -75 25 -123 27 -154 6 -19 -12 -28 -12 -62 0 -53 19 -67 18 -155 -11z m370 -13 l85 -28 -60 -7 c-33 -4 -92 -11 -132 -18 -54 -8 -103 -8 -202 2 -72 7 -131 16 -131 20 0 10 133 50 165 50 16 0 43 -5 62 -12 27 -10 38 -9 65 4 45 23 52 22 148 -11z"/>
+          <path d="M5541 7169 c-59 -53 -130 -73 -232 -66 -83 5 -173 39 -216 79 -13 12 -23 16 -23 10 0 -7 19 -26 43 -42 23 -17 49 -37 58 -44 9 -7 30 -18 49 -24 55 -20 238 -13 225 8 -2 4 13 15 34 25 22 9 56 35 77 56 49 50 41 49 -15 -2z"/>
+          <path d="M4507 6975 c8 -168 -38 -341 -127 -470 -18 -26 -102 -119 -189 -208 -144 -150 -215 -229 -236 -267 -10 -17 259 234 343 320 152 156 226 338 226 560 0 63 -5 126 -11 140 -8 19 -10 3 -6 -75z"/>
+          <path d="M5662 6687 c-105 -331 -172 -699 -172 -942 0 -60 6 -128 12 -150 11 -36 13 -22 19 140 12 301 84 706 183 1027 8 26 12 50 8 52 -5 3 -27 -55 -50 -127z"/>
+          <path d="M4545 6184 c-125 -33 -302 -100 -291 -111 2 -2 59 15 127 38 69 30 146 44 200 47 71 4 82 2 138 -27 133 -67 278 -178 356 -271 50 -59 92 -150 110 -236 28 -140 48 -449 47 -744 -1 -157 -3 -295 -6 -308 -3 -12 -8 -147 -11 -300 l-6 -277 -77 -59 c-183 -141 -361 -286 -407 -332 -27 -27 -71 -66 -99 -86 -27 -21 -65 -52 -85 -71 -20 -18 -44 -38 -53 -43 -10 -5 -58 -50 -108 -98 -58 -57 -91 -84 -94 -75 -3 8 -28 156 -56 329 -90 549 -128 721 -189 853 -26 57 -81 125 -81 100 0 -6 6 -16 14 -22 21 -17 63 -124 85 -216 27 -109 60 -299 121 -684 28 -179 55 -344 59 -368 l8 -43 -158 -160 c-87 -88 -160 -156 -163 -151 -8 12 -65 169 -76 206 -4 17 -41 122 -80 235 -208 591 -249 776 -257 1145 -6 284 10 450 72 760 69 340 127 490 263 671 35 47 63 87 61 89 -5 4 -108 -117 -150 -175 -238 -329 -399 -1005 -359 -1510 28 -366 143 -748 394 -1313 35 -78 66 -153 70 -165 8 -25 -44 -100 -136 -192 -82 -82 -236 -294 -279 -384 -71 -145 -47 -255 66 -307 39 -18 136 -26 169 -13 26 10 18 24 -15 24 -37 0 -30 16 11 25 17 4 30 11 30 16 0 5 -1 9 -2 9 -2 1 -30 3 -63 6 -79 7 -157 29 -186 53 -19 15 -24 29 -24 64 0 36 9 57 49 118 27 41 77 108 110 149 61 76 292 322 307 328 4 2 24 -27 43 -65 43 -84 46 -78 6 10 -16 37 -30 70 -30 74 0 5 10 14 21 22 18 11 23 11 31 -1 7 -9 8 -7 3 8 -5 18 18 44 127 149 143 136 166 154 173 133 6 -20 170 -843 206 -1033 17 -93 40 -191 50 -217 23 -59 282 -558 287 -553 2 1 -5 20 -16 42 -11 21 -47 106 -81 188 -34 83 -89 205 -122 271 -49 98 -63 138 -75 210 -73 455 -75 471 -185 1004 l-30 145 23 18 c23 18 92 76 158 132 19 17 69 57 110 90 41 33 77 63 78 68 2 4 10 7 17 7 7 0 15 4 17 9 2 7 125 100 179 136 59 24 95 62 95 62 43 28 90 61 102 72 13 12 28 21 32 21 5 0 29 13 53 30 25 17 48 30 51 30 3 0 6 -24 6 -52 0 -66 39 -588 46 -607 12 -35 13 6 4 125 -5 71 -12 228 -15 349 l-7 220 47 28 c25 15 50 27 55 27 6 0 10 3 10 8 0 4 17 16 38 27 20 11 39 23 42 26 3 4 21 14 40 23 19 9 49 25 65 35 30 19 152 81 210 106 17 7 75 35 130 63 105 52 358 162 372 161 4 0 -35 -23 -87 -50 -111 -59 -103 -58 40 4 58 25 143 57 190 72 47 15 90 29 96 32 6 2 32 -24 57 -59 25 -35 98 -121 162 -193 175 -194 175 -193 175 -285 0 -180 -52 -318 -230 -614 -70 -116 -146 -247 -170 -291 l-42 -80 71 75 c196 207 329 435 382 657 18 73 20 108 16 204 -3 75 -10 126 -20 146 -9 16 -66 85 -129 154 -112 122 -248 283 -248 291 0 3 19 10 43 17 67 20 164 70 180 94 28 44 28 83 1 123 -33 47 -58 69 -113 95 -56 26 -104 22 -231 -20 -50 -17 -95 -31 -100 -31 -17 0 -91 159 -111 238 -11 43 -19 110 -19 156 -1 142 -18 309 -40 378 -55 179 -200 303 -459 392 -116 40 -146 40 -55 0 205 -91 265 -125 338 -194 80 -77 127 -152 146 -240 7 -30 16 -149 20 -265 6 -171 11 -220 28 -265 26 -75 59 -137 94 -182 l28 -36 -162 -80 c-266 -129 -614 -336 -778 -462 -19 -15 -48 -35 -63 -45 l-29 -18 7 194 c4 107 9 212 11 234 12 131 15 629 5 761 -37 466 -69 573 -214 717 -74 73 -168 140 -290 207 -64 35 -89 43 -140 46 -34 1 -71 1 -82 -2z m-872 -2774 c14 -41 76 -185 137 -319 611 -241 111 -244 92 -263 -19 -19 -20 -18 -75 129 -67 176 -175 476 -188 517 -18 59 9 9 34 -64z"/>
+          <path d="M5282 3060 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5322 2580 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M5332 2470 c0 -14 2 -19 5 -12 2 6 2 18 0 25 -3 6 -5 1 -5 -13z"/>
+          <path d="M4065 2325 c34 -109 49 -199 48 -300 0 -121 -10 -161 -70 -280 -74 -145 -132 -212 -472 -535 -278 -265 -438 -470 -570 -729 -64 -126 -85 -192 -26 -82 75 140 317 425 460 544 143 94 445 399 506 466 214 233 287 499 205 745 -22 66 -98 227 -81 171z"/>
+          <path d="M5350 2278 c-1 -36 57 -172 166 -393 139 -283 166 -354 265 -720 98 -357 171 -607 176 -601 5 8 -219 891 -258 1004 -23 64 -70 176 -105 247 -126 258 -243 480 -244 463z" />
+        </g>
+      </svg>
+    </div>
+    <div class="text-center">
+      <div class="bg-white/30 backdrop-blur-md p-4 rounded-xl inline-block">
+        <p class="text-stone-700 font-semibold text-lg mb-1">Ваше лучшее фото</p>
+        <div class="text-sm max-w-xs mx-auto mb-3 text-stone-500 text-left px-2 sm:px-0">
+          <p class="font-semibold text-stone-600 mb-2">Чтобы сэкономить кредиты, используйте качественное фото:</p>
+          <ul class="list-disc list-inside space-y-1 text-stone-600">
+            <li>хорошее освещение, лицо в фокусе;</li>
+            <li>без других людей в кадре;</li>
+            <li class="font-semibold text-red-500">поясной портрет до бедер, как на рисунке.</li>
+          </ul>
+        </div>
+        <div class="p-2 bg-stone-100/50 border border-stone-300/80 rounded-lg transition-colors duration-200 inline-block">
+          <p class="text-stone-700 text-xs font-medium">Нажмите или перетащите файл</p>
+          <p class="text-xs text-stone-400 mt-1">PNG, JPG, WEBP</p>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 async function applyPromoCode() {
     if (!promoCodeInput || !applyPromoButton) return;
     const code = promoCodeInput.value.trim();
-    if (!code) { showStatusError('Введите промокод.'); return; }
-    
-    if (!isLoggedIn) {
-        showStatusError('Сначала войдите в систему.');
-        setWizardStep('AUTH');
+    if (!code) {
+        showStatusError("Пожалуйста, введите промокод.");
         return;
     }
 
+    const originalButtonText = applyPromoButton.innerHTML;
     applyPromoButton.disabled = true;
-    const originalText = applyPromoButton.textContent;
-    applyPromoButton.textContent = '...';
+    applyPromoButton.innerHTML = `<svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
 
     try {
-        const data = await callApi('/api/apply-promo', { code });
-        generationCredits = data.newCredits;
+        const response = await callApi('/api/apply-promo', { code });
+        generationCredits = response.newCredits;
         updateCreditCounterUI();
         updateAllGenerateButtons();
-        statusEl.innerHTML = `<span class="text-green-400">${data.message || 'Промокод применен!'}</span>`;
+        updatePage1WizardState();
+        statusEl.innerHTML = `<span class="text-green-400">${response.message}</span>`;
         promoCodeInput.value = '';
-    } catch (e) {
-        showStatusError(e instanceof Error ? e.message : 'Ошибка применения промокода.');
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Неизвестная ошибка.";
+        showStatusError(message);
     } finally {
         applyPromoButton.disabled = false;
-        applyPromoButton.textContent = originalText || 'Применить';
+        applyPromoButton.innerHTML = originalButtonText;
     }
 }
+
+// --- Auth Functions ---
+async function handleCredentialResponse(response: any) {
+    try {
+        // Use the token to log in to our backend
+        const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
+        
+        // Store the token in localStorage to persist the session
+        localStorage.setItem('idToken', response.credential);
+        idToken = response.credential; // Also keep it in memory
+        
+        isLoggedIn = true;
+        userProfile = serverProfile;
+        generationCredits = credits;
+
+        // Update UI
+        updateAuthUI();
+        updateCreditCounterUI();
+        updateAllGenerateButtons();
+        updatePage1WizardState();
+        if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Добро пожаловать, ${userProfile.name}!</span>`;
+
+    } catch (error) {
+        console.error("Login failed:", error);
+        const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка входа.";
+        showStatusError(`Не удалось войти: ${errorMessage}`);
+        // If login fails, ensure we are fully signed out
+        signOut();
+    }
+}
+
+function signOut() {
+    // Clear token from memory and localStorage
+    idToken = null; 
+    localStorage.removeItem('idToken');
+
+    isLoggedIn = false;
+    userProfile = null;
+    generationCredits = 0; // Reset credits on sign out
+    
+    // Tell Google to forget the user for auto-login
+    if ((window as any).google) {
+        (window as any).google.accounts.id.disableAutoSelect();
+    }
+    
+    // Update UI to reflect signed-out state
+    updateAuthUI();
+    updateCreditCounterUI();
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    if(statusEl) statusEl.innerText = "Вы вышли из системы.";
+}
+
+function updateAuthUI() {
+    if (isLoggedIn && userProfile) {
+        googleSignInContainer.classList.add('hidden');
+        userProfileContainer.classList.remove('hidden');
+        userProfileImage.src = userProfile.picture;
+        userProfileName.textContent = userProfile.name.split(' ')[0]; // Show first name
+    } else {
+        googleSignInContainer.classList.remove('hidden');
+        userProfileContainer.classList.add('hidden');
+        userProfileImage.src = '';
+        userProfileName.textContent = '';
+    }
+}
+
+async function setupGoogleAuth() {
+    if (!googleSignInContainer) return;
+    try {
+        (window as any).google.accounts.id.initialize({
+            client_id: GOOGLE_CLIENT_ID,
+            callback: handleCredentialResponse
+        });
+        googleSignInContainer.innerHTML = ''; // Clear any previous attempts or error messages
+        (window as any).google.accounts.id.renderButton(
+            googleSignInContainer,
+            { theme: "outline", size: "large", type: "standard", text: "signin_with", shape: "pill" }
+        );
+
+        // --- AUTO-LOGIN LOGIC ---
+        const storedToken = localStorage.getItem('idToken');
+        if (storedToken) {
+            statusEl.innerText = 'Восстанавливаем сессию...';
+            await handleCredentialResponse({ credential: storedToken });
+        } else {
+            // If no token, show the One Tap prompt for returning users.
+            (window as any).google.accounts.id.prompt();
+        }
+
+    } catch (error) {
+        console.error("Google Auth Setup Error:", error);
+        showStatusError("Не удалось инициализировать вход через Google.");
+    }
+}
+
+async function loadGoogleScriptAndInitAuth() {
+    return new Promise<void>((resolve, reject) => {
+        if ((window as any).google?.accounts?.id) {
+            console.log("Скрипт Google Auth уже загружен.");
+            setupGoogleAuth().then(resolve).catch(reject);
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.defer = true;
+        script.onload = () => {
+            console.log("Скрипт Google Auth успешно загружен.");
+            setupGoogleAuth().then(resolve).catch(reject);
+        };
+        script.onerror = () => {
+            console.error("Не удалось загрузить скрипт Google Auth.");
+            if (googleSignInContainer) {
+                googleSignInContainer.innerHTML = `
+                    <button id="retry-auth-button" class="btn-secondary">
+                        Ошибка загрузки. Повторить?
+                    </button>
+                `;
+                document.getElementById('retry-auth-button')?.addEventListener('click', () => {
+                    if (statusEl) statusEl.innerText = "Повторная попытка авторизации...";
+                    googleSignInContainer.innerHTML = '<div class="loading-spinner small-spinner"></div>';
+                    script.remove();
+                    loadGoogleScriptAndInitAuth().then(resolve).catch(reject);
+                });
+            }
+            showStatusError("Не удалось загрузить сервис авторизации. Проверьте интернет-соединение.");
+            reject(new Error("Скрипт Google Auth не удалось загрузить."));
+        };
+        document.body.appendChild(script);
+    });
+}
+
 
 // --- MAIN APP INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1848,17 +1903,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 
   try {
+    // User starts with 0 and receives them from the server upon login.
     generationCredits = 0;
     updateCreditCounterUI(); 
 
     await initDB();
+
     await loadGoogleScriptAndInitAuth();
     
+    // --- Handle post-payment redirect ---
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('payment_status') === 'success') {
       statusEl.innerHTML = '<span class="text-green-400">Спасибо за оплату! Ваши фотографии будут зачислены в течение минуты.</span>';
+      // Clean the URL to avoid showing the message on every refresh
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+
 
     const response = await fetch('/prompts.json');
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -1869,13 +1929,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('page1-upload-placeholder')!.innerHTML = placeholderHtml;
     uploadPlaceholder.innerHTML = '<p class="text-gray-400">Нажмите, чтобы загрузить референс (можно выбрать 2)</p><p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>';
 
+
     setupNavigation();
     initializePage1Wizard();
     
     selectPlan(selectedPlan);
     initializePoseSequences();
 
+    // --- Attach all event listeners now that elements are guaranteed to exist ---
     lightboxOverlay.addEventListener('click', (e) => {
+        // Only close if the dark background itself is clicked, not children like the image or button.
         if (e.target === lightboxOverlay) {
           hideLightbox();
         }
@@ -1896,7 +1959,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     paymentBackButton.addEventListener('click', () => {
         paymentQrView.classList.add('hidden');
         paymentSelectionView.classList.remove('hidden');
-        if(paymentQrImage) paymentQrImage.src = ''; 
+        if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
     });
 
     referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
@@ -1906,7 +1969,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (button?.dataset.plan) selectPlan(button.dataset.plan);
     });
 
-    // --- UPDATED Page 2 Upload Handler for Multiple Files ---
     const handlePage2Upload = async (files: FileList | null) => {
       if (!files || files.length === 0) return;
       
@@ -1984,6 +2046,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             img.onerror = () => resolve();
             img.src = `data:${img1.mimeType};base64,${img1.base64}`;
         });
+        // --- END OF AUTO-CROP LOGIC ---
         
         const finalDataUrl = `data:${processedImageState.mimeType};base64,${processedImageState.base64}`;
 
