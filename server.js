@@ -386,7 +386,7 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
     }
 });
 
-// --- UPDATED: Multi-Face Support for Variations ---
+// --- UPDATED: Multi-Face Support for Variations with Fallback ---
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
     const { prompts, image, faceImages, aspectRatio } = req.body;
 
@@ -397,21 +397,20 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
     const faces = (faceImages && Array.isArray(faceImages) && faceImages.length > 0) ? faceImages : [];
     if (faces.length === 0) return res.status(400).json({ error: 'Лицо не найдено. Попробуйте загрузить фото снова.' });
 
-    try {
-        const parts = [];
-        
-        // 1. STYLE REFERENCE (Full Image) - Index 0 in model's view
-        parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
-        
-        // 2. FACE REFERENCES - Indices 1, 2, 3...
-        faces.forEach(face => {
-            parts.push({ inlineData: { data: face.base64, mimeType: face.mimeType } });
-        });
+    const parts = [];
+    
+    // 1. STYLE REFERENCE (Full Image) - Index 0 in model's view
+    parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
+    
+    // 2. FACE REFERENCES - Indices 1, 2, 3...
+    faces.forEach(face => {
+        parts.push({ inlineData: { data: face.base64, mimeType: face.mimeType } });
+    });
 
-        const faceIndicesText = faces.length === 1 ? "ВТОРОЕ ИЗОБРАЖЕНИЕ" : `ИЗОБРАЖЕНИЯ со 2-го по ${faces.length + 1}-е`;
+    const faceIndicesText = faces.length === 1 ? "ВТОРОЕ ИЗОБРАЖЕНИЕ" : `ИЗОБРАЖЕНИЯ со 2-го по ${faces.length + 1}-е`;
 
-        // Updated System Prompt for Multi-Face
-        const systemPrompt = `
+    // Updated System Prompt for Multi-Face
+    const systemPrompt = `
 ПЕРВОЕ ИЗОБРАЖЕНИЕ - это ГЛАВНЫЙ референс для стиля, композиции, одежды и фона.
 ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека.
 
@@ -420,7 +419,7 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
 2. ИГНОРИРОВАТЬ лицо на первом изображении при генерации черт лица.
 3. Взять черты лица (глаза, нос, губы, улыбку, текстуру) ТОЛЬКО с ${faceIndicesText}. Собери идеальное сходство, используя детали со всех предоставленных крупных планов лиц.
 
-Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
+Создай одно изображение с высоким разрешением, которое представляет собой сетку (коллаж) 2x2.
 Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
 1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
 2. ВЕРХНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[1]}
@@ -428,39 +427,69 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
 4. НИЖНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[3]}
 
 ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет.
-        `;
+    `;
 
-        parts.push({ text: systemPrompt });
+    parts.push({ text: systemPrompt });
 
+    // Function to extract image from response
+    const extractImage = (response) => {
+        if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
+            for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType };
+                }
+            }
+        }
+        return null;
+    };
+
+    try {
+        console.log("Попытка генерации вариаций через Gemini 3 Pro (High Quality)...");
         const response = await ai.models.generateContent({
             model: 'gemini-3-pro-image-preview', // Using Pro for best likeness
             contents: { parts: parts },
             config: {
                  imageConfig: {
-                    aspectRatio: aspectRatio || "1:1", // Use the aspect ratio requested by the client (e.g. "3:4", "4:3")
+                    aspectRatio: aspectRatio || "1:1",
                     imageSize: "2K"
                 }
             }
         });
 
-        let gridImage = null;
-        if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
-            for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData) {
-                    gridImage = { base64: part.inlineData.data, mimeType: part.inlineData.mimeType };
-                    break;
-                }
-            }
-        }
-        if (!gridImage) throw new Error("AI не вернул изображение.");
+        const gridImage = extractImage(response);
+        if (!gridImage) throw new Error("AI (Pro) не вернул изображение.");
 
         await db.read();
         const newCredits = db.data.users[req.userEmail].credits;
-
         res.json({ gridImageUrl: `data:${gridImage.mimeType};base64,${gridImage.base64}`, newCredits });
 
     } catch (error) {
-        res.status(500).json({ error: handleGeminiError(error, 'Ошибка генерации вариаций.') });
+        console.warn(`Ошибка Gemini 3 Pro: ${error.message}. Переключаемся на резервную модель (Flash)...`);
+        
+        try {
+            // Fallback to Flash model
+            const fallbackResponse = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-image', // Fallback model
+                contents: { parts: parts },
+                config: {
+                    imageConfig: {
+                        aspectRatio: aspectRatio || "1:1"
+                        // Note: Flash does not support imageSize: "2K"
+                    }
+                }
+            });
+
+            const gridImageFallback = extractImage(fallbackResponse);
+            if (!gridImageFallback) throw new Error("Резервный AI (Flash) тоже не вернул изображение.");
+
+            await db.read();
+            const newCredits = db.data.users[req.userEmail].credits;
+            res.json({ gridImageUrl: `data:${gridImageFallback.mimeType};base64,${gridImageFallback.base64}`, newCredits });
+
+        } catch (fallbackError) {
+             console.error("Обе модели не сработали.", fallbackError);
+             res.status(500).json({ error: handleGeminiError(fallbackError, 'Не удалось сгенерировать вариации (ошибка AI).') });
+        }
     }
 });
 
