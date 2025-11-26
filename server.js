@@ -436,7 +436,7 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
             contents: { parts: parts },
             config: {
                  imageConfig: {
-                    aspectRatio: "1:1", // The grid itself is square-ish usually, client handles cutting.
+                    aspectRatio: aspectRatio || "1:1", // Use the aspect ratio requested by the client (e.g. "3:4", "4:3")
                     imageSize: "2K"
                 }
             }
