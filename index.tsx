@@ -315,9 +315,11 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
             }
             ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
 
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.9); // Use jpeg for consistency
-            const [, base64] = dataUrl.split(',');
-            resolve({ base64, mimeType: 'image/jpeg' });
+            // Use PNG to preserve quality for reference crops (faces, clothing)
+            const dataUrl = canvas.toDataURL('image/png');
+            const [header, base64] = dataUrl.split(',');
+            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+            resolve({ base64, mimeType });
         };
         img.onerror = (err) => {
             reject(new Error('Не удалось загрузить изображение для обрезки.'));
@@ -352,7 +354,8 @@ async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
                     ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
-                    imageUrls.push(canvas.toDataURL(gridMimeType));
+                    // FORCE PNG to ensure high quality (approx 1.5MB+ for 1024x1024) instead of compressed JPEG
+                    imageUrls.push(canvas.toDataURL('image/png'));
                 }
             });
             resolve(imageUrls);
@@ -387,8 +390,8 @@ function signOut() {
  */
 async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
-    // 90-second timeout for API calls to support high-res 2K generation on Gemini 3 Pro
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    // 3 minutes timeout for API calls to support high-res 2K generation on Gemini 3 Pro
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -839,7 +842,7 @@ async function generate() {
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация (это может занять до 40 секунд)...';
+    if (progressText) progressText.innerText = 'Генерация (это может занять от 30 сек до 2 мин)...';
 
     // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
     const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
