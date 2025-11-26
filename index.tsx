@@ -315,10 +315,10 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
             }
             ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
 
-            // Use PNG to preserve quality for reference crops (faces, clothing)
-            const dataUrl = canvas.toDataURL('image/png');
+            // Reverting to JPEG as requested to test recognizability
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
             const [header, base64] = dataUrl.split(',');
-            const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+            const mimeType = 'image/jpeg';
             resolve({ base64, mimeType });
         };
         img.onerror = (err) => {
