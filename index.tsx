@@ -984,16 +984,9 @@ async function renderHistoryPage() {
                         // we have no original. For now, let's keep the fallback for history restore only,
                         // or just set it to null. 
                         // Let's try to crop to be safe for fresh loads, but it contradicts the strict requirement.
-                        // Strict interpretation: Do not crop generated face.
                         // Implementation: We won't auto-crop. If master is null, face is null.
                         referenceFaceImage = null;
                         
-                        // Optional: Allow the history item to act as a "fresh upload" and crop it? 
-                        // Since we can't distinguish if history item is original or generated easily here without metadata,
-                        // we stick to the safe side: rely on Master. If Master is missing, result might be less accurate for identity.
-                        // To fix this fully, we'd need to store the "Master Face" in IndexedDB too. 
-                        // For now, this meets the immediate requirement for the main flow.
-                        // Let's try to at least get a bounding box if we have nothing.
                         try {
                              const { boundingBox } = await callApi('/api/cropFace', { image: referenceImage });
                              referenceFaceImage = await cropImageByCoords(referenceImage, boundingBox);
@@ -1103,7 +1096,7 @@ function displaySuggestions(container: HTMLElement, allSuggestions: string[], sh
     });
 }
 
-function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null) => Promise<void>) {
+function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null, originalState?: ImageState | null) => Promise<void>) {
     const uploadContainer = document.getElementById(containerId) as HTMLDivElement;
     const imageUpload = document.getElementById(inputId) as HTMLInputElement;
     const imagePreview = document.getElementById(previewId) as HTMLImageElement;
@@ -1130,13 +1123,13 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
             const finalResizedState = await resizeImage(preResizedState);
             
             imagePreview.src = `data:${finalResizedState.mimeType};base64,${finalResizedState.base64}`;
-            await onStateChange(finalResizedState);
+            await onStateChange(finalResizedState, preResizedState);
             if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
 
         } catch (err) {
             console.error("Ошибка обработки изображения:", err);
             showStatusError(err instanceof Error ? err.message : "Не удалось обработать изображение.");
-            await onStateChange(null);
+            await onStateChange(null, null);
             // Also need to reset the UI elements
             imageUpload.value = '';
             imagePreview.src = '';
@@ -1159,7 +1152,7 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
     }));
     imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handleFile((event.target as HTMLInputElement).files[0]); });
     clearButton.addEventListener('click', async () => {
-        await onStateChange(null);
+        await onStateChange(null, null);
         imageUpload.value = '';
         imagePreview.src = '';
         imagePreview.classList.add('hidden');
@@ -1507,7 +1500,7 @@ function initializePage1Wizard() {
         }
     };
 
-    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state) => {
+    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state, highResState) => {
         page1ReferenceImage = state;
         if (state) {
             subtitle.textContent = 'Оптимизация изображения...';
@@ -1566,12 +1559,16 @@ function initializePage1Wizard() {
             
             page1ReferenceImage = processedImageState;
 
-            // --- NEW: Master Face Detection from Original ---
+            // --- NEW: Master Face Detection from Original (HIGH RES) ---
             if(statusEl) statusEl.innerText = 'Поиск лица на оригинале...';
             try {
                 const { boundingBox } = await callApi('/api/cropFace', { image: page1ReferenceImage });
-                masterFaceReferenceImage = await cropImageByCoords(page1ReferenceImage, boundingBox);
-                console.log("Master face reference captured from Page 1 upload.");
+                // If auto-crop didn't change the image, we can use the high-res original for better face quality
+                const isUnchanged = processedImageState === state;
+                const sourceForFaceCrop = (isUnchanged && highResState) ? highResState : page1ReferenceImage;
+                
+                masterFaceReferenceImage = await cropImageByCoords(sourceForFaceCrop, boundingBox);
+                console.log("Master face reference captured from Page 1 upload (High Res: " + (sourceForFaceCrop === highResState) + ").");
             } catch (e) {
                 console.warn("Failed to capture master face reference from Page 1:", e);
                 // We don't block the flow, but identity preservation might be weaker.
@@ -2059,10 +2056,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         outputGallery.innerHTML = '';
         
         // --- NEW: CROP FACE LOGIC (Direct Upload on Page 2) ---
+        // UPDATED: Use imageState (Small) for API, but preResizedState (Big) for crop
         if (overlayText) overlayText.textContent = 'Поиск лица...';
         try {
             const { boundingBox } = await callApi('/api/cropFace', { image: imageState });
-            referenceFaceImage = await cropImageByCoords(imageState, boundingBox);
+            
+            // If the image was NOT auto-cropped (processed === imageState), we can use the preResizedState (2048px).
+            // If it WAS auto-cropped, we must use the cropped version (imageState), otherwise coordinates are wrong.
+            // Note: preResizedState is not cropped to 4:5, so if processedImageState IS cropped, we can't use preResized.
+            // But processedImageState is only different if it was horizontal. 
+            // For vertical images (standard), processedImageState === imageState (resized version of preResized).
+            
+            // Simplified logic: If processedImageState came from preResizedState without cropping, use preResizedState.
+            // We can check aspect ratios or just try/catch.
+            // Safe bet for vertical/square images (majority of people):
+            referenceFaceImage = await cropImageByCoords(
+                (processedImageState === imageState) ? preResizedState : imageState, 
+                boundingBox
+            );
+            
             masterFaceReferenceImage = referenceFaceImage; // Update master as this is a new "original"
             console.log('Face cropped successfully and set as Master.');
         } catch (faceErr) {
