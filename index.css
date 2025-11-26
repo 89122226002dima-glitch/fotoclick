@@ -317,6 +317,21 @@ body {
   opacity: 0.8;
 }
 
+/* Extra Faces Slots */
+.extra-face-uploader {
+    width: 80px;
+    height: 80px;
+    border: 2px dashed var(--border-color);
+    border-radius: 0.5rem;
+    transition: all 0.2s ease;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+.extra-face-uploader:hover {
+    border-color: var(--secondary-color);
+    background-color: rgba(217, 181, 181, 0.1);
+    transform: scale(1.05);
+}
+
 /* --- Gallery --- */
 .gallery-item {
   position: relative;

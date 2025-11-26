@@ -85,6 +85,7 @@ let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
 let referenceFaceImage: ImageState | null = null; 
 let masterFaceReferenceImage: ImageState | null = null; // NEW: Stores cropped face from ORIGINAL user photo
+let additionalFaceReferences: (ImageState | null)[] = [null, null]; // Slots for 2 additional faces
 let referenceImageLocationPrompt: string | null = null;
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
@@ -512,6 +513,8 @@ function resetApp() {
   referenceImage = null;
   referenceFaceImage = null;
   masterFaceReferenceImage = null; // Clear master face
+  additionalFaceReferences = [null, null]; // Clear extra faces
+  updateExtraFacesUI(); // Clear UI
   referenceImageLocationPrompt = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
@@ -848,11 +851,14 @@ async function generate() {
     
     if (progressText) progressText.innerText = 'Генерация (это может занять от 30 сек до 2 мин)...';
 
+    // Collect all valid face references
+    const faceImagesToSend = [referenceFaceImage, ...additionalFaceReferences].filter(Boolean) as ImageState[];
+
     // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
     const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
         image: referenceImage!,
-        faceImage: referenceFaceImage, // Send the cropped face if available
+        faceImages: faceImagesToSend, // Send ARRAY of faces
         aspectRatio: aspectRatioRequest // Pass detected ratio
     });
     
@@ -1057,6 +1063,7 @@ function setupNavigation() {
             updatePage1WizardState();
         } else if (pageId === 'page2') {
             updateAllGenerateButtons();
+            updateExtraFacesUI(); // Ensure UI is sync
             if (referenceImage) {
                 setWizardStep('PAGE2_PLAN');
             } else {
@@ -1073,6 +1080,80 @@ function setupNavigation() {
     });
     (window as any).navigateToPage = navigateToPage;
 }
+
+// --- NEW: Handle Extra Face Slots UI & Logic ---
+function updateExtraFacesUI() {
+    // Sync Page 1 and Page 2 slots
+    ['page1', 'page2'].forEach(pagePrefix => {
+        [0, 1].forEach(index => {
+            const container = document.getElementById(`${pagePrefix}-extra-face-${index + 1}`) as HTMLDivElement;
+            if (!container) return;
+            const img = container.querySelector('img') as HTMLImageElement;
+            const placeholder = container.querySelector('.extra-placeholder') as HTMLDivElement;
+            const removeBtn = container.querySelector('.remove-extra') as HTMLButtonElement;
+            
+            const data = additionalFaceReferences[index];
+            if (data) {
+                img.src = `data:${data.mimeType};base64,${data.base64}`;
+                img.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+                removeBtn.classList.remove('hidden');
+            } else {
+                img.src = '';
+                img.classList.add('hidden');
+                placeholder.classList.remove('hidden');
+                removeBtn.classList.add('hidden');
+            }
+        });
+    });
+}
+
+function setupExtraFaceUploader(slotId: string, index: number) {
+    // We attach listeners to both Page 1 and Page 2 slots for the same index
+    ['page1', 'page2'].forEach(pagePrefix => {
+        const containerId = `${pagePrefix}-${slotId}`;
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        const input = container.querySelector('input') as HTMLInputElement;
+        const removeBtn = container.querySelector('.remove-extra') as HTMLButtonElement;
+
+        const handleUpload = async (file: File) => {
+            if (!file) return;
+            // High-res processing same as main photo
+            try {
+                // UI Loading state? For now just visual feedback could be nice but keeping it simple
+                const preResized = await preResizeImage(file);
+                const { boundingBox } = await callApi('/api/cropFace', { image: preResized });
+                const faceCrop = await cropImageByCoords(preResized, boundingBox);
+                
+                additionalFaceReferences[index] = faceCrop;
+                updateExtraFacesUI();
+                console.log(`Extra face ${index + 1} cropped and stored.`);
+            } catch (e) {
+                showStatusError('Не удалось найти лицо на дополнительном фото.');
+            }
+        };
+
+        container.addEventListener('click', (e) => {
+            if ((e.target as HTMLElement).closest('.remove-extra')) return;
+            input.click();
+        });
+
+        input.addEventListener('change', (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (file) handleUpload(file);
+        });
+
+        removeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            additionalFaceReferences[index] = null;
+            updateExtraFacesUI();
+            input.value = '';
+        });
+    });
+}
+// -----------------------------------------------
 
 let page1ReferenceImage: ImageState | null = null;
 let page1ClothingImage: ImageState | null = null;
@@ -1590,6 +1671,10 @@ function initializePage1Wizard() {
             locationPromptInput.value = '';
             shownClothingSuggestions.clear(); // Reset memory of shown suggestions
             shownLocationSuggestions.clear(); // Reset memory of shown suggestions
+            
+            // Clean extra faces too
+            additionalFaceReferences = [null, null];
+            updateExtraFacesUI();
 
             page1ClothingImage = null;
             page1LocationImage = null;
@@ -1689,6 +1774,8 @@ function initializePage1Wizard() {
     locationPromptInput.addEventListener('blur', () => setTimeout(() => locationSuggestionsContainer.classList.remove('visible'), 200));
 
     resetWizard();
+    setupExtraFaceUploader('extra-face-1', 0);
+    setupExtraFaceUploader('extra-face-2', 1);
 }
 
 function getUploaderPlaceholderHtml(): string {
@@ -2085,6 +2172,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             );
             
             masterFaceReferenceImage = referenceFaceImage; // Update master as this is a new "original"
+            
+            // Clear extras when new main is uploaded? 
+            // Logic: A new main photo usually means a new person. Let's clear extras to avoid mixing faces.
+            additionalFaceReferences = [null, null];
+            updateExtraFacesUI();
+
             console.log('Face cropped successfully and set as Master.');
         } catch (faceErr) {
             console.warn('Could not crop face automatically:', faceErr);
@@ -2124,7 +2217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     uploadContainer.addEventListener('click', (e) => {
       if (referenceImage && e.target === referenceImagePreview) {
         openLightbox(referenceImagePreview.src);
-      } else if (!(e.target as HTMLElement).closest('a')) {
+      } else if (!(e.target as HTMLElement).closest('a') && !(e.target as HTMLElement).closest('.extra-face-uploader')) {
         imageUpload.click();
       }
     });
