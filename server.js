@@ -461,7 +461,7 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
 
         await db.read();
         const newCredits = db.data.users[req.userEmail].credits;
-        res.json({ gridImageUrl: `data:${gridImage.mimeType};base64,${gridImage.base64}`, newCredits });
+        res.json({ gridImageUrl: `data:${gridImage.mimeType};base64,${gridImage.base64}`, newCredits, modelUsed: 'Gemini 3 Pro' });
 
     } catch (error) {
         console.warn(`Ошибка Gemini 3 Pro: ${error.message}. Переключаемся на резервную модель (Flash)...`);
@@ -484,7 +484,7 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
 
             await db.read();
             const newCredits = db.data.users[req.userEmail].credits;
-            res.json({ gridImageUrl: `data:${gridImageFallback.mimeType};base64,${gridImageFallback.base64}`, newCredits });
+            res.json({ gridImageUrl: `data:${gridImageFallback.mimeType};base64,${gridImageFallback.base64}`, newCredits, modelUsed: 'Gemini 2.5 Flash' });
 
         } catch (fallbackError) {
              console.error("Обе модели не сработали.", fallbackError);

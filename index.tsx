@@ -855,12 +855,20 @@ async function generate() {
     const faceImagesToSend = [referenceFaceImage, ...additionalFaceReferences].filter(Boolean) as ImageState[];
 
     // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
-    const { gridImageUrl, newCredits } = await callApi('/api/generateFourVariations', {
+    const { gridImageUrl, newCredits, modelUsed } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
         image: referenceImage!,
         faceImages: faceImagesToSend, // Send ARRAY of faces
         aspectRatio: aspectRatioRequest // Pass detected ratio
     });
+
+    if (modelUsed) {
+        const isPro = modelUsed.includes('Pro');
+        const style = isPro 
+            ? 'background: #22c55e; color: #fff; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 12px;'
+            : 'background: #f59e0b; color: #fff; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 12px;';
+        console.log(`%c 📸 GENERATION MODEL: ${modelUsed} `, style);
+    }
     
     if (progressText) progressText.innerText = 'Обработка результатов...';
 
