@@ -97,6 +97,11 @@ let idToken: string | null = null;
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
 
+// --- Business Page State ---
+let businessProductImage: ImageState | null = null;
+let businessRefImage1: ImageState | null = null;
+let businessRefImage2: ImageState | null = null;
+
 
 let poseSequences: {
     female: string[]; femaleGlamour: string[]; male: string[]; femaleCloseUp: string[]; maleCloseUp: string[];
@@ -1080,6 +1085,9 @@ function setupNavigation() {
         } else if (pageId === 'page3') {
             renderHistoryPage();
             setWizardStep('NONE');
+        } else if (pageId === 'page-business') {
+            setWizardStep('NONE');
+            updateAllGenerateButtons();
         }
     };
     navContainer.addEventListener('click', (event) => {
@@ -1198,6 +1206,8 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
     const imagePreview = document.getElementById(previewId) as HTMLImageElement;
     const uploadPlaceholder = document.getElementById(placeholderId) as HTMLDivElement;
     const clearButton = document.getElementById(clearButtonId) as HTMLButtonElement;
+
+    if(!uploadContainer) return; // Guard for dynamic creation
 
     const handleFile = async (file: File) => {
         if (!file || !file.type.startsWith('image/')) return;
@@ -1784,6 +1794,143 @@ function initializePage1Wizard() {
     setupExtraFaceUploader('extra-face-2', 1);
 }
 
+// --- BUSINESS PAGE INITIALIZATION ---
+function initializeBusinessPage() {
+    const generateBtn = document.getElementById('generate-business-button') as HTMLButtonElement;
+    const promptInput = document.getElementById('business-prompt-input') as HTMLTextAreaElement;
+    const outputGallery = document.getElementById('business-output-gallery') as HTMLDivElement;
+
+    // Helper to check readiness
+    const checkReady = () => {
+        if (!generateBtn) return;
+        const creditsNeeded = 4;
+        const isReady = !!businessProductImage; // Only Product image is mandatory
+        
+        if (generationCredits >= creditsNeeded) {
+            generateBtn.disabled = !isReady;
+            generateBtn.innerHTML = `Создать карточки товара (4 вариации) - Осталось: ${generationCredits}`;
+        } else {
+            generateBtn.disabled = false;
+            generateBtn.innerHTML = isLoggedIn ? `Пополнить кредиты (нужно ${creditsNeeded})` : `Войти, чтобы продолжить`;
+        }
+    };
+
+    setupUploader('business-upload-product', 'business-input-product', 'business-preview-product', 'business-placeholder-product', 'business-clear-product', async (state) => {
+        businessProductImage = state;
+        checkReady();
+    });
+
+    setupUploader('business-upload-ref1', 'business-input-ref1', 'business-preview-ref1', 'business-placeholder-ref1', 'business-clear-ref1', async (state) => {
+        businessRefImage1 = state;
+    });
+
+    setupUploader('business-upload-ref2', 'business-input-ref2', 'business-preview-ref2', 'business-placeholder-ref2', 'business-clear-ref2', async (state) => {
+        businessRefImage2 = state;
+    });
+
+    generateBtn.addEventListener('click', async () => {
+        const creditsNeeded = 4;
+        
+        if (!isLoggedIn) {
+             setWizardStep('AUTH');
+             showStatusError('Пожалуйста, войдите.');
+             return;
+        }
+
+        if (generationCredits < creditsNeeded) {
+            const modalTitle = document.querySelector('#payment-modal-title');
+            if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
+            const modalDescription = document.querySelector('#payment-modal-description');
+            if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для генерации требуется ${creditsNeeded}.`;
+            setWizardStep('CREDITS');
+            showPaymentModal();
+            return;
+        }
+
+        if (!businessProductImage) {
+            showStatusError('Загрузите фото товара.');
+            return;
+        }
+
+        // --- Start Generation ---
+        generateBtn.disabled = true;
+        generateBtn.innerHTML = 'Генерация...';
+        outputGallery.innerHTML = '<div class="col-span-2 text-center text-white"><div class="loading-spinner mx-auto mb-2"></div>Создаем 4 вариации (Gemini 3 Pro)...</div>';
+
+        try {
+            const refImages = [businessRefImage1, businessRefImage2].filter(Boolean) as ImageState[];
+            const promptText = promptInput.value.trim();
+
+            const response = await callApi('/api/generateBusinessCard', {
+                image: businessProductImage,
+                refImages: refImages,
+                prompt: promptText
+            });
+
+            // Slice grid
+            const { gridImageUrl, newCredits } = response;
+            const [header, gridBase64] = gridImageUrl.split(',');
+            const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+            
+            outputGallery.innerHTML = '<div class="col-span-2 text-center text-white">Нарезка вариаций...</div>';
+            const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
+
+            generationCredits = newCredits;
+            updateCreditCounterUI();
+            checkReady(); // Update button text
+
+            // Display Results
+            outputGallery.innerHTML = '';
+            
+            // Add Timestamp divider
+            const divider = document.createElement('div');
+            const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            divider.className = 'col-span-2 w-full mt-2 pt-2 border-t border-[var(--border-color)] flex justify-between items-center text-sm';
+            divider.innerHTML = `<span class="font-semibold text-gray-300">Бизнес Сет</span><span class="text-gray-500">${timestamp}</span>`;
+            outputGallery.appendChild(divider);
+
+            imageUrls.forEach((url, i) => {
+                const imgContainer = document.createElement('div');
+                imgContainer.className = 'cursor-pointer gallery-item aspect-[3/4] relative'; // 3:4 ratio for business cards
+                
+                const img = document.createElement('img');
+                img.src = url;
+                img.className = 'w-full h-full object-cover rounded-lg';
+                imgContainer.appendChild(img);
+
+                imgContainer.innerHTML += `
+                    <a href="${url}" download="business-card-${i}-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </a>`;
+                
+                imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
+                imgContainer.addEventListener('click', e => { 
+                    if (!(e.target as HTMLElement).closest('a')) openLightbox(url); 
+                });
+
+                outputGallery.appendChild(imgContainer);
+            });
+
+            // Save to history
+            const imageStatesToSave: ImageState[] = imageUrls.map((url: string) => {
+                const [h, b64] = url.split(',');
+                const mime = h.match(/:(.*?);/)?.[1] || 'image/png';
+                return { base64: b64, mimeType: mime };
+            });
+            await addToHistory(imageStatesToSave);
+
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : 'Ошибка генерации.';
+            displayErrorInContainer(outputGallery, msg);
+            showStatusError(msg);
+        } finally {
+            checkReady();
+        }
+    });
+
+    checkReady();
+}
+
 function getUploaderPlaceholderHtml(): string {
   return `<div class="w-full h-full flex flex-col items-center justify-center p-4 gap-4">
     <div class="w-full max-w-xs aspect-square border border-stone-400/50 rounded-lg flex items-center justify-center p-2">
@@ -2039,6 +2186,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setupNavigation();
     initializePage1Wizard();
+    initializeBusinessPage();
     
     selectPlan(selectedPlan);
     initializePoseSequences();

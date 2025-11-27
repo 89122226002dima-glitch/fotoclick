@@ -469,6 +469,87 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
     }
 });
 
+// --- NEW: Universal Business Card Generation ---
+app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), async (req, res) => {
+    const { image, refImages, prompt } = req.body;
+    
+    if (!image) return res.status(400).json({ error: 'Основное изображение товара обязательно.' });
+
+    const parts = [];
+
+    // 1. Image 1 (Product) - Priority
+    parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
+
+    // 2. Reference Images (Context/Style)
+    if (refImages && Array.isArray(refImages)) {
+        refImages.forEach(ref => {
+            parts.push({ inlineData: { data: ref.base64, mimeType: ref.mimeType } });
+        });
+    }
+    
+    // Construct text logic for Gemini
+    const systemPrompt = `
+**РОЛЬ:** Ты — элитный коммерческий фотограф и дизайнер рекламных креативов (Art Director). Твоя задача — создать продающую карточку товара для маркетплейса уровня Top-Seller.
+
+**ВХОДНЫЕ ДАННЫЕ:**
+1.  **ИЗОБРАЖЕНИЕ 1 (ГЛАВНЫЙ ТОВАР):** Это приоритетный объект. Твоя цель — сохранить его узнаваемость, форму, логотипы и детали на 100%. Не искажай сам товар.
+2.  **ИЗОБРАЖЕНИЯ 2 и 3 (КОНТЕКСТ/РЕФЕРЕНСЫ):** Используй эти изображения как источник для фона, стиля, атмосферы или позы модели. Если это фоны — помести товар туда. Если это люди — дай товару взаимодействовать с ними (если это уместно).
+3.  **ПОЖЕЛАНИЯ ЗАКАЗЧИКА:** "${prompt || 'Создай стильную коммерческую фотографию.'}"
+
+**СТИЛИСТИКА И ТЕХНИЧЕСКИЕ ТРЕБОВАНИЯ:**
+*   **Стиль:** High-End Commercial Photography. Дорогая, глянцевая реклама.
+*   **Освещение:** Профессиональный студийный свет (Softbox/Rim light), подчеркивающий текстуру и объем товара. Идеальные блики, мягкие коммерческие тени.
+*   **Композиция:** Продающая композиция. Товар в фокусе. Соблюдай "воздух" для возможного наложения текста, если это не указано иначе.
+*   **Детализация:** 8K, Ultra-HD, гиперреализм, четкий фокус на товаре (Depth of Field).
+*   **Цвета:** Чистые, насыщенные, продающие цвета, соответствующие психологии маркетинга и запросу пользователя.
+
+**ИНСТРУКЦИЯ ПО ГЕНЕРАЦИИ:**
+Создай одно изображение с высоким разрешением, которое представляет собой сетку (коллаж) 2x2.
+Изображение должно состоять из 4 независимых вариаций карточки товара, разделенных тонкими белыми линиями.
+Каждая вариация должна объединять Товар (1) с Контекстом (2,3) и выполнять текстовую инструкцию заказчика. 
+Изображения должны выглядеть как готовые баннеры или карточки для Wildberries/Ozon/Amazon.
+`;
+
+    parts.push({ text: systemPrompt });
+
+    // Extract helper
+    const extractImage = (response) => {
+        if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
+            for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType };
+                }
+            }
+        }
+        return null;
+    };
+
+    try {
+        console.log("Попытка генерации бизнес-карточек через Gemini 3 Pro...");
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-pro-image-preview',
+            contents: { parts: parts },
+            config: {
+                 imageConfig: {
+                    aspectRatio: "3:4", // As requested
+                    imageSize: "2K" // As requested
+                }
+            }
+        });
+
+        const gridImage = extractImage(response);
+        if (!gridImage) throw new Error("AI (Pro) не вернул изображение.");
+
+        await db.read();
+        const newCredits = db.data.users[req.userEmail].credits;
+        res.json({ gridImageUrl: `data:${gridImage.mimeType};base64,${gridImage.base64}`, newCredits, modelUsed: 'Gemini 3 Pro' });
+
+    } catch (error) {
+        console.error(`Ошибка Gemini 3 Pro (Business): ${error.message}.`);
+        res.status(500).json({ error: handleGeminiError(error, 'Проблема со связью с нейросетью. Пожалуйста, попробуйте позже.') });
+    }
+});
+
 
 app.listen(port, () => {
     console.log(`Сервер запущен на http://localhost:${port}`);
