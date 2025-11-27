@@ -464,32 +464,8 @@ ${faceIndicesText} - это ЭТАЛОН(Ы) ВНЕШНОСТИ человека
         res.json({ gridImageUrl: `data:${gridImage.mimeType};base64,${gridImage.base64}`, newCredits, modelUsed: 'Gemini 3 Pro' });
 
     } catch (error) {
-        console.warn(`Ошибка Gemini 3 Pro: ${error.message}. Переключаемся на резервную модель (Flash)...`);
-        
-        try {
-            // Fallback to Flash model
-            const fallbackResponse = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-image', // Fallback model
-                contents: { parts: parts },
-                config: {
-                    imageConfig: {
-                        aspectRatio: aspectRatio || "1:1"
-                        // Note: Flash does not support imageSize: "2K"
-                    }
-                }
-            });
-
-            const gridImageFallback = extractImage(fallbackResponse);
-            if (!gridImageFallback) throw new Error("Резервный AI (Flash) тоже не вернул изображение.");
-
-            await db.read();
-            const newCredits = db.data.users[req.userEmail].credits;
-            res.json({ gridImageUrl: `data:${gridImageFallback.mimeType};base64,${gridImageFallback.base64}`, newCredits, modelUsed: 'Gemini 2.5 Flash' });
-
-        } catch (fallbackError) {
-             console.error("Обе модели не сработали.", fallbackError);
-             res.status(500).json({ error: handleGeminiError(fallbackError, 'Не удалось сгенерировать вариации (ошибка AI).') });
-        }
+        console.error(`Ошибка Gemini 3 Pro: ${error.message}.`);
+        res.status(500).json({ error: handleGeminiError(error, 'Проблема со связью с нейросетью. Пожалуйста, попробуйте позже.') });
     }
 });
 
