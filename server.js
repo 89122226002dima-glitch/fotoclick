@@ -61,6 +61,7 @@ db.read().then(() => {
 const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
     "521373": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." },
+    "521372": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." },
     "FREE": { type: 'credits', value: 12, message: "Вы получили 12 бесплатных кредитов!" }
 };
 
