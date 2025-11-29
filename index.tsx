@@ -841,10 +841,7 @@ async function generate() {
 
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
         
-        // --- POINTS 7 & 8 REMOVED TO PREVENT IDENTITY LOSS DUE TO BEAUTY FILTER ---
-        // The instructions for "Porcelain Skin" and "Removing Wrinkles" were causing the model to change facial features.
-        // We revert to relying on "DIGITAL TWIN" for likeness.
-        // --------------------------------------------------------------------------
+        finalPrompt += `\n8. **ХУДОЖЕСТВЕННАЯ РЕТУШЬ:** ПРОВЕДИ ХУДОЖЕСТВЕННУЮ РЕТУШЬ ЛИЦА, А ИМЕННО: убрать МОРЩИНЫ, ПИГМЕНТАЦИЮ КОЖИ, СДЕЛАЙ ПРОФЕССИОНАЛЬНУЮ ГЛЯНЦЕВУЮ РЕТУШЬ КОЖИ ЛИЦА.`;
 
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
