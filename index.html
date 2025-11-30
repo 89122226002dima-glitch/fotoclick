@@ -43,7 +43,10 @@
     "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.5.0",
     "module": "https://aistudiocdn.com/module@^2.0.0",
     "lowdb/": "https://aistudiocdn.com/lowdb@^7.0.1/",
-    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1"
+    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0"
   }
 }
 </script>
@@ -453,7 +456,7 @@
            </div>
 
            <div class="mt-6 w-full max-w-2xl mx-auto">
-               <textarea id="business-prompt-input" rows="4" class="page1-text-input w-full" placeholder="Опишите, что должно быть на карточке. Например: Коммерческая фотография кроссовок на фоне неонового города, мягкий свет..."></textarea>
+               <textarea id="business-prompt-input" rows="4" class="page1-text-input w-full" placeholder="Опишите, что должно быть на карточке...">Сделай 4 разных карточки товара с главного фото.Стилистика фона должна соответствовать референсу 1 и товар должен идеально вписываться в фон.Добавь текст способствующий продаже товара на главной странице в стилистике фона.Преобрази товар так что бы покупатель хотел его купить.</textarea>
                <button id="generate-business-button" class="btn-primary w-full mt-4">
                   Создать карточки товара (4 вариации)
                </button>
