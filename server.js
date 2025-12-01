@@ -1,4 +1,4 @@
-// server.js - Версия с интеграцией LowDB и Мульти-референсом лиц.
+// server.js - Версия с JWT Авторизацией (30 дней)
 
 import express from 'express';
 import cors from 'cors';
@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
+import jwt from 'jsonwebtoken';
 
 // --- LowDB Imports ---
 import { Low } from 'lowdb';
@@ -33,6 +34,10 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 } else {
   console.log('DIAGNOSTICS: Все переменные окружения успешно загружены.');
 }
+
+// --- JWT Configuration ---
+// В продакшене лучше задать JWT_SECRET в .env. Здесь используем фоллбэк для надежности запуска.
+const JWT_SECRET = process.env.JWT_SECRET || 'foto-click-super-secret-key-' + new Date().getFullYear();
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const yookassa = new Yookassa({
@@ -76,26 +81,26 @@ app.use((req, res, next) => {
 });
 app.use(cors());
 
+// --- ОБНОВЛЕННЫЙ Middleware verifyToken (Проверяет JWT) ---
 const verifyToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ error: 'Токен аутентификации отсутствует.' });
     }
+    
     const token = authHeader.split(' ')[1];
+    
     try {
-        const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-        const ticket = await googleClient.verifyIdToken({
-            idToken: token,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        if (!payload || !payload.email) {
-             return res.status(401).json({ error: 'Неверный токен.' });
-        }
-        req.userEmail = payload.email;
+        // Проверяем подпись нашего собственного токена
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.userEmail = decoded.email;
+        // Можно также передать decoded.name, если нужно
         next();
     } catch (error) {
-        console.error('Ошибка проверки токена:', error);
+        if (error.name === 'TokenExpiredError') {
+             return res.status(401).json({ error: 'Сессия истекла. Пожалуйста, войдите снова.' });
+        }
+        console.error('Ошибка проверки JWT токена:', error);
         return res.status(401).json({ error: 'Недействительный токен.' });
     }
 };
@@ -171,25 +176,79 @@ function parseBoundingBox(text) {
 
 // --- API Routes ---
 
+// 1. LOGIN: Обменивает Google Token на наш долгоживущий JWT (30 дней)
 app.post('/api/login', async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ error: 'Токен не предоставлен.' });
+    
     try {
+        // Проверяем токен Google
         const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({ idToken: token, audience: process.env.GOOGLE_CLIENT_ID });
         const payload = ticket.getPayload();
         if (!payload || !payload.email || !payload.name || !payload.picture) return res.status(401).json({ error: 'Неверные данные токена.' });
         
         const { email, name, picture } = payload;
+        
         await db.read();
         if (!db.data.users[email]) {
             db.data.users[email] = { credits: INITIAL_CREDITS };
             await db.write();
         }
-        res.json({ userProfile: { name, email, picture }, credits: db.data.users[email].credits });
+
+        // Генерируем НАШ токен (сессия на 30 дней)
+        const sessionToken = jwt.sign(
+            { email: email, name: name }, // Payload
+            JWT_SECRET,                   // Secret Key
+            { expiresIn: '30d' }          // Expiration
+        );
+
+        // Возвращаем наш токен клиенту
+        res.json({ 
+            token: sessionToken, 
+            userProfile: { name, email, picture }, 
+            credits: db.data.users[email].credits 
+        });
+
     } catch (error) {
         console.error('Ошибка входа:', error);
         res.status(500).json({ error: 'Внутренняя ошибка сервера при входе.' });
+    }
+});
+
+// 2. RESTORE SESSION: Восстанавливает данные по нашему JWT (без Google)
+app.get('/api/restore-session', verifyToken, async (req, res) => {
+    try {
+        const email = req.userEmail;
+        await db.read();
+        const userData = db.data.users[email];
+        
+        if (!userData) return res.status(404).json({ error: 'Пользователь не найден.' });
+
+        // Здесь нам нужно получить имя/аватар. 
+        // В идеале их хранить в БД, но для упрощения мы можем вернуть generic данные 
+        // или извлечь имя из JWT (если добавили его в payload при логине).
+        // Мы декодируем токен из заголовка еще раз чтобы достать имя, если оно там есть.
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.decode(token);
+        
+        // Если в токене нет картинки (мы не сохраняли), клиент может использовать дефолтную 
+        // или мы должны были сохранить её в БД.
+        // Для простоты, если картинки нет, фронтенд покажет заглушку или имя.
+        
+        res.json({
+            userProfile: { 
+                name: decoded.name || 'Пользователь', 
+                email: email, 
+                // В этой архитектуре мы не храним picture в БД, поэтому при рефреше она может пропасть.
+                // Решение: фронтенд может сохранить picture в localStorage отдельно, или мы добавляем picture в БД.
+                // Пока оставим пустым, фронтенд обработает.
+                picture: '' 
+            },
+            credits: userData.credits
+        });
+    } catch (e) {
+        res.status(500).json({ error: 'Ошибка восстановления сессии' });
     }
 });
 
