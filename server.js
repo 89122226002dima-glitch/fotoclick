@@ -1,4 +1,4 @@
-// server.js - Версия с интеграцией LowDB и поддержкой PROXY
+// server.js - Версия с интеграцией LowDB, поддержкой PROXY и Авто-Тестом соединения
 
 import express from 'express';
 import cors from 'cors';
@@ -24,15 +24,25 @@ if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! �
 if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
 if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
 
+let proxyAgent = null;
+
 if (process.env.YOOKASSA_PROXY_URL) {
-    console.log(`DIAGNOSTICS: Включен режим PROXY для ЮKassa. URL: ${process.env.YOOKASSA_PROXY_URL}`);
+    console.log(`DIAGNOSTICS: Включен режим PROXY для ЮKassa.`);
+    try {
+        const proxyUrl = process.env.YOOKASSA_PROXY_URL.trim();
+        // Создаем агент глобально, чтобы использовать его и в тесте, и в оплате
+        proxyAgent = new HttpsProxyAgent(proxyUrl);
+        console.log(`DIAGNOSTICS: Прокси агент успешно инициализирован.`);
+    } catch (e) {
+        console.error(`DIAGNOSTICS: Ошибка инициализации прокси агента: ${e.message}`);
+    }
 } else {
-    console.log('DIAGNOSTICS: Режим PROXY выключен (переменная YOOKASSA_PROXY_URL не задана).');
+    console.log('DIAGNOSTICS: Режим PROXY выключен (переменная YOOKASSA_PROXY_URL не задана). Запрос пойдет напрямую.');
 }
 
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKASSA_SHOP_ID || !process.env.YOOKASSA_SECRET_KEY) {
   console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Одна или несколько переменных окружения отсутствуют. Сервер не может запуститься.');
-  // process.exit(1); // Не убиваем процесс, чтобы дать возможность исправить .env на лету
+  // process.exit(1);
 } else {
   console.log('DIAGNOSTICS: Все обязательные переменные окружения загружены.');
 }
@@ -56,6 +66,53 @@ db.read().then(() => {
 }).catch(error => {
     console.error("Критическая ошибка: не удалось прочитать файл базы данных LowDB.", error);
 });
+
+// --- PROXY CONNECTION TEST ---
+// Функция проверяет, работает ли прокси с ЮКассой, при старте сервера
+function testProxyConnection() {
+    if (!proxyAgent) return;
+
+    console.log('[Proxy Test] Запуск проверки соединения с api.yookassa.ru через прокси...');
+    
+    const options = {
+        hostname: 'api.yookassa.ru',
+        port: 443,
+        path: '/', // Просто пинг корня или healthcheck, если есть. Или просто коннект.
+        method: 'GET',
+        agent: proxyAgent,
+        headers: {
+            'User-Agent': 'FotoclickServer/1.0',
+            'Host': 'api.yookassa.ru',
+            'Connection': 'close' // Для теста закрываем сразу
+        },
+        timeout: 10000
+    };
+
+    const req = https.request(options, (res) => {
+        console.log(`[Proxy Test] Ответ получен! Статус: ${res.statusCode}`);
+        if (res.statusCode === 404 || res.statusCode === 401 || res.statusCode === 200) {
+             console.log('[Proxy Test] SUCCESS: Прокси работает и видит ЮКассу.');
+        } else {
+             console.log(`[Proxy Test] WARNING: Странный статус от ЮКассы: ${res.statusCode}. Возможно, блокировка.`);
+        }
+    });
+
+    req.on('error', (e) => {
+        console.error(`[Proxy Test] FAILED: Ошибка соединения через прокси: ${e.message}`);
+        console.error('Рекомендация: Проверьте правильность логина/пароля прокси или попробуйте другой IP.');
+    });
+
+    req.on('timeout', () => {
+        console.error('[Proxy Test] FAILED: Таймаут (10 сек). Прокси слишком медленный или недоступен.');
+        req.destroy();
+    });
+
+    req.end();
+}
+
+// Запускаем тест через 2 секунды после старта, чтобы логи успели прогрузиться
+setTimeout(testProxyConnection, 2000);
+
 
 const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
@@ -258,24 +315,18 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                     'Content-Type': 'application/json',
                     'Idempotence-Key': idempotenceKey,
                     'Authorization': `Basic ${auth}`,
-                    'User-Agent': 'FotoclickServer/1.0'
+                    'User-Agent': 'FotoclickServer/1.0',
+                    'Host': 'api.yookassa.ru', // Явное указание Host важно для некоторых прокси
+                    'Connection': 'keep-alive'
                 },
                 timeout: 30000 // 30 seconds timeout
             };
 
-            // --- PROXY CONFIGURATION START ---
-            if (process.env.YOOKASSA_PROXY_URL) {
-                try {
-                    const proxyUrl = process.env.YOOKASSA_PROXY_URL.trim();
-                    console.log(`[Payment] Configuring Proxy Agent: ${proxyUrl}`);
-                    const agent = new HttpsProxyAgent(proxyUrl);
-                    options.agent = agent;
-                } catch (proxyError) {
-                    console.error('[Payment] Proxy Configuration Error:', proxyError);
-                    return reject(new Error('Proxy configuration failed.'));
-                }
+            // Используем глобальный агент, если он есть
+            if (proxyAgent) {
+                options.agent = proxyAgent;
+                console.log('[Payment] Using Proxy Agent.');
             }
-            // --- PROXY CONFIGURATION END ---
 
             console.log('[Payment] Sending request to YooKassa API...');
 
@@ -293,8 +344,10 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                             reject(new Error('Invalid JSON from YooKassa'));
                         }
                     } else {
-                        console.error('[Payment] API Error Body:', data);
-                        reject(new Error(`YooKassa API Error (${response.statusCode}): ${data}`));
+                        // Логируем тело ошибки, но обрезаем если слишком длинное (например HTML от прокси)
+                        const safeData = data.length > 500 ? data.substring(0, 500) + '...' : data;
+                        console.error(`[Payment] API Error (${response.statusCode}):`, safeData);
+                        reject(new Error(`YooKassa API Error (${response.statusCode}): ${safeData}`));
                     }
                 });
             });
@@ -320,7 +373,9 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('[Payment] Critical Error:', error.message);
-        res.status(500).json({ error: `Ошибка оплаты: ${error.message}` });
+        // Отправляем более понятную ошибку на фронтенд
+        const uiMessage = error.message.includes('502') ? 'Ошибка прокси-сервера (502). Попробуйте позже.' : error.message;
+        res.status(500).json({ error: `Ошибка оплаты: ${uiMessage}` });
     }
 });
 
