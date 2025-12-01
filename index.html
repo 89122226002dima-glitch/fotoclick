@@ -43,7 +43,12 @@
     "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.5.0",
     "module": "https://aistudiocdn.com/module@^2.0.0",
     "lowdb/": "https://aistudiocdn.com/lowdb@^7.0.1/",
-    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1"
+    "lowdb": "https://aistudiocdn.com/lowdb@^7.0.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "jsonwebtoken": "https://aistudiocdn.com/jsonwebtoken@^9.0.2",
+    "https": "https://aistudiocdn.com/https@^1.0.0"
   }
 }
 </script>
@@ -78,6 +83,12 @@
                   <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V5h10a1 1 0 100-2H3zm12 4a1 1 0 011 1v7a1 1 0 01-1 1H9a1 1 0 01-1-1V8a1 1 0 011-1h6zm-1 2a1 1 0 10-2 0v1h-1a1 1 0 100 2h1v1a1 1 0 102 0v-1h1a1 1 0 100-2h-1V9z" clip-rule="evenodd" />
                 </svg>
                 <span>4 Вариации</span>
+              </button>
+              <button data-page="page-business" class="nav-button">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M6 6V5a3 3 0 013-3h2.25a3 3 0 013 3v1h2a2 2 0 012 2v9a2 2 0 01-2 2H4a2 2 0 01-2-2V8a2 2 0 012-2h2zm2.5-.5a.5.5 0 01.5-.5h3a.5.5 0 01.5.5V6h-4v-.5z" clip-rule="evenodd" />
+                </svg>
+                <span>Бизнес</span>
               </button>
               <button data-page="page3" class="nav-button">
                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -125,6 +136,32 @@
                       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
                     </button>
                 </div>
+                
+                <!-- Extra Faces Slots Page 1 -->
+                <div class="w-full mt-4 flex justify-center gap-4">
+                     <!-- Slot 1 -->
+                     <div id="page1-extra-face-1" class="extra-face-uploader cursor-pointer relative" title="Доп. фото для лучшей узнаваемости (например, с улыбкой)">
+                        <div class="extra-placeholder flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                           <span class="text-[10px] text-gray-500 mt-1">Доп. фото</span>
+                        </div>
+                        <img class="hidden w-full h-full object-cover rounded-lg" />
+                        <input type="file" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button class="remove-extra hidden absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/></svg></button>
+                     </div>
+                     <!-- Slot 2 -->
+                     <div id="page1-extra-face-2" class="extra-face-uploader cursor-pointer relative" title="Доп. фото для лучшей узнаваемости">
+                        <div class="extra-placeholder flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                           <span class="text-[10px] text-gray-500 mt-1">Доп. фото</span>
+                        </div>
+                        <img class="hidden w-full h-full object-cover rounded-lg" />
+                        <input type="file" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button class="remove-extra hidden absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/></svg></button>
+                     </div>
+                </div>
+                <p class="text-xs text-gray-500 mt-2 text-center">Загрузите до 3-х фото с разными эмоциями (например, с улыбкой) для лучшей узнаваемости в вариациях.</p>
+
             </div>
             
             <!-- Step 2 & 3: Clothing and Location (Combined) -->
@@ -243,31 +280,60 @@
             <!-- Image Upload & Plan Selection -->
             <div class="flex flex-col md:flex-row gap-4">
               <!-- Image Upload & Preview -->
-              <div
-                id="upload-container"
-                class="uploader-box flex-1 md:flex-[2] aspect-square max-h-[420px] flex items-center justify-center rounded-lg p-4 text-center cursor-pointer transition-colors relative"
-              >
-                <div id="upload-placeholder" class="flex flex-col items-center justify-center">
-                  <p class="text-gray-400">Нажмите, чтобы загрузить референс</p>
-                  <p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>
-                </div>
-                <img
-                  id="reference-image-preview"
-                  class="hidden max-h-full max-w-full object-contain rounded-md"
-                  alt="Превью загруженного изображения"
-                />
-                <input
-                  type="file"
-                  id="image-upload"
-                  class="hidden"
-                  accept="image/png, image/jpeg, image/webp"
-                />
-                <a href="#" id="reference-download-button" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20 hidden" title="Скачать изображение">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path>
-                    </svg>
-                </a>
+              <div class="flex-1 md:flex-[2] flex flex-col gap-4">
+                  <div
+                    id="upload-container"
+                    class="uploader-box aspect-square max-h-[420px] flex items-center justify-center rounded-lg p-4 text-center cursor-pointer transition-colors relative"
+                  >
+                    <div id="upload-placeholder" class="flex flex-col items-center justify-center">
+                      <p class="text-gray-400">Нажмите, чтобы загрузить референс</p>
+                      <p class="text-xs text-gray-500 mt-1">PNG, JPG, WEBP</p>
+                    </div>
+                    <img
+                      id="reference-image-preview"
+                      class="hidden max-h-full max-w-full object-contain rounded-md"
+                      alt="Превью загруженного изображения"
+                    />
+                    <input
+                      type="file"
+                      id="image-upload"
+                      class="hidden"
+                      accept="image/png, image/jpeg, image/webp"
+                    />
+                    <a href="#" id="reference-download-button" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20 hidden" title="Скачать изображение">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                        </svg>
+                    </a>
+                  </div>
+
+                  <!-- Extra Faces Slots Page 2 -->
+                   <div class="w-full flex justify-center gap-4">
+                     <!-- Slot 1 -->
+                     <div id="page2-extra-face-1" class="extra-face-uploader cursor-pointer relative" title="Доп. фото для лучшей узнаваемости">
+                        <div class="extra-placeholder flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                           <span class="text-[10px] text-gray-500 mt-1">Доп. фото</span>
+                        </div>
+                        <img class="hidden w-full h-full object-cover rounded-lg" />
+                        <input type="file" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button class="remove-extra hidden absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/></svg></button>
+                     </div>
+                     <!-- Slot 2 -->
+                     <div id="page2-extra-face-2" class="extra-face-uploader cursor-pointer relative" title="Доп. фото для лучшей узнаваемости">
+                         <div class="extra-placeholder flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                           <span class="text-[10px] text-gray-500 mt-1">Доп. фото</span>
+                        </div>
+                        <img class="hidden w-full h-full object-cover rounded-lg" />
+                        <input type="file" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button class="remove-extra hidden absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"/></svg></button>
+                     </div>
+                  </div>
+                   <p class="text-xs text-gray-500 mt-0 text-center">Загрузите до 3-х фото с разными эмоциями (например, с улыбкой) для лучшей узнаваемости в вариациях.</p>
+
               </div>
+              
               <!-- Plan Buttons -->
               <div
                 id="plan-buttons"
@@ -333,11 +399,75 @@
               <div class="w-full bg-gray-700 rounded-full h-2.5">
                   <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-linear" style="width: 0%"></div>
               </div>
-              <p class="text-center text-gray-500 text-sm mt-2">Это может занять до 1 минуты. Пожалуйста, подождите.</p>
+              <p class="text-center text-gray-500 text-sm mt-2">Это может занять от 30 секунд до 2 минут. Пожалуйста, подождите.</p>
           </div>
 
           <p id="status" class="text-center min-h-[24px] mt-2"></p>
 
+        </div>
+
+        <!-- NEW PAGE: Business -->
+        <div id="page-business" class="page-content hidden">
+           <div class="text-center">
+             <h1 class="app-title tracking-tight">Бизнес фотосессия</h1>
+             <p class="text-gray-400 mt-2 text-sm">Загрузите фото товара (обязательно) и до 2 референсов (фон/стиль).</p>
+           </div>
+           
+           <div class="mt-8 flex flex-col md:flex-row gap-4 items-stretch justify-center">
+                <!-- Product Uploader (Main) -->
+                <div class="flex-1 flex flex-col gap-2">
+                    <p class="text-center font-bold text-[var(--font-color)]">Фото Товара (Главное)</p>
+                    <div id="business-upload-product" class="page1-window-upload w-full h-64 cursor-pointer relative">
+                        <div id="business-placeholder-product" class="flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+                           <p class="text-sm text-gray-500 mt-2">Загрузить товар</p>
+                        </div>
+                        <img id="business-preview-product" class="hidden h-full w-full object-contain rounded-lg" />
+                        <input type="file" id="business-input-product" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button id="business-clear-product" class="clear-button hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
+                    </div>
+                </div>
+
+                <!-- Reference 1 -->
+                <div class="flex-1 flex flex-col gap-2">
+                    <p class="text-center font-bold text-[var(--font-color)]">Референс 1 (Фон/Стиль)</p>
+                    <div id="business-upload-ref1" class="page1-window-upload w-full h-64 cursor-pointer relative">
+                        <div id="business-placeholder-ref1" class="flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                           <p class="text-sm text-gray-500 mt-2">Загрузить пример</p>
+                        </div>
+                        <img id="business-preview-ref1" class="hidden h-full w-full object-cover rounded-lg" />
+                        <input type="file" id="business-input-ref1" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button id="business-clear-ref1" class="clear-button hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
+                    </div>
+                </div>
+
+                <!-- Reference 2 -->
+                <div class="flex-1 flex flex-col gap-2">
+                    <p class="text-center font-bold text-[var(--font-color)]">Референс 2 (Окружение)</p>
+                    <div id="business-upload-ref2" class="page1-window-upload w-full h-64 cursor-pointer relative">
+                         <div id="business-placeholder-ref2" class="flex flex-col items-center justify-center h-full">
+                           <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                           <p class="text-sm text-gray-500 mt-2">Загрузить пример</p>
+                        </div>
+                        <img id="business-preview-ref2" class="hidden h-full w-full object-cover rounded-lg" />
+                        <input type="file" id="business-input-ref2" class="hidden" accept="image/png, image/jpeg, image/webp" />
+                        <button id="business-clear-ref2" class="clear-button hidden"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
+                    </div>
+                </div>
+           </div>
+
+           <div class="mt-6 w-full max-w-2xl mx-auto">
+               <textarea id="business-prompt-input" rows="4" class="page1-text-input w-full" placeholder="Опишите, что должно быть на карточке...">Сделай 4 разных карточки товара с главного фото.Стилистика фона должна соответствовать референсу 1 и товар должен идеально вписываться в фон.Добавь текст способствующий продаже товара на главной странице в стилистике фона.Преобрази товар так что бы покупатель хотел его купить.</textarea>
+               <button id="generate-business-button" class="btn-primary w-full mt-4">
+                  Создать карточки товара (4 вариации)
+               </button>
+           </div>
+           
+           <!-- Reuse output gallery for business results -->
+           <div class="w-full mt-6">
+             <div id="business-output-gallery" class="grid grid-cols-2 gap-4 items-start"></div>
+           </div>
         </div>
 
         <!-- Page 3: History -->
