@@ -93,7 +93,7 @@ let prompts: Prompts | null = null;
 let generationCredits = 0; 
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
-let sessionToken: string | null = null; // RENAMED from idToken
+let idToken: string | null = null;
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
 
@@ -374,11 +374,10 @@ async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise
 function signOut() {
     isLoggedIn = false;
     userProfile = null;
-    sessionToken = null;
+    idToken = null;
     generationCredits = 0;
     
-    // Clean up LOCAL STORAGE
-    localStorage.removeItem('sessionToken');
+    localStorage.removeItem('idToken');
     localStorage.removeItem('userProfile');
 
     if (userProfileContainer) userProfileContainer.classList.add('hidden');
@@ -392,11 +391,10 @@ function signOut() {
  * A generic helper function to make API calls to our own server backend.
  * It automatically includes the authentication token and adds a timeout.
  * @param endpoint The API endpoint to call.
- * @param body The JSON payload to send (if POST). If null/undefined and method is GET, request is empty.
- * @param method The HTTP method (default POST).
+ * @param body The JSON payload to send.
  * @returns A promise that resolves with the JSON response from the server.
  */
-async function callApi(endpoint: string, body: object | null = {}, method: string = 'POST') {
+async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
     // 3 minutes timeout for API calls to support high-res 2K generation on Gemini 3 Pro
     const timeoutId = setTimeout(() => controller.abort(), 180000);
@@ -404,25 +402,19 @@ async function callApi(endpoint: string, body: object | null = {}, method: strin
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
     };
-    // UPDATED: Using 'sessionToken' instead of 'idToken'
-    const currentToken = localStorage.getItem('sessionToken');
+    const currentToken = localStorage.getItem('idToken');
     if (currentToken) {
         headers['Authorization'] = `Bearer ${currentToken}`;
     }
 
-    const config: RequestInit = {
-        method: method,
-        headers: headers,
-        signal: controller.signal,
-    };
-
-    if (body && method !== 'GET' && method !== 'HEAD') {
-        config.body = JSON.stringify(body);
-    }
-
     let response;
     try {
-        response = await fetch(endpoint, config);
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
     } catch (error) {
         // This block catches network errors (e.g., CORS, DNS, no internet) and timeouts.
         if (error.name === 'AbortError' || error instanceof TypeError) {
@@ -453,7 +445,7 @@ async function callApi(endpoint: string, body: object | null = {}, method: strin
 
     if (!response.ok) {
         if (response.status === 401) {
-             console.log("Сессия истекла или недействительна. Пользователю нужно войти снова.");
+             console.log("Сессия истекла. Пользователю нужно войти снова.");
              signOut();
              throw new Error("Ваша сессия истекла. Пожалуйста, войдите снова.");
         }
@@ -2005,14 +1997,12 @@ async function applyPromoCode() {
 // --- Auth Functions ---
 async function handleCredentialResponse(response: any) {
     try {
-        // Use the token to log in to our backend and get OUR session token
-        // Response.credential IS the Google Token
-        const { token, userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
+        // Use the token to log in to our backend
+        const { userProfile: serverProfile, credits } = await callApi('/api/login', { token: response.credential });
         
-        // Store OUR session token in localStorage (valid for 30 days)
-        // Renamed key to 'sessionToken' to be clear it's ours, not Google's raw ID token
-        localStorage.setItem('sessionToken', token);
-        sessionToken = token; 
+        // Store the token in localStorage to persist the session
+        localStorage.setItem('idToken', response.credential);
+        idToken = response.credential; // Also keep it in memory
         
         isLoggedIn = true;
         userProfile = serverProfile;
@@ -2038,8 +2028,7 @@ function updateAuthUI() {
     if (isLoggedIn && userProfile) {
         googleSignInContainer.classList.add('hidden');
         userProfileContainer.classList.remove('hidden');
-        // Handle case where picture might be empty if restored from session without DB storage
-        userProfileImage.src = userProfile.picture || 'https://lh3.googleusercontent.com/a/default-user=s96-c'; 
+        userProfileImage.src = userProfile.picture;
         userProfileName.textContent = userProfile.name.split(' ')[0]; // Show first name
     } else {
         googleSignInContainer.classList.remove('hidden');
@@ -2063,30 +2052,10 @@ async function setupGoogleAuth() {
         );
 
         // --- AUTO-LOGIN LOGIC ---
-        // Check if we have OUR session token
-        const storedSessionToken = localStorage.getItem('sessionToken');
-        if (storedSessionToken) {
+        const storedToken = localStorage.getItem('idToken');
+        if (storedToken) {
             statusEl.innerText = 'Восстанавливаем сессию...';
-            // We verify OUR token by calling a protected endpoint, e.g. restoring user data
-            try {
-                // Manually call API to restore session. callApi automatically adds the token from localStorage
-                const data = await callApi('/api/restore-session', null, 'GET');
-                
-                isLoggedIn = true;
-                userProfile = data.userProfile;
-                generationCredits = data.credits;
-                sessionToken = storedSessionToken;
-
-                updateAuthUI();
-                updateCreditCounterUI();
-                updateAllGenerateButtons();
-                updatePage1WizardState();
-                statusEl.innerText = '';
-            } catch (err) {
-                console.warn("Session restore failed, prompting login.", err);
-                signOut(); // Token invalid/expired
-                (window as any).google.accounts.id.prompt();
-            }
+            await handleCredentialResponse({ credential: storedToken });
         } else {
             // If no token, show the One Tap prompt for returning users.
             (window as any).google.accounts.id.prompt();
