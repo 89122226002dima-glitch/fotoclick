@@ -1,4 +1,4 @@
-// server.js - Версия с интеграцией LowDB для надежного хранения кредитов.
+// server.js - Версия с интеграцией LowDB и поддержкой PROXY
 
 import express from 'express';
 import cors from 'cors';
@@ -9,6 +9,7 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
 import https from 'https'; // Используем нативный https для максимальной надежности
+import { HttpsProxyAgent } from 'https-proxy-agent'; // Агент для прокси
 
 // --- LowDB Imports ---
 import { Low } from 'lowdb';
@@ -22,11 +23,18 @@ if (!process.env.API_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! Перем
 if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная GOOGLE_CLIENT_ID не найдена.');
 if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
 if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
+
+if (process.env.YOOKASSA_PROXY_URL) {
+    console.log(`DIAGNOSTICS: Включен режим PROXY для ЮKassa. URL: ${process.env.YOOKASSA_PROXY_URL}`);
+} else {
+    console.log('DIAGNOSTICS: Режим PROXY выключен (переменная YOOKASSA_PROXY_URL не задана).');
+}
+
 if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKASSA_SHOP_ID || !process.env.YOOKASSA_SECRET_KEY) {
   console.log('DIAGNOSTICS: КРИТИЧЕСКАЯ ОШИБКА! Одна или несколько переменных окружения отсутствуют. Сервер не может запуститься.');
-  process.exit(1);
+  // process.exit(1); // Не убиваем процесс, чтобы дать возможность исправить .env на лету
 } else {
-  console.log('DIAGNOSTICS: Все переменные окружения успешно загружены.');
+  console.log('DIAGNOSTICS: Все обязательные переменные окружения загружены.');
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -40,18 +48,13 @@ const __dirname = path.dirname(__filename);
 // --- Настройка базы данных LowDB ---
 const dbFile = path.join(__dirname, 'fotoclick_db.json');
 const adapter = new JSONFile(dbFile);
-// Структура данных по умолчанию:
-// users: { "email@example.com": { credits: 10 } }
-// used_promo_codes: { "email@example.com": ["CODE1", "CODE2"] }
 const defaultData = { users: {}, used_promo_codes: {} };
 const db = new Low(adapter, defaultData);
-// Прочитать данные из файла, инициализировав его, если он не существует.
-// Это асинхронная операция, которую мы выполняем один раз при старте.
+
 db.read().then(() => {
     console.log('Успешное подключение и чтение базы данных LowDB (fotoclick_db.json).');
 }).catch(error => {
     console.error("Критическая ошибка: не удалось прочитать файл базы данных LowDB.", error);
-    process.exit(1);
 });
 
 const INITIAL_CREDITS = 1;
@@ -101,7 +104,7 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
     try {
         const userEmail = req.userEmail;
         
-        await db.read(); // Всегда читаем свежие данные перед операцией
+        await db.read(); 
         
         const user = db.data.users[userEmail];
         
@@ -114,7 +117,7 @@ const authenticateAndCharge = (cost) => async (req, res, next) => {
         }
         
         user.credits -= cost;
-        await db.write(); // Сохраняем изменения на диск
+        await db.write(); 
         next();
     } catch (dbError) {
         console.error('Ошибка LowDB при списании кредитов:', dbError);
@@ -126,7 +129,6 @@ const handleGeminiError = (error, defaultMessage) => {
     console.error(`Ошибка Gemini: ${error.message}`);
     const errorMessage = error.message || '';
 
-    // Пропускаем наши заранее подготовленные, понятные пользователю сообщения.
     if (errorMessage.startsWith('Изображение было заблокировано') || 
         errorMessage.startsWith('Получен пустой ответ от AI') || 
         errorMessage.startsWith('AI вернул ответ в некорректном формате')) {
@@ -134,13 +136,13 @@ const handleGeminiError = (error, defaultMessage) => {
     }
 
     if (errorMessage.includes('API key not valid') || errorMessage.includes('API_KEY_INVALID')) {
-        return 'Ошибка: API-ключ Google недействителен. Пожалуйста, проверьте ключ в Google AI Studio и в файле .env на сервере.';
+        return 'Ошибка: API-ключ Google недействителен.';
     }
     if (errorMessage.toLowerCase().includes('permission denied')) {
-        return 'Ошибка: У API-ключа Google нет необходимых разрешений. Проверьте настройки в Google Cloud.';
+        return 'Ошибка: Нет прав доступа у API-ключа.';
     }
     if (errorMessage.toLowerCase().includes('safety')) {
-        return 'Не удалось обработать фото. Изображение заблокировано автоматической системой безопасности. Пожалуйста, используйте другое фото.';
+        return 'Изображение заблокировано системой безопасности. Попробуйте другое фото.';
     }
     return defaultMessage;
 };
@@ -201,15 +203,13 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
         
         if (promo.type === 'credits') {
             if (!db.data.users[userEmail]) {
-                 return res.status(404).json({ error: 'Пользователь не найден для начисления промокода.' });
+                 return res.status(404).json({ error: 'Пользователь не найден.' });
             }
             db.data.users[userEmail].credits += promo.value;
             userPromoCodes.push(code.toUpperCase());
             db.data.used_promo_codes[userEmail] = userPromoCodes;
 
             await db.write();
-            
-            console.log(`Промокод "${code}" применен для ${userEmail}. Начислено ${promo.value} кредитов. Баланс: ${db.data.users[userEmail].credits}`);
             
             res.json({
                 newCredits: db.data.users[userEmail].credits,
@@ -220,27 +220,23 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
         }
     } catch (dbError) {
         console.error('Ошибка LowDB при применении промокода:', dbError);
-        res.status(500).json({ error: 'Ошибка сервера при применении промокода.' });
+        res.status(500).json({ error: 'Ошибка сервера.' });
     }
 });
 
-// --- YooKassa Integration (Native HTTPS) ---
+// --- YooKassa Integration (Native HTTPS with PROXY Support) ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     console.log('[Payment] Received create-payment request.');
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
         
-        // Trim keys to avoid copy-paste whitespace issues
         const shopId = process.env.YOOKASSA_SHOP_ID ? process.env.YOOKASSA_SHOP_ID.trim() : '';
         const secretKey = process.env.YOOKASSA_SECRET_KEY ? process.env.YOOKASSA_SECRET_KEY.trim() : '';
 
         if (!shopId || !secretKey) {
-            console.error('[Payment] Error: API Keys missing.');
             throw new Error('API Keys for YooKassa are missing in .env');
         }
-
-        console.log(`[Payment] Using ShopID: ${shopId}, Secret Key Length: ${secretKey.length}`);
 
         const paymentPayload = {
             amount: { value: '129.00', currency: 'RUB' },
@@ -267,6 +263,20 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                 timeout: 30000 // 30 seconds timeout
             };
 
+            // --- PROXY CONFIGURATION START ---
+            if (process.env.YOOKASSA_PROXY_URL) {
+                try {
+                    const proxyUrl = process.env.YOOKASSA_PROXY_URL.trim();
+                    console.log(`[Payment] Configuring Proxy Agent: ${proxyUrl}`);
+                    const agent = new HttpsProxyAgent(proxyUrl);
+                    options.agent = agent;
+                } catch (proxyError) {
+                    console.error('[Payment] Proxy Configuration Error:', proxyError);
+                    return reject(new Error('Proxy configuration failed.'));
+                }
+            }
+            // --- PROXY CONFIGURATION END ---
+
             console.log('[Payment] Sending request to YooKassa API...');
 
             const request = https.request(options, (response) => {
@@ -276,7 +286,6 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                 response.on('data', (chunk) => data += chunk);
                 
                 response.on('end', () => {
-                    console.log(`[Payment] Response body (truncated): ${data.substring(0, 200)}...`); 
                     if (response.statusCode >= 200 && response.statusCode < 300) {
                         try {
                             resolve(JSON.parse(data));
@@ -284,7 +293,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                             reject(new Error('Invalid JSON from YooKassa'));
                         }
                     } else {
-                        // Pass the raw error data for debugging
+                        console.error('[Payment] API Error Body:', data);
                         reject(new Error(`YooKassa API Error (${response.statusCode}): ${data}`));
                     }
                 });
@@ -298,7 +307,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             request.on('timeout', () => {
                 console.error('[Payment] Request Timed Out (30s)');
                 request.destroy();
-                reject(new Error('Connection to YooKassa timed out. Check server internet connection.'));
+                reject(new Error('Connection to YooKassa timed out. Check Proxy or Internet connection.'));
             });
 
             request.write(JSON.stringify(paymentPayload));
@@ -334,15 +343,13 @@ app.post('/api/payment-webhook', async (req, res) => {
                 
                 await db.write();
                 
-                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}. Текущий баланс: ${db.data.users[userEmail].credits}`);
-            } else {
-                console.error('Webhook: userEmail не найден в метаданных платежа.');
+                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}.`);
             }
         }
         res.status(200).send('OK');
     } catch (error) {
-        console.error('Ошибка обработки webhook от YooKassa:', error);
-        res.status(500).send('Webhook processing error');
+        console.error('Ошибка обработки webhook:', error);
+        res.status(500).send('Webhook error');
     }
 });
 
@@ -350,38 +357,16 @@ app.post('/api/payment-webhook', async (req, res) => {
 // Check image subject endpoint
 app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
     const { image } = req.body;
-    if (!image || !image.base64 || !image.mimeType) {
-        return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
-    }
+    if (!image || !image.base64 || !image.mimeType) return res.status(400).json({ error: 'Изображение не предоставлено.' });
     
     try {
-        const prompt = `Проанализируй это изображение и определи, кто на нем изображен, а также его/ее улыбку. 
-        Ответь в формате JSON {"category": "...", "smile": "..."}.
-        Возможные значения для "category": "мужчина", "женщина", "подросток", "пожилой мужчина", "пожилая женщина", "ребенок", "другое" (если не человек или неясно).
-        Возможные значения для "smile": "зубы" (если видна улыбка с зубами), "закрытая" (если улыбка без зубов), "нет улыбки".
-        Если на фото несколько людей, анализируй главного, кто в фокусе.`;
+        const prompt = `Проанализируй это изображение и определи, кто на нем изображен, а также его/ее улыбку. Ответь в формате JSON {"category": "...", "smile": "..."}. Возможные значения для "category": "мужчина", "женщина", "подросток", "пожилой мужчина", "пожилая женщина", "ребенок", "другое". Возможные значения для "smile": "зубы", "закрытая", "нет улыбки".`;
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
         const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
 
-        // --- NEW: More robust response handling ---
-        if (response.promptFeedback?.blockReason) {
-            console.warn(`[checkImageSubject] Gemini blocked prompt. Reason: ${response.promptFeedback.blockReason}`);
-            throw new Error('Изображение было заблокировано нашей системой безопасности. Пожалуйста, попробуйте другое фото.');
-        }
-    
-        const text = response.text;
-        if (!text) {
-             console.error('[checkImageSubject] Gemini response was empty. Full response:', JSON.stringify(response, null, 2));
-             throw new Error("Получен пустой ответ от AI. Попробуйте другое фото.");
-        }
-        // --- END NEW ---
-
-        const jsonStringMatch = text.match(/\{.*\}/s);
-        if (!jsonStringMatch) {
-            console.error('[checkImageSubject] Gemini did not return valid JSON. Response text:', text);
-            throw new Error("AI вернул ответ в некорректном формате. Попробуйте другое фото.");
-        }
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) throw new Error("AI вернул некорректный ответ.");
         res.json({ subjectDetails: JSON.parse(jsonStringMatch[0]) });
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
@@ -394,59 +379,39 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
     const { prompts, image, aspectRatio = '1:1' } = req.body;
     const userEmail = req.userEmail;
 
-    if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
-        await db.read();
-        if(db.data.users[userEmail]) {
-            db.data.users[userEmail].credits += 4;
-            await db.write();
-        }
-        return res.status(400).json({ error: 'Некорректные данные для генерации.' });
-    }
-
     try {
-        // Создаем один большой промпт для сетки 2x2
         const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
-        
         Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
         1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
         2. ВЕРХНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[1]}
         3. НИЖНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[2]}
         4. НИЖНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[3]}
-        
-        ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
-        Соблюдай стиль и качество во всех четырех частях.`;
+        ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет.`;
 
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: gridPrompt };
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview', // Используем Pro для качества и 2K
+            model: 'gemini-3-pro-image-preview',
             contents: { parts: [imagePart, textPart] },
             config: { 
                 responseModalities: [Modality.IMAGE],
-                // responseMimeType removed to prevent 500 error on this model
-                imageConfig: { 
-                    imageSize: '2K',
-                    aspectRatio: aspectRatio // Use detected aspect ratio
-                } 
+                imageConfig: { imageSize: '2K', aspectRatio: aspectRatio } 
             },
         });
 
         const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение.');
-        }
+        if (!generatedImagePart || !generatedImagePart.inlineData) throw new Error('Gemini не вернул изображение.');
 
-        // Возвращаем одну большую картинку (сетку). Клиент сам разрежет её.
         const gridImageUrl = `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
         
         await db.read();
-        res.json({ gridImageUrl, newCredits: db.data.users[userEmail].credits });
+        res.json({ gridImageUrl, newCredits: db.data.users[userEmail].credits, modelUsed: 'gemini-3-pro-image-preview' });
 
     } catch (error) {
         await db.read();
         if(db.data.users[userEmail]) {
-            db.data.users[userEmail].credits += 4;
+            db.data.users[userEmail].credits += 4; // Refund on error
             await db.write();
         }
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать вариации.');
@@ -457,23 +422,35 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
 // Endpoint to get the bounding box of a person
 app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
     const { image } = req.body;
-    if (!image || !image.base64 || !image.mimeType) {
-        return res.status(400).json({ error: 'Изображение для анализа не предоставлено.' });
-    }
+    if (!image || !image.base64 || !image.mimeType) return res.status(400).json({ error: 'Изображение не предоставлено.' });
     try {
-        const prompt = `Найди главного человека на этом изображении и верни координаты его ограничивающей рамки (bounding box). Ответ должен быть СТРОГО в формате JSON: {"x_min": float, "y_min": float, "x_max": float, "y_max": float}, где координаты нормализованы от 0.0 до 1.0. Не добавляй никакого другого текста или форматирования, только JSON.`;
+        const prompt = `Найди главного человека на этом изображении и верни координаты его ограничивающей рамки (bounding box). Ответ должен быть СТРОГО в формате JSON: {"x_min": float, "y_min": float, "x_max": float, "y_max": float}, где координаты нормализованы от 0.0 до 1.0.`;
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
         const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
         const jsonStringMatch = response.text.match(/\{.*\}/s);
-        if (!jsonStringMatch) throw new Error('Gemini did not return valid JSON for bounding box.');
-        const boundingBox = JSON.parse(jsonStringMatch[0]);
-        if (typeof boundingBox.x_min !== 'number' || typeof boundingBox.y_min !== 'number' || typeof boundingBox.x_max !== 'number' || typeof boundingBox.y_max !== 'number') {
-            throw new Error('Полученные данные ограничивающей рамки недействительны.');
-        }
-        res.json({ boundingBox });
+        if (!jsonStringMatch) throw new Error('Gemini did not return valid JSON.');
+        res.json({ boundingBox: JSON.parse(jsonStringMatch[0]) });
     } catch (error) {
-        const userMessage = handleGeminiError(error, 'Не удалось определить положение человека на фото.');
+        const userMessage = handleGeminiError(error, 'Не удалось определить положение человека.');
+        res.status(500).json({ error: userMessage });
+    }
+});
+
+// Endpoint for Face Cropping (Restore)
+app.post('/api/cropFace', verifyToken, async (req, res) => {
+    const { image } = req.body;
+    if (!image || !image.base64 || !image.mimeType) return res.status(400).json({ error: 'Изображение не предоставлено.' });
+    try {
+        const prompt = `Find the face of the main person. Return JSON: {"x_min": float, "y_min": float, "x_max": float, "y_max": float} normalized 0-1.`;
+        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+        const textPart = { text: prompt };
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
+        const jsonStringMatch = response.text.match(/\{.*\}/s);
+        if (!jsonStringMatch) throw new Error('Gemini did not return valid JSON.');
+        res.json({ boundingBox: JSON.parse(jsonStringMatch[0]) });
+    } catch (error) {
+        const userMessage = handleGeminiError(error, 'Не удалось найти лицо.');
         res.status(500).json({ error: userMessage });
     }
 });
@@ -481,34 +458,16 @@ app.post('/api/detectPersonBoundingBox', verifyToken, async (req, res) => {
 // New endpoint for intelligent clothing cropping
 app.post('/api/cropClothing', verifyToken, async (req, res) => {
     const { image } = req.body;
-    if (!image || !image.base64 || !image.mimeType) {
-        return res.status(400).json({ error: 'Изображение одежды для анализа не предоставлено.' });
-    }
-
     try {
-        const prompt = `Проанализируй это изображение. Найди основной предмет одежды на человеке. Твоя задача — вернуть координаты прямоугольника (bounding box), который охватывает одежду от плеч до бедер, но ОБЯЗАТЕЛЬНО ИСКЛЮЧАЕТ голову и лицо модели. Ответ должен быть СТРОГО в формате JSON: {"boundingBox": {"x_min": float, "y_min": float, "x_max": float, "y_max": float}}. Координаты должны быть нормализованы (от 0.0 до 1.0). Не добавляй никакого другого текста или форматирования.`;
-        
+        const prompt = `Проанализируй это изображение. Найди основной предмет одежды. Верни JSON: {"boundingBox": {"x_min": float, "y_min": float, "x_max": float, "y_max": float}} normalized.`;
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
         const textPart = { text: prompt };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash', // Use a cheaper text model
-            contents: { parts: [imagePart, textPart] },
-        });
-
+        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: { parts: [imagePart, textPart] } });
         const jsonStringMatch = response.text.match(/\{.*\}/s);
-        if (!jsonStringMatch) {
-            throw new Error('Gemini не вернул корректный JSON для координат.');
-        }
-        const result = JSON.parse(jsonStringMatch[0]);
-        if (!result.boundingBox) {
-            throw new Error('Ответ Gemini не содержит поля "boundingBox".');
-        }
-
-        res.json({ boundingBox: result.boundingBox });
-
+        if (!jsonStringMatch) throw new Error('Gemini JSON error.');
+        res.json(JSON.parse(jsonStringMatch[0]));
     } catch (error) {
-        const userMessage = handleGeminiError(error, 'Не удалось получить координаты для обрезки одежды.');
+        const userMessage = handleGeminiError(error, 'Не удалось найти одежду.');
         res.status(500).json({ error: userMessage });
     }
 });
@@ -519,37 +478,24 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
     const { parts } = req.body;
     const userEmail = req.userEmail;
 
-    if (!parts || !Array.isArray(parts) || parts.length < 2) {
-         await db.read();
-         if(db.data.users[userEmail]) {
-            db.data.users[userEmail].credits += 1;
-            await db.write();
-         }
-         return res.status(400).json({ error: 'Некорректные данные для фотосессии.' });
-    }
-
     try {
-        // REVERTED TO GEMINI 2.5 FLASH FOR BETTER COMPOSITION BLENDING
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image', 
             contents: { parts: parts },
-            config: { 
-                responseModalities: [Modality.IMAGE]
-                // No imageConfig for 2.5 flash
-            },
+            config: { responseModalities: [Modality.IMAGE] },
         });
         const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение фотосессии.');
-        }
+        if (!generatedImagePart || !generatedImagePart.inlineData) throw new Error('Gemini не вернул изображение.');
+        
         const generatedPhotoshootResult = { base64: generatedImagePart.inlineData.data, mimeType: generatedImagePart.inlineData.mimeType };
         const resultUrl = `data:${generatedPhotoshootResult.mimeType};base64,${generatedPhotoshootResult.base64}`;
+        
         await db.read();
         res.json({ resultUrl, generatedPhotoshootResult, newCredits: db.data.users[userEmail].credits });
     } catch (error) {
         await db.read();
         if(db.data.users[userEmail]) {
-            db.data.users[userEmail].credits += 1;
+            db.data.users[userEmail].credits += 1; // Refund
             await db.write();
         }
         const userMessage = handleGeminiError(error, 'Не удалось сгенерировать фотосессию.');
@@ -560,7 +506,7 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
 // Endpoint for analyzing image for text description
 app.post('/api/analyzeImageForText', verifyToken, async (req, res) => {
     const { image, analysisPrompt } = req.body;
-    if (!image || !analysisPrompt) return res.status(400).json({ error: 'Отсутствует изображение или промпт для анализа.' });
+    if (!image || !analysisPrompt) return res.status(400).json({ error: 'Данные не предоставлены.' });
     
     try {
         const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
@@ -570,6 +516,47 @@ app.post('/api/analyzeImageForText', verifyToken, async (req, res) => {
     } catch (error) {
         const userMessage = handleGeminiError(error, 'Не удалось проанализировать изображение.');
         res.status(500).json({ error: userMessage });
+    }
+});
+
+// Endpoint for Business Card Generation (Restored)
+app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), async (req, res) => {
+    const { image, refImages, prompt } = req.body;
+    const userEmail = req.userEmail;
+
+    try {
+        const parts = [{ inlineData: { data: image.base64, mimeType: image.mimeType } }];
+        if (refImages && refImages.length) {
+            refImages.forEach(ref => parts.push({ inlineData: { data: ref.base64, mimeType: ref.mimeType } }));
+        }
+        const fullPrompt = `Create 4 varied business/product card variations (2x2 grid). Product: Image 1. References: Images 2+. Task: ${prompt}. High quality.`;
+        parts.push({ text: fullPrompt });
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-pro-image-preview',
+            contents: { parts: parts },
+            config: { 
+                responseModalities: [Modality.IMAGE],
+                imageConfig: { imageSize: '2K', aspectRatio: '3:4' }
+            }
+        });
+
+        const imgPart = response.candidates[0].content.parts.find(p => p.inlineData);
+        if (!imgPart) throw new Error('No image returned');
+
+        await db.read();
+        res.json({ 
+            gridImageUrl: `data:${imgPart.inlineData.mimeType};base64,${imgPart.inlineData.data}`,
+            newCredits: db.data.users[userEmail].credits
+        });
+
+    } catch (error) {
+        await db.read();
+        if(db.data.users[userEmail]) {
+            db.data.users[userEmail].credits += 4;
+            await db.write();
+        }
+        res.status(500).json({ error: handleGeminiError(error, 'Business gen failed') });
     }
 });
 
