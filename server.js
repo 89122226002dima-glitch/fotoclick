@@ -226,9 +226,22 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
 
 // --- YooKassa Integration (Native HTTPS) ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
+    console.log('[Payment] Received create-payment request.');
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
+        
+        // Trim keys to avoid copy-paste whitespace issues
+        const shopId = process.env.YOOKASSA_SHOP_ID ? process.env.YOOKASSA_SHOP_ID.trim() : '';
+        const secretKey = process.env.YOOKASSA_SECRET_KEY ? process.env.YOOKASSA_SECRET_KEY.trim() : '';
+
+        if (!shopId || !secretKey) {
+            console.error('[Payment] Error: API Keys missing.');
+            throw new Error('API Keys for YooKassa are missing in .env');
+        }
+
+        console.log(`[Payment] Using ShopID: ${shopId}, Secret Key Length: ${secretKey.length}`);
+
         const paymentPayload = {
             amount: { value: '129.00', currency: 'RUB' },
             confirmation: { type: 'redirect', return_url: 'https://photo-click-ai.ru?payment_status=success' },
@@ -237,7 +250,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             capture: true
         };
 
-        const auth = Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
+        const auth = Buffer.from(`${shopId}:${secretKey}`).toString('base64');
         
         const makeRequest = () => new Promise((resolve, reject) => {
             const options = {
@@ -250,13 +263,20 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                     'Idempotence-Key': idempotenceKey,
                     'Authorization': `Basic ${auth}`,
                     'User-Agent': 'FotoclickServer/1.0'
-                }
+                },
+                timeout: 30000 // 30 seconds timeout
             };
 
+            console.log('[Payment] Sending request to YooKassa API...');
+
             const request = https.request(options, (response) => {
+                console.log(`[Payment] Response received. Status: ${response.statusCode}`);
                 let data = '';
+                
                 response.on('data', (chunk) => data += chunk);
+                
                 response.on('end', () => {
+                    console.log(`[Payment] Response body (truncated): ${data.substring(0, 200)}...`); 
                     if (response.statusCode >= 200 && response.statusCode < 300) {
                         try {
                             resolve(JSON.parse(data));
@@ -264,13 +284,21 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
                             reject(new Error('Invalid JSON from YooKassa'));
                         }
                     } else {
-                        reject(new Error(`YooKassa API Error: ${response.statusCode} ${data}`));
+                        // Pass the raw error data for debugging
+                        reject(new Error(`YooKassa API Error (${response.statusCode}): ${data}`));
                     }
                 });
             });
 
             request.on('error', (error) => {
+                console.error('[Payment] Network Request Error:', error);
                 reject(new Error(`Network Error: ${error.message}`));
+            });
+
+            request.on('timeout', () => {
+                console.error('[Payment] Request Timed Out (30s)');
+                request.destroy();
+                reject(new Error('Connection to YooKassa timed out. Check server internet connection.'));
             });
 
             request.write(JSON.stringify(paymentPayload));
@@ -278,11 +306,12 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
         });
 
         const payment = await makeRequest();
+        console.log('[Payment] Success. Redirect URL:', payment.confirmation?.confirmation_url);
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
 
     } catch (error) {
-        console.error('CRITICAL PAYMENT ERROR:', error.message);
-        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте логи сервера.' });
+        console.error('[Payment] Critical Error:', error.message);
+        res.status(500).json({ error: `Ошибка оплаты: ${error.message}` });
     }
 });
 
