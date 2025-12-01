@@ -1,4 +1,4 @@
-// server.js - Версия с интеграцией LowDB, поддержкой PROXY и Авто-Тестом соединения
+// server.js - Версия с интеграцией LowDB, поддержкой SOCKS5 PROXY и Авто-Тестом соединения
 
 import express from 'express';
 import cors from 'cors';
@@ -9,7 +9,8 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
 import https from 'https'; // Используем нативный https для максимальной надежности
-import { HttpsProxyAgent } from 'https-proxy-agent'; // Агент для прокси
+import { HttpsProxyAgent } from 'https-proxy-agent'; // Агент для HTTP прокси
+import { SocksProxyAgent } from 'socks-proxy-agent'; // Агент для SOCKS прокси
 
 // --- LowDB Imports ---
 import { Low } from 'lowdb';
@@ -30,8 +31,16 @@ if (process.env.YOOKASSA_PROXY_URL) {
     console.log(`DIAGNOSTICS: Включен режим PROXY для ЮKassa.`);
     try {
         const proxyUrl = process.env.YOOKASSA_PROXY_URL.trim();
-        // Создаем агент глобально, чтобы использовать его и в тесте, и в оплате
-        proxyAgent = new HttpsProxyAgent(proxyUrl);
+        
+        // Автоматическое определение типа прокси
+        if (proxyUrl.startsWith('socks')) {
+            console.log('DIAGNOSTICS: Обнаружен протокол SOCKS. Используем SocksProxyAgent.');
+            proxyAgent = new SocksProxyAgent(proxyUrl);
+        } else {
+            console.log('DIAGNOSTICS: Обнаружен протокол HTTP/HTTPS. Используем HttpsProxyAgent.');
+            proxyAgent = new HttpsProxyAgent(proxyUrl);
+        }
+        
         console.log(`DIAGNOSTICS: Прокси агент успешно инициализирован.`);
     } catch (e) {
         console.error(`DIAGNOSTICS: Ошибка инициализации прокси агента: ${e.message}`);
@@ -85,7 +94,7 @@ function testProxyConnection() {
             'Host': 'api.yookassa.ru',
             'Connection': 'close' // Для теста закрываем сразу
         },
-        timeout: 10000
+        timeout: 15000
     };
 
     const req = https.request(options, (res) => {
@@ -93,17 +102,17 @@ function testProxyConnection() {
         if (res.statusCode === 404 || res.statusCode === 401 || res.statusCode === 200) {
              console.log('[Proxy Test] SUCCESS: Прокси работает и видит ЮКассу.');
         } else {
-             console.log(`[Proxy Test] WARNING: Странный статус от ЮКассы: ${res.statusCode}. Возможно, блокировка.`);
+             console.log(`[Proxy Test] WARNING: Странный статус от ЮКассы: ${res.statusCode}.`);
         }
     });
 
     req.on('error', (e) => {
         console.error(`[Proxy Test] FAILED: Ошибка соединения через прокси: ${e.message}`);
-        console.error('Рекомендация: Проверьте правильность логина/пароля прокси или попробуйте другой IP.');
+        console.error('Рекомендация: Проверьте правильность логина/пароля прокси или попробуйте сменить протокол на socks5 в .env');
     });
 
     req.on('timeout', () => {
-        console.error('[Proxy Test] FAILED: Таймаут (10 сек). Прокси слишком медленный или недоступен.');
+        console.error('[Proxy Test] FAILED: Таймаут (15 сек). Прокси слишком медленный или недоступен.');
         req.destroy();
     });
 
