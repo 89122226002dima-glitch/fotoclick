@@ -259,7 +259,7 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error('Ошибка создания платежа YooKassa:', error.message);
-        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
+        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте логи сервера для деталей.' });
     }
 });
 
