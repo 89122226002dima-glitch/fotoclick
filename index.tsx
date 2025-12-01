@@ -83,24 +83,19 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
 // --- State Variables ---
 let selectedPlan = 'close_up';
 let referenceImage: ImageState | null = null;
-let referenceFaceImage: ImageState | null = null; 
-let masterFaceReferenceImage: ImageState | null = null; // NEW: Stores cropped face from ORIGINAL user photo
-let additionalFaceReferences: (ImageState | null)[] = [null, null]; // Slots for 2 additional faces
-let referenceImageLocationPrompt: string | null = null;
+let referenceImageLocationPrompt: string | null = null; // NEW: Stores location prompt associated with reference
 let detectedSubjectCategory: SubjectCategory | null = null;
 let detectedSmileType: SmileType | null = null;
+let malePoseIndex = 0;
+let femalePoseIndex = 0;
+let femaleGlamourPoseIndex = 0;
 let prompts: Prompts | null = null;
-let generationCredits = 0; 
+let generationCredits = 0; // All users start with 0 credits until they log in.
 let isLoggedIn = false;
 let userProfile: UserProfile | null = null;
-let idToken: string | null = null;
+let idToken: string | null = null; // Holds the Google Auth Token
 const GOOGLE_CLIENT_ID = '455886432948-lk8a1e745cq41jujsqtccq182e5lf9dh.apps.googleusercontent.com';
 let db: IDBPDatabase<PhotoClickDB>;
-
-// --- Business Page State ---
-let businessProductImage: ImageState | null = null;
-let businessRefImage1: ImageState | null = null;
-let businessRefImage2: ImageState | null = null;
 
 
 let poseSequences: {
@@ -112,7 +107,7 @@ let poseSequences: {
 };
 
 const MAX_DIMENSION = 1024;
-const MAX_PRE_RESIZE_DIMENSION = 2048;
+const MAX_PRE_RESIZE_DIMENSION = 2048; // A safe dimension for pre-processing large uploads
 const HISTORY_LIMIT = 50;
 
 // --- History (IndexedDB) Management Functions ---
@@ -321,11 +316,9 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
             }
             ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
 
-            // Reverting to JPEG as requested to test recognizability
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-            const [header, base64] = dataUrl.split(',');
-            const mimeType = 'image/jpeg';
-            resolve({ base64, mimeType });
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9); // Use jpeg for consistency
+            const [, base64] = dataUrl.split(',');
+            resolve({ base64, mimeType: 'image/jpeg' });
         };
         img.onerror = (err) => {
             reject(new Error('Не удалось загрузить изображение для обрезки.'));
@@ -334,58 +327,6 @@ async function cropImageByCoords(imageState: ImageState, boundingBox: { x_min: n
     });
 }
 
-// --- NEW: Helper to slice a 2x2 grid image into 4 separate images ---
-async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const w = img.width;
-            const h = img.height;
-            const halfW = Math.floor(w / 2);
-            const halfH = Math.floor(h / 2);
-            const imageUrls: string[] = [];
-
-            // Order: Top-Left, Top-Right, Bottom-Left, Bottom-Right
-            const positions = [
-                { x: 0, y: 0 },
-                { x: halfW, y: 0 },
-                { x: 0, y: halfH },
-                { x: halfW, y: halfH }
-            ];
-
-            positions.forEach(pos => {
-                const canvas = document.createElement('canvas');
-                canvas.width = halfW;
-                canvas.height = halfH;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
-                    // FORCE PNG to ensure high quality (approx 1.5MB+ for 1024x1024) instead of compressed JPEG
-                    imageUrls.push(canvas.toDataURL('image/png'));
-                }
-            });
-            resolve(imageUrls);
-        };
-        img.onerror = (e) => reject(new Error("Failed to load grid image for slicing"));
-        img.src = `data:${gridMimeType};base64,${gridBase64}`;
-    });
-}
-
-function signOut() {
-    isLoggedIn = false;
-    userProfile = null;
-    idToken = null;
-    generationCredits = 0;
-    
-    localStorage.removeItem('idToken');
-    localStorage.removeItem('userProfile');
-
-    if (userProfileContainer) userProfileContainer.classList.add('hidden');
-    if (googleSignInContainer) googleSignInContainer.classList.remove('hidden');
-    
-    updateCreditCounterUI();
-    updateAllGenerateButtons();
-}
 
 /**
  * A generic helper function to make API calls to our own server backend.
@@ -396,8 +337,8 @@ function signOut() {
  */
 async function callApi(endpoint: string, body: object) {
     const controller = new AbortController();
-    // 3 minutes timeout for API calls to support high-res 2K generation on Gemini 3 Pro
-    const timeoutId = setTimeout(() => controller.abort(), 180000);
+    // 45-second timeout for API calls, as Gemini can be slow, but this prevents infinite hangs on network issues.
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -420,7 +361,7 @@ async function callApi(endpoint: string, body: object) {
         if (error.name === 'AbortError' || error instanceof TypeError) {
             console.error(`API call to ${endpoint} failed or timed out. Error:`, error);
             // This user-friendly message addresses the user's suspicion directly.
-            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или долгим временем генерации. Проверьте ваше соединение и попробуйте снова.');
+            throw new Error('Не удалось связаться с сервером. Это может быть связано с проблемами сети или региональными блокировками. Проверьте ваше соединение и попробуйте снова.');
         }
         // Re-throw any other unexpected errors.
         throw error;
@@ -493,6 +434,9 @@ function initializePoseSequences() {
     poseSequences.elderlyFemaleCloseUp = shuffle(prompts.elderlyFemaleCloseUpPosePrompts);
     poseSequences.elderlyMale = shuffle(prompts.elderlyMalePosePrompts);
     poseSequences.elderlyMaleCloseUp = shuffle(prompts.elderlyMaleCloseUpPosePrompts);
+    malePoseIndex = 0;
+    femalePoseIndex = 0;
+    femaleGlamourPoseIndex = 0;
 }
 
 function updateCreditCounterUI() {
@@ -516,10 +460,6 @@ function selectPlan(plan: string) {
 
 function resetApp() {
   referenceImage = null;
-  referenceFaceImage = null;
-  masterFaceReferenceImage = null; // Clear master face
-  additionalFaceReferences = [null, null]; // Clear extra faces
-  updateExtraFacesUI(); // Clear UI
   referenceImageLocationPrompt = null;
   detectedSubjectCategory = null;
   detectedSmileType = null;
@@ -629,7 +569,7 @@ function updateAllGenerateButtons() {
     if (generateButton) {
         const creditsNeeded = 4;
         if (generationCredits >= creditsNeeded) {
-            generateButton.innerHTML = `Создать 4 фотографии (Осталось: ${generationCredits})`;
+            generateButton.innerHTML = `Создать ${creditsNeeded} фотографии (Осталось: ${generationCredits})`;
             generateButton.disabled = !referenceImage;
         } else {
             generateButton.disabled = false; // Always enabled to show prompt
@@ -642,7 +582,7 @@ function updateAllGenerateButtons() {
     }
 }
 
-const setAsReference = async (imgContainer: HTMLElement, imgSrc: string) => {
+const setAsReference = (imgContainer: HTMLElement, imgSrc: string) => {
     const [header, base64] = imgSrc.split(',');
     const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
     referenceImage = { base64, mimeType };
@@ -651,26 +591,11 @@ const setAsReference = async (imgContainer: HTMLElement, imgSrc: string) => {
     referenceDownloadButton.href = imgSrc;
     referenceDownloadButton.download = `variation-reference-${Date.now()}.png`;
     referenceDownloadButton.classList.remove('hidden');
-    
-    // --- CHANGED: Do NOT re-crop face. Keep the master face. ---
-    // If we have a master face, we use it. If not, we leave referenceFaceImage as is.
-    if (masterFaceReferenceImage) {
-        referenceFaceImage = masterFaceReferenceImage;
-        console.log('Preserving Master Face Reference.');
-        statusEl.innerText = 'Новый референс выбран. Лицо сохранено с оригинала.';
-    } else {
-        // If no master face (e.g. historical load without session), we stick to the existing one 
-        // or effectively allow generation without explicit face crop if it was null.
-        // We do NOT crop generated face as requested.
-        referenceFaceImage = masterFaceReferenceImage; 
-        statusEl.innerText = 'Новый референс выбран.';
-    }
-    // -----------------------------------------------------------
-
     initializePoseSequences();
     uploadContainer.classList.remove('aspect-square');
     outputGallery.querySelectorAll<HTMLDivElement>('.gallery-item').forEach(c => c.classList.remove('is-reference'));
     imgContainer.classList.add('is-reference');
+    statusEl.innerText = 'Новый референс выбран. Создайте новые вариации.';
     setWizardStep('PAGE2_PLAN');
 };
 
@@ -715,30 +640,10 @@ async function generate() {
   divider.innerHTML = `<span class="font-semibold text-gray-300">${getPlanDisplayName(selectedPlan)}</span><span class="text-gray-500">${timestamp}</span>`;
   outputGallery.prepend(divider);
 
-  // --- ASPECT RATIO DETECTION ---
-  let aspectRatioRequest = '1:1';
-  let aspectClass = 'aspect-square';
-  try {
-      const img = new Image();
-      img.src = `data:${referenceImage.mimeType};base64,${referenceImage.base64}`;
-      await new Promise<void>(resolve => { img.onload = () => resolve(); img.onerror = () => resolve(); });
-      if (img.width && img.height) {
-          const ratio = img.width / img.height;
-          if (ratio < 0.85) {
-              aspectRatioRequest = '3:4';
-              aspectClass = 'aspect-[3/4]';
-          } else if (ratio > 1.15) {
-              aspectRatioRequest = '4:3';
-              aspectClass = 'aspect-[4/3]';
-          }
-      }
-  } catch (e) { console.warn('Could not detect aspect ratio, defaulting to square', e); }
-  // ------------------------------
-
   const placeholders: HTMLDivElement[] = [];
   for (let i = 0; i < 4; i++) {
     const placeholder = document.createElement('div');
-    placeholder.className = `bg-[#353739] rounded-lg relative overflow-hidden ${aspectClass} placeholder-shimmer`;
+    placeholder.className = 'bg-[#353739] rounded-lg relative overflow-hidden aspect-square placeholder-shimmer';
     placeholders.push(placeholder);
   }
   placeholders.slice().reverse().forEach((p) => outputGallery.prepend(p));
@@ -841,40 +746,17 @@ async function generate() {
 
         finalPrompt += `\n6. **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.`;
         
-        finalPrompt += `\n8. **ХУДОЖЕСТВЕННАЯ РЕТУШЬ:** ПРОВЕДИ ХУДОЖЕСТВЕННУЮ РЕТУШЬ ЛИЦА, А ИМЕННО: убрать МОРЩИНЫ, ПИГМЕНТАЦИЮ КОЖИ, СДЕЛАЙ ПРОФЕССИОНАЛЬНУЮ ГЛЯНЦЕВУЮ РЕТУШЬ КОЖИ ЛИЦА.`;
-
         finalPrompt += `\n\n**КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.\n\nРезультат — только одно изображение без текста.`;
         generationPrompts.push(finalPrompt);
     }
     
-    if (progressText) progressText.innerText = 'Генерация (это может занять от 30 сек до 2 мин)...';
+    if (progressText) progressText.innerText = 'Генерация... 10%';
 
-    // Collect all valid face references
-    const faceImagesToSend = [referenceFaceImage, ...additionalFaceReferences].filter(Boolean) as ImageState[];
-
-    // --- UPDATED API CALL FOR SINGLE GRID IMAGE ---
-    const { gridImageUrl, newCredits, modelUsed } = await callApi('/api/generateFourVariations', {
+    const { imageUrls, newCredits } = await callApi('/api/generateFourVariations', {
         prompts: generationPrompts,
-        image: referenceImage!,
-        faceImages: faceImagesToSend, // Send ARRAY of faces
-        aspectRatio: aspectRatioRequest // Pass detected ratio
+        image: referenceImage!
     });
-
-    if (modelUsed) {
-        const isPro = modelUsed.includes('Pro');
-        const style = isPro 
-            ? 'background: #22c55e; color: #fff; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 12px;'
-            : 'background: #f59e0b; color: #fff; padding: 5px 10px; border-radius: 4px; font-weight: bold; font-size: 12px;';
-        console.log(`%c 📸 GENERATION MODEL: ${modelUsed} `, style);
-    }
     
-    if (progressText) progressText.innerText = 'Обработка результатов...';
-
-    // --- SLICE THE GRID IMAGE CLIENT-SIDE ---
-    const [header, gridBase64] = gridImageUrl.split(',');
-    const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-    const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
-
     if (progressBar && progressText) {
         progressBar.style.width = `100%`;
         progressText.innerText = `Обработка завершена!`;
@@ -992,30 +874,6 @@ async function renderHistoryPage() {
                 (window as any).navigateToPage('page2');
                 
                 try {
-                    // --- CHANGED: Use Master Face Reference if available, otherwise crop is skipped/preserved ---
-                    if (masterFaceReferenceImage) {
-                        referenceFaceImage = masterFaceReferenceImage;
-                        console.log('Using Master Face Reference for history item.');
-                    } else {
-                        // Fallback: If no master face (page refreshed), we try to crop the history image itself 
-                        // just to have SOMETHING, even if it's not the original. 
-                        // User prompt said "don't crop generated face", but if history is loaded fresh, 
-                        // we have no original. For now, let's keep the fallback for history restore only,
-                        // or just set it to null. 
-                        // Let's try to crop to be safe for fresh loads, but it contradicts the strict requirement.
-                        // Implementation: We won't auto-crop. If master is null, face is null.
-                        referenceFaceImage = null;
-                        
-                        try {
-                             const { boundingBox } = await callApi('/api/cropFace', { image: referenceImage });
-                             referenceFaceImage = await cropImageByCoords(referenceImage, boundingBox);
-                             // We don't set this as Master because it's likely a generated image.
-                        } catch (err) {
-                             console.warn("Could not crop face from history:", err);
-                        }
-                    }
-                    // ---------------------------------------------------
-
                     const { category, smile } = await checkImageSubject(referenceImage);
                     detectedSubjectCategory = category;
                     detectedSmileType = smile;
@@ -1069,7 +927,6 @@ function setupNavigation() {
             updatePage1WizardState();
         } else if (pageId === 'page2') {
             updateAllGenerateButtons();
-            updateExtraFacesUI(); // Ensure UI is sync
             if (referenceImage) {
                 setWizardStep('PAGE2_PLAN');
             } else {
@@ -1078,9 +935,6 @@ function setupNavigation() {
         } else if (pageId === 'page3') {
             renderHistoryPage();
             setWizardStep('NONE');
-        } else if (pageId === 'page-business') {
-            setWizardStep('NONE');
-            updateAllGenerateButtons();
         }
     };
     navContainer.addEventListener('click', (event) => {
@@ -1089,80 +943,6 @@ function setupNavigation() {
     });
     (window as any).navigateToPage = navigateToPage;
 }
-
-// --- NEW: Handle Extra Face Slots UI & Logic ---
-function updateExtraFacesUI() {
-    // Sync Page 1 and Page 2 slots
-    ['page1', 'page2'].forEach(pagePrefix => {
-        [0, 1].forEach(index => {
-            const container = document.getElementById(`${pagePrefix}-extra-face-${index + 1}`) as HTMLDivElement;
-            if (!container) return;
-            const img = container.querySelector('img') as HTMLImageElement;
-            const placeholder = container.querySelector('.extra-placeholder') as HTMLDivElement;
-            const removeBtn = container.querySelector('.remove-extra') as HTMLButtonElement;
-            
-            const data = additionalFaceReferences[index];
-            if (data) {
-                img.src = `data:${data.mimeType};base64,${data.base64}`;
-                img.classList.remove('hidden');
-                placeholder.classList.add('hidden');
-                removeBtn.classList.remove('hidden');
-            } else {
-                img.src = '';
-                img.classList.add('hidden');
-                placeholder.classList.remove('hidden');
-                removeBtn.classList.add('hidden');
-            }
-        });
-    });
-}
-
-function setupExtraFaceUploader(slotId: string, index: number) {
-    // We attach listeners to both Page 1 and Page 2 slots for the same index
-    ['page1', 'page2'].forEach(pagePrefix => {
-        const containerId = `${pagePrefix}-${slotId}`;
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        
-        const input = container.querySelector('input') as HTMLInputElement;
-        const removeBtn = container.querySelector('.remove-extra') as HTMLButtonElement;
-
-        const handleUpload = async (file: File) => {
-            if (!file) return;
-            // High-res processing same as main photo
-            try {
-                // UI Loading state? For now just visual feedback could be nice but keeping it simple
-                const preResized = await preResizeImage(file);
-                const { boundingBox } = await callApi('/api/cropFace', { image: preResized });
-                const faceCrop = await cropImageByCoords(preResized, boundingBox);
-                
-                additionalFaceReferences[index] = faceCrop;
-                updateExtraFacesUI();
-                console.log(`Extra face ${index + 1} cropped and stored.`);
-            } catch (e) {
-                showStatusError('Не удалось найти лицо на дополнительном фото.');
-            }
-        };
-
-        container.addEventListener('click', (e) => {
-            if ((e.target as HTMLElement).closest('.remove-extra')) return;
-            input.click();
-        });
-
-        input.addEventListener('change', (e) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (file) handleUpload(file);
-        });
-
-        removeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            additionalFaceReferences[index] = null;
-            updateExtraFacesUI();
-            input.value = '';
-        });
-    });
-}
-// -----------------------------------------------
 
 let page1ReferenceImage: ImageState | null = null;
 let page1ClothingImage: ImageState | null = null;
@@ -1193,14 +973,12 @@ function displaySuggestions(container: HTMLElement, allSuggestions: string[], sh
     });
 }
 
-function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null, originalState?: ImageState | null) => Promise<void>) {
+function setupUploader(containerId: string, inputId: string, previewId: string, placeholderId: string, clearButtonId: string, onStateChange: (state: ImageState | null) => Promise<void>) {
     const uploadContainer = document.getElementById(containerId) as HTMLDivElement;
     const imageUpload = document.getElementById(inputId) as HTMLInputElement;
     const imagePreview = document.getElementById(previewId) as HTMLImageElement;
     const uploadPlaceholder = document.getElementById(placeholderId) as HTMLDivElement;
     const clearButton = document.getElementById(clearButtonId) as HTMLButtonElement;
-
-    if(!uploadContainer) return; // Guard for dynamic creation
 
     const handleFile = async (file: File) => {
         if (!file || !file.type.startsWith('image/')) return;
@@ -1222,13 +1000,13 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
             const finalResizedState = await resizeImage(preResizedState);
             
             imagePreview.src = `data:${finalResizedState.mimeType};base64,${finalResizedState.base64}`;
-            await onStateChange(finalResizedState, preResizedState);
+            await onStateChange(finalResizedState);
             if(statusEl && statusEl.innerText === statusText) statusEl.innerText = '';
 
         } catch (err) {
             console.error("Ошибка обработки изображения:", err);
             showStatusError(err instanceof Error ? err.message : "Не удалось обработать изображение.");
-            await onStateChange(null, null);
+            await onStateChange(null);
             // Also need to reset the UI elements
             imageUpload.value = '';
             imagePreview.src = '';
@@ -1251,7 +1029,7 @@ function setupUploader(containerId: string, inputId: string, previewId: string, 
     }));
     imageUpload.addEventListener('change', (event) => { if ((event.target as HTMLInputElement).files?.[0]) handleFile((event.target as HTMLInputElement).files[0]); });
     clearButton.addEventListener('click', async () => {
-        await onStateChange(null, null);
+        await onStateChange(null);
         imageUpload.value = '';
         imagePreview.src = '';
         imagePreview.classList.add('hidden');
@@ -1409,22 +1187,24 @@ function initializePage1Wizard() {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото человека (первое изображение) и референсное фото одежды (второе изображение).
 Твоя главная цель — идеально сохранить человека с первого фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица человека с ПЕРВОГО фото должны остаться ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "**одежду которую нужно взять в точности со 2 референсной фотографии,нужно взять только одежду и игнорировать лицо на 2 референсном кадре**". Нарисуй только ту часть одежды, которая видна в новом кадре.${additionalClothingDetails}
 4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону. Добавь рефлексы (цветные отсветы) от фона на кожу и одежду человека, чтобы он выглядел неотъемлемой частью сцены, а не вклеенным объектом.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             } else {
                 promptText = `Твоя задача — действовать как 'цифровой стилист', используя это референсное фото.
 Твоя главная цель — идеально сохранить человека с фото, изменив только его одежду и фон, и приведя результат к стандартному фото-формату.
 КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА:
-1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), прическа и выражение лица человека с ПЕРВОГО фото должны остаться ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило.
+1.  **СОХРАНИ ЧЕЛОВЕКА:** Внешность, уникальные черты лица (форма носа, глаз, губ), цвет кожи, прическа и выражение лица человека с ПЕРВОГО фото должны остаться АБСОЛЮТНО ИДЕНТИЧНЫМИ оригиналу. **Поза и выражение лица ОБЯЗАТЕЛЬНО должны остаться без изменения.** Это самое важное правило. Не изменяй человека.
 2.  **АДАПТИРУЙ КОМПОЗИЦИЮ:** Сохрани основную композицию и кадрирование человека с референсного фото (например, если это был портрет по пояс, результат тоже должен быть портретом по пояс), но адаптируй его под новое соотношение сторон ${aspectRatioInstruction}. Игнорируй оригинальные пропорции референсного фото.
 3.  **ЗАМЕНИ ОДЕЖДУ:** Переодень человека в: "${clothingText}". Нарисуй только ту часть одежды, которая видна в новом кадре.
 4.  **ЗАМЕНИ ФОН:** Полностью замени фон на новый: "${locationText}".
-5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону. Добавь рефлексы (цветные отсветы) от фона на кожу и одежду человека, чтобы он выглядел неотъемлемой частью сцены, а не вклеенным объектом.
+5.  **АДАПТИРУЙ ОСВЕЩЕНИЕ:** Сделай так, чтобы освещение на человеке гармонично соответствовало новому фону, но при этом НЕ ИЗМЕНЯЙ его черты лица или цвет кожи. Освещение должно выглядеть естественно и фотореалистично.
+6.  **ЦИФРОВОЙ ДВОЙНИК:** СГЕНЕРИРОВАННОЕ ЛИЦО ДОЛЖНО БЫТЬ ЦИФРОВЫМ ДВОЙНИКОМ РЕФЕРЕНСНОГО ЛИЦА С УЧЕТОМ ОСВЕЩЕНИЯ И ЭМОЦИЙ.
 **КАЧЕСТВО:** стандартное разрешение, оптимизировано для веб.
 Результат — только одно изображение без текста.`;
             }
@@ -1449,17 +1229,8 @@ function initializePage1Wizard() {
             photoshootResultContainer.querySelector('.generated-photoshoot-wrapper')?.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('a')) openLightbox(resultUrl); });
 
             if (generatedPhotoshootResult && page1DetectedSubject) {
-                // Set generated image as reference for Page 2
                 referenceImage = generatedPhotoshootResult;
-                referenceImageLocationPrompt = locationText; 
-                
-                // --- CHANGED: Use Master Face Reference instead of cropping new result ---
-                // We do NOT crop the face from the generated photoshoot.
-                // We use the Master Face Reference obtained from the original upload.
-                referenceFaceImage = masterFaceReferenceImage;
-                console.log('Using Master Face Reference for Page 2 transfer.');
-                // -----------------------------------------------------------------
-
+                referenceImageLocationPrompt = locationText; // NEW: Save location prompt
                 detectedSubjectCategory = page1DetectedSubject.category;
                 detectedSmileType = page1DetectedSubject.smile;
                 initializePoseSequences();
@@ -1591,7 +1362,7 @@ function initializePage1Wizard() {
         }
     };
 
-    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state, highResState) => {
+    setupUploader('page1-upload-container', 'page1-image-upload', 'page1-image-preview', 'page1-upload-placeholder', 'page1-clear-button', async (state) => {
         page1ReferenceImage = state;
         if (state) {
             subtitle.textContent = 'Оптимизация изображения...';
@@ -1650,32 +1421,11 @@ function initializePage1Wizard() {
             
             page1ReferenceImage = processedImageState;
 
-            // --- NEW: Master Face Detection from Original (HIGH RES) ---
-            if(statusEl) statusEl.innerText = 'Поиск лица на оригинале...';
-            try {
-                const { boundingBox } = await callApi('/api/cropFace', { image: page1ReferenceImage });
-                // If auto-crop didn't change the image, we can use the high-res original for better face quality
-                const isUnchanged = processedImageState === state;
-                const sourceForFaceCrop = (isUnchanged && highResState) ? highResState : page1ReferenceImage;
-                
-                masterFaceReferenceImage = await cropImageByCoords(sourceForFaceCrop, boundingBox);
-                console.log("Master face reference captured from Page 1 upload (High Res: " + (sourceForFaceCrop === highResState) + ").");
-            } catch (e) {
-                console.warn("Failed to capture master face reference from Page 1:", e);
-                // We don't block the flow, but identity preservation might be weaker.
-                masterFaceReferenceImage = null; 
-            }
-            // ------------------------------------------------
-
             // --- NEW: Clean up previous session inputs when new photo is uploaded ---
             clothingPromptInput.value = '';
             locationPromptInput.value = '';
             shownClothingSuggestions.clear(); // Reset memory of shown suggestions
             shownLocationSuggestions.clear(); // Reset memory of shown suggestions
-            
-            // Clean extra faces too
-            additionalFaceReferences = [null, null];
-            updateExtraFacesUI();
 
             page1ClothingImage = null;
             page1LocationImage = null;
@@ -1775,145 +1525,6 @@ function initializePage1Wizard() {
     locationPromptInput.addEventListener('blur', () => setTimeout(() => locationSuggestionsContainer.classList.remove('visible'), 200));
 
     resetWizard();
-    setupExtraFaceUploader('extra-face-1', 0);
-    setupExtraFaceUploader('extra-face-2', 1);
-}
-
-// --- BUSINESS PAGE INITIALIZATION ---
-function initializeBusinessPage() {
-    const generateBtn = document.getElementById('generate-business-button') as HTMLButtonElement;
-    const promptInput = document.getElementById('business-prompt-input') as HTMLTextAreaElement;
-    const outputGallery = document.getElementById('business-output-gallery') as HTMLDivElement;
-
-    // Helper to check readiness
-    const checkReady = () => {
-        if (!generateBtn) return;
-        const creditsNeeded = 4;
-        const isReady = !!businessProductImage; // Only Product image is mandatory
-        
-        if (generationCredits >= creditsNeeded) {
-            generateBtn.disabled = !isReady;
-            generateBtn.innerHTML = `Создать карточки товара (4 вариации) - Осталось: ${generationCredits}`;
-        } else {
-            generateBtn.disabled = false;
-            generateBtn.innerHTML = isLoggedIn ? `Пополнить кредиты (нужно ${creditsNeeded})` : `Войти, чтобы продолжить`;
-        }
-    };
-
-    setupUploader('business-upload-product', 'business-input-product', 'business-preview-product', 'business-placeholder-product', 'business-clear-product', async (state) => {
-        businessProductImage = state;
-        checkReady();
-    });
-
-    setupUploader('business-upload-ref1', 'business-input-ref1', 'business-preview-ref1', 'business-placeholder-ref1', 'business-clear-ref1', async (state) => {
-        businessRefImage1 = state;
-    });
-
-    setupUploader('business-upload-ref2', 'business-input-ref2', 'business-preview-ref2', 'business-placeholder-ref2', 'business-clear-ref2', async (state) => {
-        businessRefImage2 = state;
-    });
-
-    generateBtn.addEventListener('click', async () => {
-        const creditsNeeded = 4;
-        
-        if (!isLoggedIn) {
-             setWizardStep('AUTH');
-             showStatusError('Пожалуйста, войдите.');
-             return;
-        }
-
-        if (generationCredits < creditsNeeded) {
-            const modalTitle = document.querySelector('#payment-modal-title');
-            if (modalTitle) modalTitle.textContent = "Недостаточно кредитов!";
-            const modalDescription = document.querySelector('#payment-modal-description');
-            if (modalDescription) modalDescription.innerHTML = `У вас ${generationCredits} кредитов. Для генерации требуется ${creditsNeeded}.`;
-            setWizardStep('CREDITS');
-            showPaymentModal();
-            return;
-        }
-
-        if (!businessProductImage) {
-            showStatusError('Загрузите фото товара.');
-            return;
-        }
-
-        // --- Start Generation ---
-        generateBtn.disabled = true;
-        generateBtn.innerHTML = 'Генерация...';
-        outputGallery.innerHTML = '<div class="col-span-2 text-center text-white"><div class="loading-spinner mx-auto mb-2"></div>Создаем 4 вариации (Gemini 3 Pro)...</div>';
-
-        try {
-            const refImages = [businessRefImage1, businessRefImage2].filter(Boolean) as ImageState[];
-            const promptText = promptInput.value.trim();
-
-            const response = await callApi('/api/generateBusinessCard', {
-                image: businessProductImage,
-                refImages: refImages,
-                prompt: promptText
-            });
-
-            // Slice grid
-            const { gridImageUrl, newCredits } = response;
-            const [header, gridBase64] = gridImageUrl.split(',');
-            const gridMimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-            
-            outputGallery.innerHTML = '<div class="col-span-2 text-center text-white">Нарезка вариаций...</div>';
-            const imageUrls = await sliceGridImage(gridBase64, gridMimeType);
-
-            generationCredits = newCredits;
-            updateCreditCounterUI();
-            checkReady(); // Update button text
-
-            // Display Results
-            outputGallery.innerHTML = '';
-            
-            // Add Timestamp divider
-            const divider = document.createElement('div');
-            const timestamp = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-            divider.className = 'col-span-2 w-full mt-2 pt-2 border-t border-[var(--border-color)] flex justify-between items-center text-sm';
-            divider.innerHTML = `<span class="font-semibold text-gray-300">Бизнес Сет</span><span class="text-gray-500">${timestamp}</span>`;
-            outputGallery.appendChild(divider);
-
-            imageUrls.forEach((url, i) => {
-                const imgContainer = document.createElement('div');
-                imgContainer.className = 'cursor-pointer gallery-item aspect-[3/4] relative'; // 3:4 ratio for business cards
-                
-                const img = document.createElement('img');
-                img.src = url;
-                img.className = 'w-full h-full object-cover rounded-lg';
-                imgContainer.appendChild(img);
-
-                imgContainer.innerHTML += `
-                    <a href="${url}" download="business-card-${i}-${Date.now()}.png" class="absolute bottom-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors z-20" title="Скачать">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-                    </a>`;
-                
-                imgContainer.querySelector('a')?.addEventListener('click', e => e.stopPropagation());
-                imgContainer.addEventListener('click', e => { 
-                    if (!(e.target as HTMLElement).closest('a')) openLightbox(url); 
-                });
-
-                outputGallery.appendChild(imgContainer);
-            });
-
-            // Save to history
-            const imageStatesToSave: ImageState[] = imageUrls.map((url: string) => {
-                const [h, b64] = url.split(',');
-                const mime = h.match(/:(.*?);/)?.[1] || 'image/png';
-                return { base64: b64, mimeType: mime };
-            });
-            await addToHistory(imageStatesToSave);
-
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : 'Ошибка генерации.';
-            displayErrorInContainer(outputGallery, msg);
-            showStatusError(msg);
-        } finally {
-            checkReady();
-        }
-    });
-
-    checkReady();
 }
 
 function getUploaderPlaceholderHtml(): string {
@@ -1923,6 +1534,8 @@ function getUploaderPlaceholderHtml(): string {
         <g transform="translate(0,1024) scale(0.1,-0.1)" fill="currentColor" stroke="none">
           <path d="M4753 9900 c-140 -19 -330 -99 -472 -200 -83 -59 -227 -193 -273 -255 -17 -22 -5 -12 26 22 32 34 93 92 136 127 311 257 650 355 876 252 60 -28 65 -17 6 13 -75 38 -193 54 -299 41z"/>
           <path d="M5235 9197 c-46 -48 -79 -101 -180 -288 -83 -154 -169 -276 -274 -390 -68 -73 -84 -86 -113 -87 -63 -2 -159 -47 -215 -101 -36 -34 -27 -35 22 -1 49 34 115 60 149 60 17 -1 7 -14 -47 -65 -106 -99 -283 -230 -498 -367 -271 -173 -416 -282 -545 -412 -121 -121 -196 -225 -254 -350 -50 -108 -70 -190 -77 -316 -8 -142 13 -222 118 -445 45 -97 83 -174 85 -172 2 2 -28 76 -66 164 -86 197 -110 286 -110 408 0 119 26 222 90 350 61 123 127 213 245 330 114 115 189 171 515 388 276 183 396 273 541 407 l86 79 59 -18 c33 -11 103 -35 157 -55 99 -36 151 -45 162 -26 7 12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
+          <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
+          <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 7 -12 -3 50 -13 48 -4 -2 -18 5 -32 14 -31 21 -108 46 -205 67 l-74 16 75 89 c102 121 159 207 255 387 90 171 122 220 171 265 39 37 57 44 81 32 19 -10 23 2 5 20 -26 26 -70 14 -113 -31z"/>
           <path d="M5683 9087 c105 -299 223 -432 657 -736 214 -151 337 -250 422 -339 159 -169 251 -373 265 -589 15 -230 -62 -437 -264 -712 -133 -181 -176 -268 -192 -386 -12 -83 3 -182 39 -268 30 -72 133 -220 186 -267 26 -23 25 -21 -4 15 -122 149 -171 233 -197 332 -45 171 6 323 181 551 176 228 250 364 285 524 40 178 15 390 -66 565 -50 108 -100 178 -205 287 -108 112 -192 180 -405 326 -219 151 -300 214 -398 309 -121 118 -175 194 -258 365 -39 80 -74 146 -79 146 -5 0 10 -56 33 -123z"/>
           <path d="M5809 8435 c-81 -16 -201 -57 -237 -81 -15 -10 -30 -18 -34 -16 -10 2 -20 -36 -13 -48 12 -20 59 -9 154 33 230 104 293 108 421 26 l35 -23 -30 32 c-16 18 -56 46 -89 62 -66 33 -102 36 -207 15z"/>
           <path d="M5750 8260 c-24 -4 -6 -8 60 -12 52 -3 106 -9 120 -12 l25 -7 -25 11 c-34 15 -138 26 -180 20z"/>
@@ -2022,6 +1635,28 @@ async function handleCredentialResponse(response: any) {
         // If login fails, ensure we are fully signed out
         signOut();
     }
+}
+
+function signOut() {
+    // Clear token from memory and localStorage
+    idToken = null; 
+    localStorage.removeItem('idToken');
+
+    isLoggedIn = false;
+    userProfile = null;
+    generationCredits = 0; // Reset credits on sign out
+    
+    // Tell Google to forget the user for auto-login
+    if ((window as any).google) {
+        (window as any).google.accounts.id.disableAutoSelect();
+    }
+    
+    // Update UI to reflect signed-out state
+    updateAuthUI();
+    updateCreditCounterUI();
+    updateAllGenerateButtons();
+    updatePage1WizardState();
+    if(statusEl) statusEl.innerText = "Вы вышли из системы.";
 }
 
 function updateAuthUI() {
@@ -2169,7 +1804,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setupNavigation();
     initializePage1Wizard();
-    initializeBusinessPage();
     
     selectPlan(selectedPlan);
     initializePoseSequences();
@@ -2288,42 +1922,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         uploadContainer.classList.remove('aspect-square');
         outputGallery.innerHTML = '';
         
-        // --- NEW: CROP FACE LOGIC (Direct Upload on Page 2) ---
-        // UPDATED: Use imageState (Small) for API, but preResizedState (Big) for crop
-        if (overlayText) overlayText.textContent = 'Поиск лица...';
-        try {
-            const { boundingBox } = await callApi('/api/cropFace', { image: imageState });
-            
-            // If the image was NOT auto-cropped (processed === imageState), we can use the preResizedState (2048px).
-            // If it WAS auto-cropped, we must use the cropped version (imageState), otherwise coordinates are wrong.
-            // Note: preResizedState is not cropped to 4:5, so if processedImageState IS cropped, we can't use preResized.
-            // But processedImageState is only different if it was horizontal. 
-            // For vertical images (standard), processedImageState === imageState (resized version of preResized).
-            
-            // Simplified logic: If processedImageState came from preResizedState without cropping, use preResizedState.
-            // We can check aspect ratios or just try/catch.
-            // Safe bet for vertical/square images (majority of people):
-            referenceFaceImage = await cropImageByCoords(
-                (processedImageState === imageState) ? preResizedState : imageState, 
-                boundingBox
-            );
-            
-            masterFaceReferenceImage = referenceFaceImage; // Update master as this is a new "original"
-            
-            // Clear extras when new main is uploaded? 
-            // Logic: A new main photo usually means a new person. Let's clear extras to avoid mixing faces.
-            additionalFaceReferences = [null, null];
-            updateExtraFacesUI();
-
-            console.log('Face cropped successfully and set as Master.');
-        } catch (faceErr) {
-            console.warn('Could not crop face automatically:', faceErr);
-            // If direct upload fails to detect face, we have no master.
-            masterFaceReferenceImage = null;
-            referenceFaceImage = null; 
-        }
-        // -----------------------------
-
         if (overlayText) overlayText.textContent = 'Анализ фото...';
 
         statusEl.innerText = 'Анализ фото, чтобы подобрать лучшие позы...';
@@ -2354,7 +1952,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     uploadContainer.addEventListener('click', (e) => {
       if (referenceImage && e.target === referenceImagePreview) {
         openLightbox(referenceImagePreview.src);
-      } else if (!(e.target as HTMLElement).closest('a') && !(e.target as HTMLElement).closest('.extra-face-uploader')) {
+      } else if (!(e.target as HTMLElement).closest('a')) {
         imageUpload.click();
       }
     });

@@ -8,11 +8,16 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
-import https from 'https'; // Используем нативный https для максимальной надежности
 
 // --- LowDB Imports ---
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
+
+// --- ИСПРАВЛЕНИЕ: Используем createRequire для надежного импорта CommonJS модуля ---
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const Yookassa = require('yookassa');
+// --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 dotenv.config();
 
@@ -30,6 +35,10 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const yookassa = new Yookassa({
+    shopId: process.env.YOOKASSA_SHOP_ID,
+    secretKey: process.env.YOOKASSA_SECRET_KEY
+});
 
 const app = express();
 const port = 3001;
@@ -224,24 +233,11 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
     }
 });
 
-// --- YooKassa Integration (Native HTTPS) ---
+// --- YooKassa Integration ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
-    console.log('[Payment] Received create-payment request.');
     try {
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
-        
-        // Trim keys to avoid copy-paste whitespace issues
-        const shopId = process.env.YOOKASSA_SHOP_ID ? process.env.YOOKASSA_SHOP_ID.trim() : '';
-        const secretKey = process.env.YOOKASSA_SECRET_KEY ? process.env.YOOKASSA_SECRET_KEY.trim() : '';
-
-        if (!shopId || !secretKey) {
-            console.error('[Payment] Error: API Keys missing.');
-            throw new Error('API Keys for YooKassa are missing in .env');
-        }
-
-        console.log(`[Payment] Using ShopID: ${shopId}, Secret Key Length: ${secretKey.length}`);
-
         const paymentPayload = {
             amount: { value: '129.00', currency: 'RUB' },
             confirmation: { type: 'redirect', return_url: 'https://photo-click-ai.ru?payment_status=success' },
@@ -249,69 +245,11 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             metadata: { userEmail: userEmail },
             capture: true
         };
-
-        const auth = Buffer.from(`${shopId}:${secretKey}`).toString('base64');
-        
-        const makeRequest = () => new Promise((resolve, reject) => {
-            const options = {
-                hostname: 'api.yookassa.ru',
-                port: 443,
-                path: '/v3/payments',
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Idempotence-Key': idempotenceKey,
-                    'Authorization': `Basic ${auth}`,
-                    'User-Agent': 'FotoclickServer/1.0'
-                },
-                timeout: 30000 // 30 seconds timeout
-            };
-
-            console.log('[Payment] Sending request to YooKassa API...');
-
-            const request = https.request(options, (response) => {
-                console.log(`[Payment] Response received. Status: ${response.statusCode}`);
-                let data = '';
-                
-                response.on('data', (chunk) => data += chunk);
-                
-                response.on('end', () => {
-                    console.log(`[Payment] Response body (truncated): ${data.substring(0, 200)}...`); 
-                    if (response.statusCode >= 200 && response.statusCode < 300) {
-                        try {
-                            resolve(JSON.parse(data));
-                        } catch (e) {
-                            reject(new Error('Invalid JSON from YooKassa'));
-                        }
-                    } else {
-                        // Pass the raw error data for debugging
-                        reject(new Error(`YooKassa API Error (${response.statusCode}): ${data}`));
-                    }
-                });
-            });
-
-            request.on('error', (error) => {
-                console.error('[Payment] Network Request Error:', error);
-                reject(new Error(`Network Error: ${error.message}`));
-            });
-
-            request.on('timeout', () => {
-                console.error('[Payment] Request Timed Out (30s)');
-                request.destroy();
-                reject(new Error('Connection to YooKassa timed out. Check server internet connection.'));
-            });
-
-            request.write(JSON.stringify(paymentPayload));
-            request.end();
-        });
-
-        const payment = await makeRequest();
-        console.log('[Payment] Success. Redirect URL:', payment.confirmation?.confirmation_url);
+        const payment = await yookassa.createPayment(paymentPayload, idempotenceKey);
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
-
     } catch (error) {
-        console.error('[Payment] Critical Error:', error.message);
-        res.status(500).json({ error: `Ошибка оплаты: ${error.message}` });
+        console.error('Ошибка создания платежа YooKassa:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте ключи YooKassa.' });
     }
 });
 
@@ -389,9 +327,24 @@ app.post('/api/checkImageSubject', verifyToken, async (req, res) => {
     }
 });
 
-// New atomic endpoint for generating 4 variations via a 2x2 grid on Gemini 3 Pro
+const callGeminiForVariation = async (prompt, image) => {
+    const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
+    const textPart = { text: prompt };
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: { parts: [imagePart, textPart] },
+        config: { responseModalities: [Modality.IMAGE] },
+    });
+    const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
+    if (!generatedImagePart || !generatedImagePart.inlineData) {
+        throw new Error('Gemini не вернул изображение.');
+    }
+    return `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
+};
+
+// New atomic endpoint for generating 4 variations
 app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), async (req, res) => {
-    const { prompts, image, aspectRatio = '1:1' } = req.body;
+    const { prompts, image } = req.body;
     const userEmail = req.userEmail;
 
     if (!prompts || !Array.isArray(prompts) || prompts.length !== 4 || !image) {
@@ -404,45 +357,10 @@ app.post('/api/generateFourVariations', verifyToken, authenticateAndCharge(4), a
     }
 
     try {
-        // Создаем один большой промпт для сетки 2x2
-        const gridPrompt = `Создай одно изображение с высоким разрешением (2K), которое представляет собой сетку (коллаж) 2x2.
-        
-        Изображение должно состоять из 4 независимых кадров, разделенных тонкими белыми линиями:
-        1. ВЕРХНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[0]}
-        2. ВЕРХНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[1]}
-        3. НИЖНИЙ ЛЕВЫЙ КВАДРАТ: ${prompts[2]}
-        4. НИЖНИЙ ПРАВЫЙ КВАДРАТ: ${prompts[3]}
-        
-        ОЧЕНЬ ВАЖНО: Каждый квадрат должен содержать полноценный, завершенный портрет в соответствии с описанием.
-        Соблюдай стиль и качество во всех четырех частях.`;
-
-        const imagePart = { inlineData: { data: image.base64, mimeType: image.mimeType } };
-        const textPart = { text: gridPrompt };
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview', // Используем Pro для качества и 2K
-            contents: { parts: [imagePart, textPart] },
-            config: { 
-                responseModalities: [Modality.IMAGE],
-                // responseMimeType removed to prevent 500 error on this model
-                imageConfig: { 
-                    imageSize: '2K',
-                    aspectRatio: aspectRatio // Use detected aspect ratio
-                } 
-            },
-        });
-
-        const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
-        if (!generatedImagePart || !generatedImagePart.inlineData) {
-            throw new Error('Gemini не вернул изображение.');
-        }
-
-        // Возвращаем одну большую картинку (сетку). Клиент сам разрежет её.
-        const gridImageUrl = `data:${generatedImagePart.inlineData.mimeType};base64,${generatedImagePart.inlineData.data}`;
-        
+        const generationPromises = prompts.map(prompt => callGeminiForVariation(prompt, image));
+        const imageUrls = await Promise.all(generationPromises);
         await db.read();
-        res.json({ gridImageUrl, newCredits: db.data.users[userEmail].credits });
-
+        res.json({ imageUrls, newCredits: db.data.users[userEmail].credits });
     } catch (error) {
         await db.read();
         if(db.data.users[userEmail]) {
@@ -529,14 +447,10 @@ app.post('/api/generatePhotoshoot', verifyToken, authenticateAndCharge(1), async
     }
 
     try {
-        // REVERTED TO GEMINI 2.5 FLASH FOR BETTER COMPOSITION BLENDING
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image', 
+            model: 'gemini-2.5-flash-image',
             contents: { parts: parts },
-            config: { 
-                responseModalities: [Modality.IMAGE]
-                // No imageConfig for 2.5 flash
-            },
+            config: { responseModalities: [Modality.IMAGE] },
         });
         const generatedImagePart = response.candidates[0].content.parts.find(part => part.inlineData);
         if (!generatedImagePart || !generatedImagePart.inlineData) {
