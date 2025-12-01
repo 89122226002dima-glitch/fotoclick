@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
 import { randomUUID } from 'crypto';
+import https from 'https'; // Используем нативный https для максимальной надежности
 
 // --- LowDB Imports ---
 import { Low } from 'lowdb';
@@ -223,7 +224,7 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
     }
 });
 
-// --- YooKassa Integration (Direct Fetch) ---
+// --- YooKassa Integration (Native HTTPS) ---
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     try {
         const userEmail = req.userEmail;
@@ -238,28 +239,50 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
 
         const auth = Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
         
-        const response = await fetch('https://api.yookassa.ru/v3/payments', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Idempotence-Key': idempotenceKey,
-                'Authorization': `Basic ${auth}`
-            },
-            body: JSON.stringify(paymentPayload)
+        const makeRequest = () => new Promise((resolve, reject) => {
+            const options = {
+                hostname: 'api.yookassa.ru',
+                port: 443,
+                path: '/v3/payments',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Idempotence-Key': idempotenceKey,
+                    'Authorization': `Basic ${auth}`,
+                    'User-Agent': 'FotoclickServer/1.0'
+                }
+            };
+
+            const request = https.request(options, (response) => {
+                let data = '';
+                response.on('data', (chunk) => data += chunk);
+                response.on('end', () => {
+                    if (response.statusCode >= 200 && response.statusCode < 300) {
+                        try {
+                            resolve(JSON.parse(data));
+                        } catch (e) {
+                            reject(new Error('Invalid JSON from YooKassa'));
+                        }
+                    } else {
+                        reject(new Error(`YooKassa API Error: ${response.statusCode} ${data}`));
+                    }
+                });
+            });
+
+            request.on('error', (error) => {
+                reject(new Error(`Network Error: ${error.message}`));
+            });
+
+            request.write(JSON.stringify(paymentPayload));
+            request.end();
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Ошибка YooKassa API:', errorText);
-            throw new Error(`Yookassa API responded with ${response.status}: ${errorText}`);
-        }
-
-        const payment = await response.json();
+        const payment = await makeRequest();
         res.json({ confirmationUrl: payment.confirmation.confirmation_url });
 
     } catch (error) {
-        console.error('Ошибка создания платежа YooKassa:', error.message);
-        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте логи сервера для деталей.' });
+        console.error('CRITICAL PAYMENT ERROR:', error.message);
+        res.status(500).json({ error: 'Не удалось создать платеж. Проверьте логи сервера.' });
     }
 });
 
