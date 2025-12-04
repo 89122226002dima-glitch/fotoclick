@@ -77,11 +77,13 @@ let lightboxOverlay: HTMLDivElement, lightboxImage: HTMLImageElement, lightboxCl
     paymentCloseButton: HTMLButtonElement, creditCounterEl: HTMLDivElement, promoCodeInput: HTMLInputElement,
     applyPromoButton: HTMLButtonElement, authContainer: HTMLDivElement, googleSignInContainer: HTMLDivElement,
     userProfileContainer: HTMLDivElement, userProfileImage: HTMLImageElement, userProfileName: HTMLSpanElement,
-    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement;
+    paymentQrView: HTMLDivElement, paymentQrImage: HTMLImageElement, paymentBackButton: HTMLButtonElement,
+    planSmallCard: HTMLDivElement, planLargeCard: HTMLDivElement;
 
 
 // --- State Variables ---
 let selectedPlan = 'close_up';
+let selectedPaymentPlan: 'small' | 'large' = 'small';
 let referenceImage: ImageState | null = null;
 let referenceFaceImage: ImageState | null = null; 
 let masterFaceReferenceImage: ImageState | null = null; // NEW: Stores cropped face from ORIGINAL user photo
@@ -1313,7 +1315,7 @@ async function handlePayment() {
     paymentProcessingView.classList.remove('hidden');
 
     try {
-        const response = await callApi('/api/create-payment', {});
+        const response = await callApi('/api/create-payment', { plan: selectedPaymentPlan });
         const confirmationUrl = response.confirmationUrl;
 
         if (!confirmationUrl) {
@@ -2137,6 +2139,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   paymentQrView = document.getElementById('payment-qr-view') as HTMLDivElement;
   paymentQrImage = document.getElementById('payment-qr-image') as HTMLImageElement;
   paymentBackButton = document.getElementById('payment-back-button') as HTMLButtonElement;
+  
+  // NEW: Select Payment Plan Cards
+  planSmallCard = document.getElementById('plan-small') as HTMLDivElement;
+  planLargeCard = document.getElementById('plan-large') as HTMLDivElement;
 
 
   try {
@@ -2199,6 +2205,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         paymentSelectionView.classList.remove('hidden');
         if(paymentQrImage) paymentQrImage.src = ''; // Clear the image
     });
+
+    // --- NEW: Payment Plan Selection Logic ---
+    if (planSmallCard && planLargeCard) {
+        planSmallCard.addEventListener('click', () => {
+            selectedPaymentPlan = 'small';
+            planSmallCard.classList.add('selected');
+            planLargeCard.classList.remove('selected');
+            if(paymentProceedButton) paymentProceedButton.innerText = 'Перейти к оплате 129 ₽';
+        });
+        
+        planLargeCard.addEventListener('click', () => {
+            selectedPaymentPlan = 'large';
+            planLargeCard.classList.add('selected');
+            planSmallCard.classList.remove('selected');
+             if(paymentProceedButton) paymentProceedButton.innerText = 'Перейти к оплате 500 ₽';
+        });
+    }
+    // -----------------------------------------
 
     referenceDownloadButton.addEventListener('click', e => e.stopPropagation());
     

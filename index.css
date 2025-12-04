@@ -614,6 +614,20 @@ body {
   color: var(--font-color);
 }
 
+/* --- Payment Plan Cards --- */
+.payment-plan-card {
+    transition: all 0.2s ease;
+}
+.payment-plan-card.selected {
+    border-color: var(--secondary-color) !important;
+    background-color: rgba(217, 181, 181, 0.15) !important;
+    box-shadow: 0 0 15px -5px var(--secondary-color);
+}
+.payment-plan-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--secondary-color);
+}
+
 .payment-method {
     display: flex; align-items: center; gap: 12px;
     background-color: rgba(255,255,255,0.2);

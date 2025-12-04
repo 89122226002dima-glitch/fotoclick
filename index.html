@@ -48,7 +48,9 @@
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "jsonwebtoken": "https://aistudiocdn.com/jsonwebtoken@^9.0.2",
-    "https": "https://aistudiocdn.com/https@^1.0.0"
+    "https": "https://aistudiocdn.com/https@^1.0.0",
+    "https-proxy-agent": "https://aistudiocdn.com/https-proxy-agent@^7.0.6",
+    "socks-proxy-agent": "https://aistudiocdn.com/socks-proxy-agent@^8.0.5"
   }
 }
 </script>
@@ -458,7 +460,7 @@
            </div>
 
            <div class="mt-6 w-full max-w-2xl mx-auto">
-               <textarea id="business-prompt-input" rows="4" class="page1-text-input w-full" placeholder="Опишите, что должно быть на карточке...">Сделай 4 разных карточки товара с главного фото.Стилистика фона должна соответствовать референсу 1 и товар должен идеально вписываться в фон.Добавь текст способствующий продаже товара на главной странице в стилистике фона.Преобрази товар так что бы покупатель хотел его купить.</textarea>
+               <textarea id="business-prompt-input" rows="4" class="page1-text-input w-full" placeholder="Опишите, что должно быть на карточке...">Сделай 4 разных карточки товара с главного фото.Стилистика фона должна соответствовать референсу 1 и товар должен идеально вписываться в фон.Добавь текст способствующий продаже товара на главной странице в стилистике фона.Преобрази товар так что бы покупатель хотел его купить.добавь  элементы  товара  в карточку отдельными окнами .Добавь параметры и обозначения товара.</textarea>
                <button id="generate-business-button" class="btn-primary w-full mt-4">
                   Создать карточки товара (4 вариации)
                </button>
@@ -518,13 +520,33 @@
         <div id="payment-selection-view">
             <div class="text-center">
                 <h2 id="payment-modal-title" class="text-2xl font-bold mb-2">Разблокируйте больше фотографий!</h2>
-                <p id="payment-modal-description" class="mb-6">Чтобы получить <strong>пакет '12 фотографий'</strong>, пожалуйста, произведите оплату.</p>
+                <p id="payment-modal-description" class="mb-6">Пополните баланс, чтобы продолжить генерацию.</p>
             </div>
             
             <div class="bg-gray-800/50 border border-[var(--border-color)] rounded-lg p-6 flex flex-col items-center gap-4">
                  <div class="w-full text-center">
-                     <p class="text-sm">Сумма к оплате</p>
-                     <p class="text-3xl font-bold">129 ₽</p>
+                     <p class="text-sm mb-2">Выберите тариф:</p>
+                     
+                     <div class="flex flex-col gap-3 w-full mb-6">
+                         <!-- Пакет "Стандарт" -->
+                         <div id="plan-small" class="payment-plan-card selected p-4 rounded-lg border-2 border-[var(--secondary-color)] bg-[var(--bg-color)] cursor-pointer flex justify-between items-center transition-all">
+                             <div>
+                                 <p class="font-bold text-lg">12 Фотографий</p>
+                                 <p class="text-sm text-gray-500">Попробовать</p>
+                             </div>
+                             <p class="font-bold text-xl">129 ₽</p>
+                         </div>
+
+                         <!-- Пакет "PRO" -->
+                         <div id="plan-large" class="payment-plan-card p-4 rounded-lg border border-[var(--border-color)] hover:border-[var(--secondary-color)] bg-[var(--bg-color)] cursor-pointer flex justify-between items-center transition-all relative overflow-hidden">
+                             <div class="absolute top-0 right-0 bg-[#E0C9A6] text-black text-[10px] px-2 py-0.5 font-bold rounded-bl-lg">ВЫГОДНО</div>
+                             <div>
+                                 <p class="font-bold text-lg">60 Фотографий</p>
+                                 <p class="text-sm text-gray-500">Большая фотосессия</p>
+                             </div>
+                             <p class="font-bold text-xl">500 ₽</p>
+                         </div>
+                     </div>
                  </div>
                  
                  <div class="w-full h-px bg-[var(--border-color)] my-2"></div>

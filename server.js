@@ -1,3 +1,4 @@
+
 // server.js - Версия с интеграцией LowDB, поддержкой SOCKS5 PROXY и Авто-Тестом соединения
 
 import express from 'express';
@@ -294,6 +295,7 @@ app.post('/api/apply-promo', verifyToken, async (req, res) => {
 app.post('/api/create-payment', verifyToken, async (req, res) => {
     console.log('[Payment] Received create-payment request.');
     try {
+        const { plan } = req.body; // 'small' or 'large'
         const userEmail = req.userEmail;
         const idempotenceKey = randomUUID();
         
@@ -304,11 +306,25 @@ app.post('/api/create-payment', verifyToken, async (req, res) => {
             throw new Error('API Keys for YooKassa are missing in .env');
         }
 
+        // --- NEW: Dynamic Payment Logic ---
+        let amountValue = '129.00';
+        let descriptionText = 'Пакет "12 фотографий" для photo-click-ai.ru';
+        let creditsToAdd = 12;
+
+        if (plan === 'large') {
+            amountValue = '500.00';
+            descriptionText = 'Пакет "60 фотографий" (Выгодно) для photo-click-ai.ru';
+            creditsToAdd = 60;
+        }
+
         const paymentPayload = {
-            amount: { value: '129.00', currency: 'RUB' },
+            amount: { value: amountValue, currency: 'RUB' },
             confirmation: { type: 'redirect', return_url: 'https://photo-click-ai.ru?payment_status=success' },
-            description: 'Пакет "12 фотографий" для photo-click-ai.ru',
-            metadata: { userEmail: userEmail },
+            description: descriptionText,
+            metadata: { 
+                userEmail: userEmail,
+                credits: String(creditsToAdd) // Pass credits amount to metadata
+            },
             capture: true
         };
 
@@ -397,17 +413,20 @@ app.post('/api/payment-webhook', async (req, res) => {
         if (notification.event === 'payment.succeeded') {
             const payment = notification.object;
             const userEmail = payment.metadata.userEmail;
+            // Получаем количество кредитов из метаданных, либо ставим 12 (для совместимости)
+            const creditsToAdd = payment.metadata.credits ? parseInt(payment.metadata.credits) : 12;
+
             if (userEmail) {
                 await db.read();
                 
                 if (!db.data.users[userEmail]) {
                      db.data.users[userEmail] = { credits: 0 };
                 }
-                db.data.users[userEmail].credits += 12;
+                db.data.users[userEmail].credits += creditsToAdd;
                 
                 await db.write();
                 
-                console.log(`Успешно начислено 12 фотографий пользователю ${userEmail}.`);
+                console.log(`Успешно начислено ${creditsToAdd} фотографий пользователю ${userEmail}.`);
             }
         }
         res.status(200).send('OK');
