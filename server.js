@@ -126,10 +126,8 @@ setTimeout(testProxyConnection, 2000);
 
 const INITIAL_CREDITS = 1;
 const PROMO_CODES = {
-    "GEMINI_10": { type: 'credits', value: 10, message: "Вам начислено 10 кредитов!" },
-    "FREE_SHOOT": { type: 'credits', value: 999, message: "Вы получили бесплатный доступ на эту сессию!" },
-    "BONUS_5": { type: 'credits', value: 5, message: "Бонус! 5 кредитов добавлено." },
-    "521378": { type: 'credits', value: 500, message: "Владелец активировал 500 тестовых кредитов." }
+    "GEMINI": { type: 'credits', value: 12, message: "Вам начислено 12 кредитов!" },
+    "521370": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." }
 };
 
 
