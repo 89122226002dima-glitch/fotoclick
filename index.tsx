@@ -1846,7 +1846,10 @@ function initializeBusinessPage() {
 
         try {
             const refImages = [businessRefImage1, businessRefImage2].filter(Boolean) as ImageState[];
-            const promptText = promptInput.value.trim();
+            
+            const userPrompt = promptInput.value.trim();
+            const hiddenPrefix = "Сделай 4 координально разных карточки товара с главного фото и в разном стиле с применением референсов  при этом варьируй в каждой карточке композицию товара(1-товар главный элемент,2-товар крупно,3-детали товара,4-детали товара)";
+            const promptText = `${hiddenPrefix}\n\n${userPrompt}`;
 
             const response = await callApi('/api/generateBusinessCard', {
                 image: businessProductImage,

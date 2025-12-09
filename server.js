@@ -1,4 +1,5 @@
 
+
 // server.js - Версия с интеграцией LowDB, поддержкой SOCKS5 PROXY и Авто-Тестом соединения
 
 import express from 'express';
@@ -601,7 +602,7 @@ app.post('/api/analyzeImageForText', verifyToken, async (req, res) => {
     }
 });
 
-// Endpoint for Business Card Generation (Restored)
+// Endpoint for Business Card Generation (Updated: No hidden prompts)
 app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), async (req, res) => {
     const { image, refImages, prompt } = req.body;
     const userEmail = req.userEmail;
@@ -611,7 +612,12 @@ app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), asy
         if (refImages && refImages.length) {
             refImages.forEach(ref => parts.push({ inlineData: { data: ref.base64, mimeType: ref.mimeType } }));
         }
-        const fullPrompt = `Create 4 varied business/product card variations (2x2 grid). Product: Image 1. References: Images 2+. Task: ${prompt}. High quality.`;
+        
+        // We use the prompt exactly as provided by the user/frontend.
+        // If it's empty, we add a generic fallback just to avoid API errors.
+        const userTask = prompt && prompt.trim().length > 0 ? prompt : "Сделай 4 вариации карточки товара.";
+        
+        const fullPrompt = `Create 4 varied business/product card variations (2x2 grid). Product: Image 1. References: Images 2+. Task: ${userTask}. High quality.`;
         parts.push({ text: fullPrompt });
 
         const response = await ai.models.generateContent({
