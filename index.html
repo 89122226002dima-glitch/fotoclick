@@ -463,7 +463,15 @@
                <label for="business-prompt-input" class="block text-left font-bold text-[var(--font-color)] mb-2">
                    Промпт для генерации (можно редактировать):
                </label>
-               <textarea id="business-prompt-input" rows="12" class="page1-text-input w-full font-medium" style="color: black !important; background-color: rgba(255,255,255,0.95);">Добавь текст способствующий продаже товара  в стилистике фона только на карточку товара 1.Инфографика: Добавь параметры товара в виде стильных и креативных полупрозрачных плашек или 3D-иконок парящих рядом с товаром на изображении 2,3 и 4. Текст должен быть на русском, читабельным и побуждающим к покупке.Добавь параметры и обозначения товара.</textarea>
+               <div class="relative w-full rounded-lg overflow-hidden" style="background-color: rgba(255,255,255,0.95);">
+                   <!-- Ghost Text Layer (Background) -->
+                   <div id="business-ghost-text" class="absolute inset-0 p-3 pointer-events-none whitespace-pre-wrap font-medium text-base leading-snug overflow-hidden" style="color: transparent;">
+                       <span class="opacity-0">Напиши крупно и стильно название товара только на карточку товара изображение 1. Добавь параметры товара в виде стильных и креативных полупрозрачных плашек или 3D-иконок на изображении 2,3 и 4. Текст должен быть на русском, читабельным и побуждающим к покупке и отличающимся на каждом изображении.В каждом изображении создай взаимодействие товара с человеком.</span><span class="text-gray-400 opacity-100"> Добавь ... на изображение 2,Добавь ... на изображение 3,Добавь ... на изображение 4.</span>
+                   </div>
+                   <!-- Actual Textarea Layer (Foreground) -->
+                   <textarea id="business-prompt-input" rows="12" class="w-full h-full bg-transparent text-black p-3 font-medium text-base leading-snug focus:outline-none rounded-lg relative z-10" style="resize: none;"></textarea>
+               </div>
+               
                <button id="generate-business-button" class="btn-primary w-full mt-4">
                   Создать карточки товара (4 вариации)
                </button>

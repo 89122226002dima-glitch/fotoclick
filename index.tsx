@@ -1785,7 +1785,28 @@ function initializePage1Wizard() {
 function initializeBusinessPage() {
     const generateBtn = document.getElementById('generate-business-button') as HTMLButtonElement;
     const promptInput = document.getElementById('business-prompt-input') as HTMLTextAreaElement;
+    const ghostText = document.getElementById('business-ghost-text') as HTMLDivElement;
     const outputGallery = document.getElementById('business-output-gallery') as HTMLDivElement;
+
+    // Default Prompt text from specs
+    const defaultPrompt = "Напиши крупно и стильно название товара только на карточку товара изображение 1. Добавь параметры товара в виде стильных и креативных полупрозрачных плашек или 3D-иконок на изображении 2,3 и 4. Текст должен быть на русском, читабельным и побуждающим к покупке и отличающимся на каждом изображении.В каждом изображении создай взаимодействие товара с человеком.";
+    
+    if (promptInput) {
+        promptInput.value = defaultPrompt;
+        
+        // Hide ghost text on input, show only if matches default
+        promptInput.addEventListener('input', () => {
+            if (!ghostText) return;
+            // The logic: "disappearing if the user did not write it themselves". 
+            // We interpret this as: show hint ONLY if the user hasn't modified the main part significantly or just appended to it?
+            // Simplest interpretation: If user changes anything, hide the hint overlay to avoid visual clutter.
+            if (promptInput.value !== defaultPrompt) {
+                ghostText.classList.add('hidden');
+            } else {
+                ghostText.classList.remove('hidden');
+            }
+        });
+    }
 
     // Helper to check readiness
     const checkReady = () => {
@@ -1848,8 +1869,10 @@ function initializeBusinessPage() {
             const refImages = [businessRefImage1, businessRefImage2].filter(Boolean) as ImageState[];
             
             const userPrompt = promptInput.value.trim();
-            // UPDATED HIDDEN PROMPT
-            const hiddenPrefix = "Сделай 4 координально разных карточки товара с главного фото и в разном стиле с применением референсов при этом варьируй в каждой карточке композицию товара(1-товар главный элемент,2-товар крупно,3-детали товара,4-детали товара) Сделай 4 карточки товара с главного фото с применением референсов. Все 4 карточки должны быть в одной стилистике. Преобрази товар так что бы покупатель хотел его купить.Используй кинематографичное освещение и глубину резкости (боке), чтобы акцентировать внимание на продукте.Добавь креатива и неожиданных рекламных ходов. При этом варьируй в каждой карточке композицию товара(1-товар главный элемент,2-товар крупно,3-детали товара,4-детали товара)";
+            // UPDATED HIDDEN PROMPT: Removed conflicting composition instructions (1-product, 2-closeup etc.) 
+            // to let the visible prompt take precedence.
+            const hiddenPrefix = "Сделай 4 карточки товара с главного фото с применением референсов. Все 4 карточки должны быть в одной стилистике. Преобрази товар так что бы покупатель хотел его купить. Используй кинематографичное освещение и глубину резкости (боке).";
+            
             const promptText = `${hiddenPrefix}\n\n${userPrompt}`;
 
             const response = await callApi('/api/generateBusinessCard', {
