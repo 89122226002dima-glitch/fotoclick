@@ -1,5 +1,4 @@
 
-
 // server.js - Версия с интеграцией LowDB, поддержкой SOCKS5 PROXY и Авто-Тестом соединения
 
 import express from 'express';
@@ -131,7 +130,14 @@ const PROMO_CODES = {
     "521370": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." },
     "521381": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." },
     "5213791": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." },
-    "5213792": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." }
+    "5213792": { type: 'credits', value: 500, message: "Владелец активировал 500 кредитов." },
+    "5213793": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213794": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213795": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213796": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213797": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213798": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." },
+    "5213799": { type: 'credits', value: 999, message: "Владелец активировал 999 кредитов." }
 };
 
 

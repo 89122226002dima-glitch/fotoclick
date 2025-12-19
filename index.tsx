@@ -1,3 +1,4 @@
+
 /* tslint:disable */
 /**
  * @license
@@ -2397,7 +2398,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }));
 
-    (window as any).navigateToPage('page1');
+    (window as any).navigateToPage('page-business');
     updateAllGenerateButtons();
     updatePage1WizardState();
     updateAuthUI();
