@@ -110,7 +110,10 @@
         <div id="page-business" class="page-content">
            <div class="text-center">
              <h1 class="app-title tracking-tight">КАРТОЧКИ ТОВАРОВ</h1>
-             <p class="text-gray-400 mt-2 text-sm">Загрузите фото товара (обязательно) и до 2 референсов (фон/стиль).</p>
+             <p class="text-gray-400 mt-4 text-sm max-w-2xl mx-auto leading-relaxed">
+                <span class="block text-base font-medium mb-1 text-[var(--font-color)]">Превратите обычное фото в 4 продающие карточки для Wildberries и VK за 1 клик.</span>
+                ИИ сам подберет дорогой фон, улучшит модель, напишет продающий текст и добавит стильную инфографику. Экономьте на фотосессиях и дизайнерах.
+             </p>
            </div>
            
            <div class="mt-8 flex flex-col md:flex-row gap-4 items-stretch justify-center">
@@ -130,7 +133,7 @@
 
                 <!-- Reference 1 -->
                 <div class="flex-1 flex flex-col gap-2">
-                    <p class="text-center font-bold text-[var(--font-color)]">Референс 1 (Фон/Стиль)</p>
+                    <p class="text-center font-bold text-[var(--font-color)]">Референс 1 (Логотип/Фон)</p>
                     <div id="business-upload-ref1" class="page1-window-upload w-full h-64 cursor-pointer relative">
                         <div id="business-placeholder-ref1" class="flex flex-col items-center justify-center h-full">
                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
@@ -161,7 +164,7 @@
                <label for="business-prompt-input" class="block text-left font-bold text-[var(--font-color)] mb-2">
                    Промпт для генерации (можно редактировать):
                </label>
-               <textarea id="business-prompt-input" rows="12" class="page1-text-input w-full font-medium" style="color: black !important; background-color: rgba(255,255,255,0.95);" placeholder="Добавь ...на изображение 2,добавь ...на изображение 3,добавь... на изображение 4.">Профессиональная карточка товара, изделия на 1 изображении. Добавь стильное название товара на русском, премиальным шрифтом только на карточку товара изображение 1, с позирующей моделью. Добавь параметры товара с контекстной визуализацией с интерактивными полупрозрачными 3D-элементов соответствующими рекламируемому продукту на изображении 1,2,3 и 4 в одном стиле с фоном. Данные должны быть на русском, читабельным и побуждающим к покупке и отличающимся на каждом изображении. Создай взаимодействие товара с человеком.</textarea>
+               <textarea id="business-prompt-input" rows="12" class="page1-text-input w-full font-medium" style="color: black !important; background-color: rgba(255,255,255,0.95);" placeholder="Добавь ...на изображение 2,добавь ...на изображение 3,добавь... на изображение 4.">Интегрируй стильное название товара на русском языке (премиальный шрифт) в изображение №1 с моделью. На изображениях 2,3,4 добавь продающую инфографику: ключевые преимущества и параметры товара. Используй интерактивные полупрозрачные 3D-элементы , гармонично вписанные в фон и выполненные в одном стиле который должен быть на русском, строго читабельным, побуждающим к покупке и отличающимся на каждом изображении. Обеспечь естественное взаимодействие модели с товаром.</textarea>
                <button id="generate-business-button" class="btn-primary w-full mt-4">
                   Создать карточки товара (4 вариации)
                </button>
@@ -295,4 +298,3 @@
     
   </body>
 </html>
-    

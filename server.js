@@ -1,4 +1,3 @@
-
 // server.js - Версия с интеграцией LowDB, поддержкой SOCKS5 PROXY и Авто-Тестом соединения
 
 import express from 'express';
@@ -610,7 +609,7 @@ app.post('/api/analyzeImageForText', verifyToken, async (req, res) => {
     }
 });
 
-// Endpoint for Business Card Generation (Updated: No hidden prompts)
+// Endpoint for Business Card Generation (Updated with Elite Art Director prompt)
 app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), async (req, res) => {
     const { image, refImages, prompt } = req.body;
     const userEmail = req.userEmail;
@@ -625,7 +624,36 @@ app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), asy
         // If it's empty, we add a generic fallback just to avoid API errors.
         const userTask = prompt && prompt.trim().length > 0 ? prompt : "Сделай 4 вариации карточки товара.";
         
-        const fullPrompt = `Create 4 varied business/product card variations (2x2 grid). Product: Image 1. References: Images 2+. Task: ${userTask}. High quality.`;
+        const fullPrompt = `
+ROLE: Elite Commercial Photographer & Art Director.
+TASK: Create a High-End commercial product card consisting of 4 distinct variations (2x2 grid collage with thin white separators).
+
+INPUT ANALYSIS & HANDLING:
+- Image 1 (MAIN PRODUCT): Priority Object. Preserve shape, texture, and details 100%.
+- Images 2+ (REFERENCES/LOGOS):
+  * IF the image is a LOGO: Integrate it harmoniously as official branding (watermark, sign, or overlay) on the product shots. Do not distort the logo text.
+  * IF the image is a BACKGROUND/STYLE REF: Use it to generate the atmosphere.
+
+GRID STRUCTURE (2x2):
+1. Top-Left: THE SELLING HERO SHOT. Max quality.
+   * CRITICAL: If the product is clothing on a person, REPLACE the original person with a PROFESSIONAL HIGH-FASHION MODEL posing advantageously.
+   * Focus: Flattering angle, perfect fit, expensive look.
+2. Top-Right: MACRO CLOSE-UP.
+   * Focus: Texture, fabric weave, stitching, or material quality. Depth of field effect.
+3. Bottom-Left: LIFESTYLE & CONTEXT.
+   * Focus: The product in a realistic, rich environment (e.g., luxury street, cozy interior, nature) matching the product's vibe.
+4. Bottom-Right: CREATIVE COMPOSITION / DETAILS.
+   * Focus: Artistic angle or showing the product's functionality with the Logo placed stylishly.
+
+STYLE GUIDELINES:
+- Backgrounds: Contextual Visualization. NEVER use plain flat colors unless requested. Place the product in a fitting high-end environment.
+- Lighting: Professional Studio Softbox/Rim light. Perfect highlights, soft commercial shadows.
+- Quality: 8k, Ultra-HD, Hyper-realistic.
+- Aesthetics: Glossy magazine advertisement, ready for Wildberries/Amazon.
+
+USER INSTRUCTION:
+${userTask}
+`;
         parts.push({ text: fullPrompt });
 
         const response = await ai.models.generateContent({
@@ -633,7 +661,7 @@ app.post('/api/generateBusinessCard', verifyToken, authenticateAndCharge(4), asy
             contents: { parts: parts },
             config: { 
                 responseModalities: [Modality.IMAGE],
-                imageConfig: { imageSize: '2K', aspectRatio: '3:4' }
+                imageConfig: { imageSize: '2K', aspectRatio: '3:4' } // Vertical grid for vertical cards
             }
         });
 

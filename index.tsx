@@ -1,5 +1,3 @@
-
-
 /* tslint:disable */
 /**
  * @license
@@ -227,14 +225,32 @@ async function sliceGridImage(gridBase64: string, gridMimeType: string): Promise
         img.onload = () => {
             const w = img.width; const h = img.height;
             const halfW = Math.floor(w / 2); const halfH = Math.floor(h / 2);
+            
+            // Logic to stretch image slightly if it matches the 896px width issue for Wildberries
+            let targetW = halfW;
+            let targetH = halfH;
+
+            // If width is close to 900 (e.g., 896), snap to 900
+            if (halfW >= 890 && halfW < 900) {
+                targetW = 900;
+            }
+
+            // If we snapped width to 900, verify/snap height to 1200 to meet 3:4 ratio standard
+            if (targetW === 900) {
+                 targetH = 1200;
+            }
+
             const imageUrls: string[] = [];
             const positions = [{ x: 0, y: 0 }, { x: halfW, y: 0 }, { x: 0, y: halfH }, { x: halfW, y: halfH }];
             positions.forEach(pos => {
                 const canvas = document.createElement('canvas');
-                canvas.width = halfW; canvas.height = halfH;
+                canvas.width = targetW; canvas.height = targetH;
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
-                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, halfW, halfH);
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    // Draw source (halfW, halfH) to destination (targetW, targetH)
+                    ctx.drawImage(img, pos.x, pos.y, halfW, halfH, 0, 0, targetW, targetH);
                     imageUrls.push(canvas.toDataURL('image/png'));
                 }
             });
