@@ -24,6 +24,7 @@ if (!process.env.API_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! Перем
 if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная GOOGLE_CLIENT_ID не найдена.');
 if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
 if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
+if (!process.env.TELEGRAM_BOT_TOKEN) console.log('DIAGNOSTICS: ВНИМАНИЕ! TELEGRAM_BOT_TOKEN не найден.');
 
 let proxyAgent = null;
 
@@ -57,8 +58,8 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-// Telegram Bot Token (from user)
-const TELEGRAM_BOT_TOKEN = '7938631925:AAE0rtDL7diRbaqRnMiyL_417TE96TScgzY';
+// Telegram Bot Token (from env)
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const app = express();
 const port = 3001;
