@@ -6,6 +6,11 @@
  */
 import { openDB, IDBPDatabase, DBSchema } from 'idb';
 
+// --- CONFIGURATION ---
+// ВАЖНО: Это имя бота (username без @), которого вы создали в BotFather.
+// Если ваш бот называется не "PhotoClick_Login_bot", измените это значение!
+const TELEGRAM_BOT_NAME = 'PhotoClick_Login_bot'; 
+
 // --- Type Definitions ---
 interface ImageState {
   base64: string;
@@ -567,7 +572,7 @@ function setupTelegramAuth() {
     // Inject script
     const script = document.createElement('script');
     script.src = "https://telegram.org/js/telegram-widget.js?22";
-    script.setAttribute('data-telegram-login', 'PhotoClick_Login_bot');
+    script.setAttribute('data-telegram-login', TELEGRAM_BOT_NAME); // Use constant here
     script.setAttribute('data-size', 'large');
     script.setAttribute('data-userpic', 'false'); 
     script.setAttribute('data-radius', '20'); // Rounded pill like google

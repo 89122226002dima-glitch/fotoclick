@@ -24,7 +24,17 @@ if (!process.env.API_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! Перем
 if (!process.env.GOOGLE_CLIENT_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! Переменная GOOGLE_CLIENT_ID не найдена.');
 if (!process.env.YOOKASSA_SHOP_ID) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SHOP_ID не найден.');
 if (!process.env.YOOKASSA_SECRET_KEY) console.log('DIAGNOSTICS: ВНИМАНИЕ! YOOKASSA_SECRET_KEY не найден.');
-if (!process.env.TELEGRAM_BOT_TOKEN) console.log('DIAGNOSTICS: ВНИМАНИЕ! TELEGRAM_BOT_TOKEN не найден.');
+
+// --- CLEAN TELEGRAM TOKEN ---
+let TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+if (TELEGRAM_BOT_TOKEN) {
+    // Удаляем пробелы, кавычки (одинарные и двойные) и символы новой строки
+    TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.trim().replace(/^["']|["']$/g, '').replace(/\r?\n|\r/g, "");
+    console.log(`DIAGNOSTICS: TELEGRAM_BOT_TOKEN загружен. Первые символы: ${TELEGRAM_BOT_TOKEN.substring(0, 5)}...`);
+} else {
+    console.log('DIAGNOSTICS: ВНИМАНИЕ! TELEGRAM_BOT_TOKEN не найден.');
+}
+
 
 let proxyAgent = null;
 
@@ -58,8 +68,7 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-// Telegram Bot Token (from env)
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
 
 const app = express();
 const port = 3001;
@@ -253,6 +262,10 @@ app.post('/api/login-telegram', async (req, res) => {
     const { hash, ...data } = userData;
     if (!hash) return res.status(400).json({error: "No hash provided"});
 
+    if (!TELEGRAM_BOT_TOKEN) {
+         return res.status(500).json({ error: "Server Error: Telegram Token not configured" });
+    }
+
     // Проверка подписи (HMAC-SHA256)
     const dataCheckString = Object.keys(data)
         .sort()
@@ -265,6 +278,10 @@ app.post('/api/login-telegram', async (req, res) => {
     const hmac = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
     if (hmac !== hash) {
+        console.error("TELEGRAM LOGIN FAILED: Hash mismatch.");
+        console.error("Calculated HMAC:", hmac);
+        console.error("Received Hash:", hash);
+        console.error("Token used (first 5 chars):", TELEGRAM_BOT_TOKEN.substring(0, 5));
         return res.status(403).json({ error: "Data is not from Telegram (Invalid Hash)" });
     }
 
