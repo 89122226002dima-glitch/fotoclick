@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { OAuth2Client } from 'google-auth-library';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash, createHmac } from 'crypto';
 import https from 'https'; // Используем нативный https для максимальной надежности
 import { HttpsProxyAgent } from 'https-proxy-agent'; // Агент для HTTP прокси
 import { SocksProxyAgent } from 'socks-proxy-agent'; // Агент для SOCKS прокси
@@ -57,6 +57,8 @@ if (!process.env.API_KEY || !process.env.GOOGLE_CLIENT_ID || !process.env.YOOKAS
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Telegram Bot Token (from user)
+const TELEGRAM_BOT_TOKEN = '7938631925:AAE0rtDL7diRbaqRnMiyL_417TE96TScgzY';
 
 const app = express();
 const port = 3001;
@@ -67,7 +69,8 @@ const __dirname = path.dirname(__filename);
 // --- Настройка базы данных LowDB ---
 const dbFile = path.join(__dirname, 'fotoclick_db.json');
 const adapter = new JSONFile(dbFile);
-const defaultData = { users: {}, used_promo_codes: {} };
+// Added sessions to default data
+const defaultData = { users: {}, used_promo_codes: {}, sessions: {} };
 const db = new Low(adapter, defaultData);
 
 db.read().then(() => {
@@ -156,6 +159,23 @@ const verifyToken = async (req, res, next) => {
         return res.status(401).json({ error: 'Токен аутентификации отсутствует.' });
     }
     const token = authHeader.split(' ')[1];
+
+    // 1. Проверка сессионного токена Telegram (или любого другого кастомного)
+    if (token.startsWith('tg_sess_')) {
+        try {
+            await db.read();
+            const userIdentifier = db.data.sessions?.[token];
+            if (userIdentifier) {
+                req.userEmail = userIdentifier;
+                return next();
+            }
+        } catch (e) {
+            console.error('Ошибка проверки сессии:', e);
+        }
+        // Если сессия не найдена, не прерываем сразу, даем шанс проверке Google токена (маловероятно, но безопасно)
+    }
+
+    // 2. Проверка Google ID Token
     try {
         const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
         const ticket = await googleClient.verifyIdToken({
@@ -223,6 +243,62 @@ const handleGeminiError = (error, defaultMessage) => {
 
 
 // --- API Routes ---
+
+// Маршрут для входа через Telegram
+app.post('/api/login-telegram', async (req, res) => {
+    const userData = req.body;
+    
+    // Проверяем наличие хэша
+    const { hash, ...data } = userData;
+    if (!hash) return res.status(400).json({error: "No hash provided"});
+
+    // Проверка подписи (HMAC-SHA256)
+    const dataCheckString = Object.keys(data)
+        .sort()
+        .map(key => `${key}=${data[key]}`)
+        .join('\n');
+    
+    // Создаем секретный ключ из токена бота
+    const secretKey = createHash('sha256').update(TELEGRAM_BOT_TOKEN).digest();
+    // Считаем HMAC
+    const hmac = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    if (hmac !== hash) {
+        return res.status(403).json({ error: "Data is not from Telegram (Invalid Hash)" });
+    }
+
+    // Проверка времени авторизации (опционально, чтобы избежать replay атак)
+    const now = Math.floor(Date.now() / 1000);
+    if (now - data.auth_date > 86400) { // Данные устарели (больше 24 часов)
+         return res.status(403).json({ error: "Data is outdated" });
+    }
+
+    // Данные валидны. Создаем или обновляем пользователя.
+    // У Telegram нет email, используем tg_<id> как уникальный ключ
+    const userIdentifier = `tg_${data.id}`;
+    const name = [data.first_name, data.last_name].filter(Boolean).join(' ') || data.username || 'Telegram User';
+    const picture = data.photo_url || 'https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg';
+
+    await db.read();
+    
+    // Если пользователя нет, создаем
+    if (!db.data.users[userIdentifier]) {
+        db.data.users[userIdentifier] = { credits: INITIAL_CREDITS };
+    }
+
+    // Создаем сессионный токен для этого пользователя
+    const sessionToken = `tg_sess_${randomUUID()}`;
+    if (!db.data.sessions) db.data.sessions = {};
+    db.data.sessions[sessionToken] = userIdentifier;
+    
+    await db.write();
+
+    res.json({
+        userProfile: { name, email: userIdentifier, picture }, // Фронтенд ожидает поле email
+        credits: db.data.users[userIdentifier].credits,
+        token: sessionToken // Этот токен фронтенд сохранит как idToken
+    });
+});
 
 app.post('/api/login', async (req, res) => {
     const { token } = req.body;

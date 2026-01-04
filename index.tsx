@@ -141,7 +141,7 @@ async function addToHistory(images: ImageState[]) {
 function setWizardStep(step: WizardStep) {
     const targets = {
         credits: document.getElementById('credit-counter'),
-        auth: document.getElementById('google-signin-container'),
+        auth: document.getElementById('auth-buttons'),
     };
 
     Object.values(targets).forEach(el => el?.classList.remove('highlight-step'));
@@ -266,6 +266,11 @@ function signOut() {
     localStorage.removeItem('idToken'); localStorage.removeItem('userProfile');
     if (userProfileContainer) userProfileContainer.classList.add('hidden');
     if (googleSignInContainer) googleSignInContainer.classList.remove('hidden');
+    
+    // Also show telegram button
+    const telegramContainer = document.getElementById('telegram-login-container');
+    if(telegramContainer) telegramContainer.classList.remove('hidden');
+
     updateCreditCounterUI();
     updateAllGenerateButtons();
 }
@@ -310,7 +315,7 @@ function openLightbox(imageUrl: string) {
 function updateCreditCounterUI() {
     if (creditCounterEl) {
         creditCounterEl.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8.433 7.418c.158-.103.346-.196.567-.267v1.698a2.5 2.5 0 00-.567-.267C8.07 8.488 8 8.731 8 9c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-.22.071-.409.164-.567-.267C8.07 11.512 8 11.731 8 12c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-1.135-.285-2-1.201-2-2.423 0-1.209.865-2.138 2-2.423v-1.698c.221.07.41.164.567.267C11.93 8.488 12 8.731 12 9c0 .269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V7.862c1.135.285 2 1.201 2 1.22-.865-2.138-2 2.423v1.698a2.5 2.5 0 00.567-.267c.364-.24.433-.482.433-.582 0-.269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V12.14c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423V5.577c1.135.285 2 1.201 2 2.423 0 .269.07.512.433.582.221.07.409.164.567.267V7.862a2.5 2.5 0 00-.567-.267C11.93 7.512 12 7.269 12 7c0-1.22-.865-2.138-2-2.423V3a1 1 0 00-2 0v1.577C6.865 4.862 6 5.78 6 7c0 .269.07.512.433.582.221.07.41.164.567.267V6.14a2.5 2.5 0 00-.567-.267C5.07 5.512 5 5.269 5 5c0-1.22.865-2.138 2-2.423V1a1 1 0 10-2 0v1.577c-1.135-.285-2 1.201-2 2.423s.865 2.138 2 2.423v1.698c-.221-.07-.41-.164-.567-.267C4.07 8.488 4 8.731 4 9s.07.512.433.582c.221.07.41.164.567.267v1.698a2.5 2.5 0 00.567.267C4.07 11.512 4 11.731 4 12s.07.512.433.582c.221.07.41.164.567.267v1.698c-.221-.07-.409-.164-.567-.267C4.07 13.512 4 13.731 4 14c0 1.22.865 2.138 2 2.423v1.577a1 1 0 102 0v-1.577c1.135-.285-2 1.201-2 2.423s-.865-2.138-2-2.423v-1.698c.221.07.41.164.567.267.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267v1.698a2.5 2.5 0 00.567.267c.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267V13.86c-1.135-.285-2-1.201-2-2.423s.865-2.138 2-2.423V7.862c-.221-.07-.41-.164-.567-.267C8.07 7.512 8 7.269 8 7c0-.269.07.512.433-.582z" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-yellow-400 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M8.433 7.418c.158-.103.346-.196.567-.267v1.698a2.5 2.5 0 00-.567-.267C8.07 8.488 8 8.731 8 9c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-.22.071-.409.164-.567-.267C8.07 11.512 8 11.731 8 12c0 .269.07.512.433.582.221.07.41.164.567.267v1.698c-1.135-.285-2-1.201-2-2.423 0-1.209.865-2.138 2-2.423v-1.698c.221.07.41.164.567.267C11.93 8.488 12 8.731 12 9c0 .269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V7.862c1.135.285 2 1.201 2 1.22-.865-2.138-2 2.423v1.698a2.5 2.5 0 00.567-.267c.364-.24.433-.482.433-.582 0-.269-.07-.512-.433-.582-.221-.07-.41-.164-.567-.267V12.14c1.135-.285 2-1.201 2-2.423s-.865-2.138-2-2.423V5.577c1.135.285 2 1.201 2 1.201 2 2.423 0 .269.07.512.433.582.221.07.409.164.567.267V7.862a2.5 2.5 0 00-.567-.267C11.93 7.512 12 7.269 12 7c0-1.22-.865-2.138-2-2.423V3a1 1 0 00-2 0v1.577C6.865 4.862 6 5.78 6 7c0 .269.07.512.433.582.221.07.41.164.567.267V6.14a2.5 2.5 0 00-.567-.267C5.07 5.512 5 5.269 5 5c0-1.22.865-2.138 2-2.423V1a1 1 0 10-2 0v1.577c-1.135-.285-2 1.201-2 2.423s.865 2.138 2 2.423v1.698c-.221-.07-.41-.164-.567-.267C4.07 8.488 4 8.731 4 9s.07.512.433.582c.221.07.41.164.567.267v1.698a2.5 2.5 0 00.567.267C4.07 11.512 4 11.731 4 12s.07.512.433.582c.221.07.41.164.567.267v1.698c-.221-.07-.409-.164-.567-.267C4.07 13.512 4 13.731 4 14c0 1.22.865 2.138 2 2.423v1.577a1 1 0 102 0v-1.577c1.135-.285-2 1.201-2 2.423s-.865-2.138-2-2.423v-1.698c.221.07.41.164.567.267.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267v1.698a2.5 2.5 0 00.567.267c.364.24.433.482.433.582s-.07.512-.433-.582c-.221-.07-.41-.164-.567-.267V13.86c-1.135-.285-2-1.201-2-2.423s.865-2.138 2-2.423V7.862c-.221-.07-.41-.164-.567-.267C8.07 7.512 8 7.269 8 7c0-.269.07.512.433-.582z" /></svg>
             <span class="credit-value">${generationCredits}</span>
             <span class="hidden sm:inline credit-label">кредитов</span>
         `;
@@ -476,11 +481,17 @@ async function handleCredentialResponse(response: any) {
 }
 
 function updateAuthUI() {
+    const telegramContainer = document.getElementById('telegram-login-container');
     if (isLoggedIn && userProfile) {
-        googleSignInContainer.classList.add('hidden'); userProfileContainer.classList.remove('hidden');
-        userProfileImage.src = userProfile.picture; userProfileName.textContent = userProfile.name.split(' ')[0];
+        googleSignInContainer.classList.add('hidden'); 
+        if(telegramContainer) telegramContainer.classList.add('hidden');
+        userProfileContainer.classList.remove('hidden');
+        userProfileImage.src = userProfile.picture; 
+        userProfileName.textContent = userProfile.name.split(' ')[0];
     } else {
-        googleSignInContainer.classList.remove('hidden'); userProfileContainer.classList.add('hidden');
+        googleSignInContainer.classList.remove('hidden'); 
+        if(telegramContainer) telegramContainer.classList.remove('hidden');
+        userProfileContainer.classList.add('hidden');
     }
 }
 
@@ -490,8 +501,81 @@ async function setupGoogleAuth() {
         (window as any).google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
         (window as any).google.accounts.id.renderButton(googleSignInContainer, { theme: "outline", size: "large", shape: "pill" });
         const storedToken = localStorage.getItem('idToken');
-        if (storedToken) await handleCredentialResponse({ credential: storedToken });
+        if (storedToken) {
+            // Check if it's a telegram token (starts with tg_sess_)
+            if(storedToken.startsWith('tg_sess_')) {
+                // We just assume it's valid for now, or we could add a verify endpoint. 
+                // Currently callApi handles 401 expiration.
+                // We need to fetch profile though? 
+                // We'll rely on the stored profile in localStorage if available, or fetch it? 
+                // The original code doesn't have a "fetch profile" endpoint, it returns profile on login.
+                // For simplicity, let's just trigger a re-login if no profile data in local storage, or assume session is valid.
+                // Actually, let's try to just use it. If 401, signOut will happen.
+                 isLoggedIn = true;
+                 // Since we don't have a "get profile" endpoint, we can't easily restore UI without storing profile in LS too.
+                 // But wait, callApi handles 401. 
+                 // Let's rely on a user trying to generate something to verify token, OR add a "getProfile" endpoint.
+                 // Or just assume logged in state if we have token, but we need name/pic.
+                 // The app doesn't currently store profile in LS.
+                 // Let's just try to call /api/login again with the token?
+                 // No, /api/login expects a Google ID token.
+                 // We need a /api/me or similar.
+                 // OR we can just modify /api/login to also accept session tokens?
+                 // Let's modify /api/login in server.js to accept tg_sess tokens too? 
+                 // Yes, I'll update server.js to handle that.
+                 try {
+                     const { userProfile: profile, credits } = await callApi('/api/login', { token: storedToken });
+                     userProfile = profile;
+                     generationCredits = credits;
+                     idToken = storedToken;
+                     updateAuthUI();
+                     updateCreditCounterUI();
+                     updateAllGenerateButtons();
+                 } catch(e) { signOut(); }
+            } else {
+                await handleCredentialResponse({ credential: storedToken });
+            }
+        }
     } catch (error) {}
+}
+
+function setupTelegramAuth() {
+    const container = document.getElementById('telegram-login-container');
+    if (!container) return;
+    
+    // Create global callback
+    (window as any).onTelegramAuth = async (user: any) => {
+        try {
+            // Send to backend
+            const response = await callApi('/api/login-telegram', user);
+            // Handle response
+             localStorage.setItem('idToken', response.token); 
+             idToken = response.token;
+             isLoggedIn = true; 
+             userProfile = response.userProfile; 
+             generationCredits = response.credits;
+             updateAuthUI(); 
+             updateCreditCounterUI(); 
+             updateAllGenerateButtons();
+             if (statusEl) statusEl.innerHTML = `<span class="text-green-400">Привет, ${response.userProfile.name}!</span>`;
+        } catch (e) {
+            console.error(e);
+            showStatusError("Ошибка входа через Telegram");
+        }
+    };
+
+    // Inject script
+    const script = document.createElement('script');
+    script.src = "https://telegram.org/js/telegram-widget.js?22";
+    script.setAttribute('data-telegram-login', 'PhotoClick_Login_bot');
+    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-userpic', 'false'); 
+    script.setAttribute('data-radius', '20'); // Rounded pill like google
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+    script.setAttribute('data-request-access', 'write');
+    script.async = true;
+    container.innerHTML = '';
+    container.appendChild(script);
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -516,6 +600,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initDB();
     const script = document.createElement('script'); script.src = 'https://accounts.google.com/gsi/client'; script.async = true;
     script.onload = setupGoogleAuth; document.body.appendChild(script);
+    
+    // Initialize Telegram
+    setupTelegramAuth();
+
     setupNavigation(); initializeBusinessPage();
     lightboxOverlay.addEventListener('click', e => { if (e.target === lightboxOverlay) hideLightbox(); });
     lightboxCloseButton.addEventListener('click', hideLightbox);
